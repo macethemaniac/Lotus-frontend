@@ -1,0 +1,159 @@
+@import "@turnkey/react-wallet-kit/styles.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  background: #09090b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  width: 100%;
+  min-height: 100vh;
+  margin: 0;
+  overflow-x: hidden;
+  background: #09090b;
+  color: #fafafa;
+  font-family: Inter, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: geometricPrecision;
+}
+
+#root {
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #27272a transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #27272a;
+  border-radius: 999px;
+}
+
+.lotus-terminal {
+  --lotus-terminal-scale: 1;
+}
+
+.lotus-terminal-stage {
+  min-width: 0;
+  min-height: 0;
+  transform-origin: top left;
+}
+
+@media (min-width: 1024px) {
+  .lotus-terminal {
+    --lotus-terminal-scale: 0.66;
+  }
+
+  .lotus-terminal-stage {
+    width: calc(100% / var(--lotus-terminal-scale));
+    height: calc(100% / var(--lotus-terminal-scale));
+    transform: scale(var(--lotus-terminal-scale));
+  }
+}
+
+@media (max-width: 1023px) {
+  .lotus-terminal-stage {
+    transform: none;
+  }
+}
+
+.lotus-terminal-light {
+  background: #e9ebef;
+  color: #18181b;
+}
+
+.lotus-terminal-light [class*="bg-[#09090b]"],
+.lotus-terminal-light [class*="bg-[#121214]"],
+.lotus-terminal-light [class*="bg-[#0c0c0c]"],
+.lotus-terminal-light [class*="bg-[#0c0c0e]"],
+.lotus-terminal-light [class*="bg-[#18181b]"],
+.lotus-terminal-light .bg-zinc-900,
+.lotus-terminal-light .bg-zinc-950 {
+  background-color: #f4f5f7 !important;
+}
+
+.lotus-terminal-light .bg-zinc-800,
+.lotus-terminal-light .bg-zinc-800\/50,
+.lotus-terminal-light .bg-zinc-800\/80 {
+  background-color: #e5e7eb !important;
+}
+
+.lotus-terminal-light .border-zinc-800,
+.lotus-terminal-light .border-zinc-800\/50,
+.lotus-terminal-light .border-zinc-800\/60,
+.lotus-terminal-light .border-zinc-800\/80,
+.lotus-terminal-light .border-zinc-700,
+.lotus-terminal-light .border-zinc-700\/50 {
+  border-color: #d1d5db !important;
+}
+
+.lotus-terminal-light .text-white,
+.lotus-terminal-light .text-zinc-100,
+.lotus-terminal-light .text-zinc-200,
+.lotus-terminal-light .text-zinc-300 {
+  color: #18181b !important;
+}
+
+.lotus-terminal-light .text-zinc-400,
+.lotus-terminal-light .text-zinc-500 {
+  color: #71717a !important;
+}
+
+.lotus-terminal-light .text-zinc-600 {
+  color: #52525b !important;
+}
+
+.lotus-terminal-light input {
+  color: #18181b !important;
+}
+
+.lotus-terminal-light .shadow-\[0_0_15px_rgba\(204\2c 255\2c 0\2c 0\.15\)\] {
+  box-shadow: 0 12px 28px rgba(63, 63, 70, 0.12) !important;
+}
+
+.lotus-terminal-light [class*="bg-[#ccff00]"].text-black,
+.lotus-terminal-light .text-black {
+  color: #000000 !important;
+}
+
+.lotus-terminal-light [class*="bg-[#E52B50]"],
+.lotus-terminal-light .bg-red-500 {
+  color: #ffffff !important;
+}
+
+.lotus-terminal-light [class*="bg-emerald-500"] {
+  color: #ffffff;
+}
+
+.lotus-terminal-light .lotus-terminal-event-menu {
+  background: #f4f5f7 !important;
+  border-color: #cfd4dc !important;
+  box-shadow: 0 24px 60px rgba(24, 24, 27, 0.18) !important;
+}
