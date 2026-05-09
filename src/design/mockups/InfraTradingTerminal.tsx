@@ -247,6 +247,42 @@ const riskFactorRows = (assessment: ResolutionRiskAssessment) =>
 const ruleTextForProfile = (profile: ResolutionRiskProfile): string =>
   profile.primaryResolutionText || profile.supplementalRulesText || 'Backend has not returned public venue rule text for this market.';
 
+const urlPattern = /(https?:\/\/[^\s"',)]+)/g;
+
+const renderLinkedText = (text: string, className?: string): React.ReactNode => {
+  const parts = text.split(urlPattern);
+  return (
+    <p className={`whitespace-pre-wrap ${className ?? ''}`.trim()}>
+      {parts.map((part, index) => {
+        urlPattern.lastIndex = 0;
+        if (!urlPattern.test(part)) {
+          return <React.Fragment key={`${part}-${index}`}>{part}</React.Fragment>;
+        }
+        return (
+          <a
+            key={`${part}-${index}`}
+            href={part}
+            target="_blank"
+            rel="noreferrer"
+            className="font-semibold text-sky-300 underline decoration-sky-300/40 underline-offset-2 transition-colors hover:text-sky-200"
+          >
+            {part}
+          </a>
+        );
+      })}
+    </p>
+  );
+};
+
+const metadataRecord = (value: unknown): Record<string, unknown> =>
+  value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+
+const sourceUrlForProfile = (profile: ResolutionRiskProfile): string | null => {
+  const officialVenueRules = metadataRecord(metadataRecord(profile.metadata).officialVenueRules);
+  const sourceUrl = officialVenueRules.sourceUrl;
+  return typeof sourceUrl === 'string' && /^https:\/\//i.test(sourceUrl) ? sourceUrl : null;
+};
+
 const describeOutcomeSchema = (schema: Record<string, unknown> | null | undefined): string => {
   if (!schema) return 'Outcome schema not specified';
   const yes = typeof schema.yesLabel === 'string' ? schema.yesLabel : 'Yes';
@@ -1381,19 +1417,33 @@ export const InfraTradingTerminal = ({
                                                             <div className="space-y-3 text-xs text-zinc-300 leading-relaxed max-w-3xl font-medium">
                                                                 <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-3">
                                                                   <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500">Venue rule text</div>
-                                                                  <p className="mt-2">{ruleTextForProfile(profile)}</p>
+                                                                  <div className="mt-2">{renderLinkedText(ruleTextForProfile(profile))}</div>
                                                                 </div>
                                                                 {profile.supplementalRulesText && profile.supplementalRulesText !== profile.primaryResolutionText && (
                                                                   <div className="rounded-lg border border-zinc-800 bg-zinc-950/30 p-3">
-                                                                    <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500">Supplemental venue rules</div>
-                                                                    <p className="mt-2 text-zinc-400">{profile.supplementalRulesText}</p>
+                                                                    <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500">Resolution source</div>
+                                                                    <div className="mt-2">{renderLinkedText(profile.supplementalRulesText, 'text-zinc-400')}</div>
                                                                   </div>
                                                                 )}
                                                                 <div className="grid grid-cols-2 gap-2 text-[11px] text-zinc-400">
-                                                                  <div><span className="text-zinc-500">Oracle/source type:</span> {profile.oracleType ?? 'Not specified'}</div>
+                                                                  <div><span className="text-zinc-500">Oracle/source:</span> {profile.oracleName ?? 'Not specified'}</div>
+                                                                  <div><span className="text-zinc-500">Source type:</span> {profile.oracleType ?? 'Not specified'}</div>
                                                                   <div><span className="text-zinc-500">Resolution authority:</span> {profile.resolutionAuthorityType ?? 'Not specified'}</div>
                                                                   <div><span className="text-zinc-500">Outcome schema:</span> {describeOutcomeSchema(profile.outcomeSchema)}</div>
                                                                   <div><span className="text-zinc-500">Venue market:</span> {profile.venueMarketId}</div>
+                                                                  {sourceUrlForProfile(profile) && (
+                                                                    <div>
+                                                                      <span className="text-zinc-500">Source link:</span>{' '}
+                                                                      <a
+                                                                        href={sourceUrlForProfile(profile) ?? undefined}
+                                                                        target="_blank"
+                                                                        rel="noreferrer"
+                                                                        className="font-semibold text-sky-300 underline decoration-sky-300/40 underline-offset-2 transition-colors hover:text-sky-200"
+                                                                      >
+                                                                        Open source
+                                                                      </a>
+                                                                    </div>
+                                                                  )}
                                                                 </div>
                                                                 {(profile.disputeWindowHours || profile.settlementLagHours) && (
                                                                   <p className="text-zinc-500">
