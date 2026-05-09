@@ -200,6 +200,8 @@ Frontend rule:
 
 - Use these routes for Rules and Risk UI where they match the selected event or market.
 - Do not invent risk text for unsupported events.
+- Venue rule text must come from backend-verified venue metadata for the exact selected venue market. Polymarket uses Gamma market metadata when available; Limitless uses the market detail metadata endpoint/public detail payload when available; other venues use only trusted ingested `venue_market_profiles` / `venue_resolution_profiles` rule fields.
+- If the backend cannot verify official venue rule text or resolution source text, the Rules and Risk UI must show that the venue rule metadata is unavailable instead of displaying a title, synthetic curated label, or inferred copy as rules.
 
 ### Realtime
 
@@ -569,7 +571,8 @@ Rules and Risk tab:
   - `GET /resolution-risk/market/:venue/:marketId`
 - Current wiring: terminal loads canonical assessment and venue market profiles for the selected market immediately on selection. Pair-level comparison remains available in backend contracts but is not called by the terminal UI in this slice.
 - Dashboard market cards must pass `canonicalEventId`, `venues`, and `venueMarkets` into the terminal payload; otherwise the terminal can render the market but cannot load rules/risk profiles.
-- Platform Rules presents venue rule text, supplemental rules, oracle/source type, authority type, outcome schema, and boundary flags. Aggregation Justification presents the semantic comparison factors and backend pooling decision rather than treating a market title as an execution source.
+- Platform Rules presents backend-verified venue rule text, supplemental resolution source text, oracle/source type, authority type, outcome schema, and boundary flags. Aggregation Justification presents the semantic comparison factors and backend pooling decision rather than treating a market title as an execution source.
+- The backend filters untrusted synthetic labels out of risk profiles. If fewer than two venue profiles have trusted rule text, semantic pooling assessment is withheld rather than fabricated.
 - Risk and compatibility belongs inside this tab, not beside the order book.
 
 ### Phase 8 - Terminal Trade Panel
