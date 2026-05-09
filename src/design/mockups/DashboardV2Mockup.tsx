@@ -2082,7 +2082,7 @@ const NavItem = ({
   </div>
 );
 
-const MarketCard = ({ id, marketId, eventId, title, category, venueCount, routeType, savings, spread, fallback, fallbackLabel, icon, imageUrl, iconUrl, priceLabel, priceVenue, changeLabel, prob, change, volume, volumeLabel = 'Vol', txnBuy, txnSell, txnLabel = 'Pending', badges = [], outcomes, marketType, onOpenTerminal }: any) => {
+const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, venueCount, routeType, savings, spread, fallback, fallbackLabel, icon, imageUrl, iconUrl, priceLabel, priceVenue, changeLabel, prob, change, volume, volumeLabel = 'Vol', txnBuy, txnSell, txnLabel = 'Pending', badges = [], outcomes, marketType, venues, venueMarkets, onOpenTerminal }: any) => {
   const allVenues = [
     { id: 'polymarket', label: 'Polymarket' },
     { id: 'predict', label: 'Predict.fun' },
@@ -2097,7 +2097,7 @@ const MarketCard = ({ id, marketId, eventId, title, category, venueCount, routeT
   const sellCount = typeof txnSell === 'number' ? txnSell : 0;
   const totalCount = buyCount + sellCount;
   const fallbackText = fallbackLabel ?? (fallback ? 'Yes' : 'No');
-  const terminalPayload = { id, marketId, eventId, title, category, icon, volume, venueCount, routeType, marketType, outcomes, imageUrl, iconUrl };
+  const terminalPayload = { id, marketId, eventId, canonicalEventId, title, category, icon, volume, venueCount, routeType, venues, venueMarkets, marketType, outcomes, imageUrl, iconUrl };
 
   return (
     <div className="bg-white dark:bg-[#121214] border border-zinc-200 dark:border-zinc-800 rounded-2xl p-4 flex min-h-[260px] flex-col justify-between gap-3 shadow-sm hover:border-zinc-300 dark:hover:border-zinc-700 hover:shadow-md transition-all group">
