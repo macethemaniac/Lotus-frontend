@@ -310,7 +310,7 @@ export function App() {
   return (
     <div className="h-screen overflow-hidden bg-black pb-10">
       <AccountDropdown session={session} onLogout={handleLogout} />
-      <DashboardV2Mockup activePage={activePage} onNavigate={setActivePage} />
+      <DashboardV2Mockup activePage={activePage} onNavigate={setActivePage} session={session} />
       <DenseStripFooter fixed />
     </div>
   );

@@ -441,6 +441,15 @@ Data:
 - `GET /markets/:marketId/outcomes`
 - `POST /execution/live-candidates` only when routeability evidence is needed.
 
+Implementation status:
+
+- Dashboard grid/list now calls `GET /markets` through the typed market API client and preserves the approved dashboard design.
+- Search is server-backed through the documented `search` query parameter.
+- Backend-provided `imageUrl`/`iconUrl` render with local fallback; the frontend does not call venue APIs directly.
+- Dashboard prices, spreads, savings, order-flow counts, and seven-day movement show quote-required/unavailable states until `POST /execution/live-candidates` or another quote endpoint is wired into the terminal path.
+- Durable notifications now come from `GET /notifications`; notification read state uses `POST /notifications/:id/read`.
+- Local blocker observed on May 9, 2026: the local backend database is missing `frontend_market_approvals`, so `GET /markets` returns HTTP 500 until the existing `2026_05_03_create_frontend_market_approvals.sql` migration is applied to that database.
+
 ### Phase 5 - Markets Page
 
 Goal:

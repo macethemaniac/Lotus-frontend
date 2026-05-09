@@ -46,6 +46,8 @@ Frontend rules:
 - Market and event media fields are optional: `imageUrl` and `iconUrl`.
 - Media URLs are sanitized by the backend from approved venue metadata. The frontend may render those HTTPS URLs with `referrerPolicy="no-referrer"` and local category or venue fallbacks.
 - The frontend must not call Polymarket, Myriad, Limitless, Predict.fun, or Opinion APIs directly for images or metadata.
+- Dashboard market discovery is wired to `GET /markets`; fields not returned by that endpoint, including executable quote price, spread, savings, order-flow counts, and historical movement, must render as quote-required/unavailable instead of fake values.
+- Local development note from May 9, 2026: if `GET /markets` returns HTTP 500 with `relation "frontend_market_approvals" does not exist`, apply the existing backend migration for `frontend_market_approvals` before testing dashboard data population.
 
 ### Wallets and Venue Accounts
 

@@ -1,8 +1,12 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { LotusLogo } from '@/components/icons/lotus-icons';
 import { VenueLogo } from '@/components/icons/asset-logo';
 import { InfraTradingTerminal, type TerminalMarketSelection } from '@/design/mockups/InfraTradingTerminal';
 import { PortfolioMockupV2 } from '@/design/mockups/PortfolioMockupV2';
+import type { AuthSession } from '@/features/auth/types';
+import { listMarkets, type MarketCatalogMarket } from '@/features/markets/api/market-api';
+import { getNotifications, markNotificationRead, type UserNotification } from '@/features/notifications/api/notification-api';
+import { ApiClientError } from '@/lib/api/http-client';
 import { 
   Search, Bell, Home, BarChart2, ArrowRightLeft, 
   Zap, PieChart, Activity, Settings, ChevronDown, ChevronUp,
@@ -30,18 +34,172 @@ const Badge = ({ children, variant = 'default', className = '' }: any) => {
 
 export type LotusAppPage = 'home' | 'markets' | 'terminal' | 'portfolio';
 
+type DashboardMarketRow = Pick<TerminalMarketSelection, 'title' | 'category' | 'icon' | 'volume' | 'venueCount' | 'routeType'> & {
+  id: string;
+  marketId: string;
+  eventId?: string;
+  venues: string[];
+  marketType: 'binary' | 'multi';
+  marketClass: string;
+  status: MarketCatalogMarket['status'];
+  outcomes: Array<{ name: string; prob: string }>;
+  imageUrl: string | null;
+  iconUrl: string | null;
+  priceLabel: string;
+  changeLabel: string;
+  savings: string;
+  spread: string;
+  fallbackLabel: string;
+  closesBy: string;
+  quoteRequired: boolean;
+  prob: number | null;
+  change: string | null;
+  txnBuy: number;
+  txnSell: number;
+  badges: string[];
+};
+
+const categoryIconFallback: Record<string, string> = {
+  sports: 'L',
+  politics: 'L',
+  crypto: 'L',
+  esports: 'L',
+  finance: 'L',
+};
+
+const routeTypeLabel = (market: MarketCatalogMarket): string => {
+  if (market.routeability.hasCrossVenue) return market.venueCount >= 3 ? 'Tri' : 'Pair';
+  return 'Single';
+};
+
+const formatTitleCase = (value: string): string =>
+  value
+    .replace(/[_-]+/g, ' ')
+    .toLowerCase()
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+
+const getSafeMediaUrl = (value: string | null | undefined): string | null => {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' ? url.toString() : null;
+  } catch {
+    return null;
+  }
+};
+
+const formatMarketDate = (value: string | null | undefined): string => {
+  if (!value) return 'TBD';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return 'TBD';
+  return parsed.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+};
+
+const normalizeVenueId = (venue: string): string => venue.toLowerCase().replace(/[\s._-]+/g, '_');
+
+const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardMarketRow => {
+  const venues = Array.from(new Set((market.venues.length ? market.venues : market.venueMarkets.map((item) => item.venue)).map(normalizeVenueId)));
+  const routeType = routeTypeLabel(market);
+  const marketId = market.canonicalMarketIds[0] ?? market.canonicalEventId;
+  const marketClass = formatTitleCase(market.marketClass || 'Market');
+  const category = formatTitleCase(market.category || 'Market');
+  const outcomeLabels = Array.from(
+    new Set(
+      market.venueMarkets
+        .flatMap((venueMarket) => venueMarket.outcomes.map((outcome) => outcome.label))
+        .filter(Boolean)
+    )
+  ).slice(0, 4);
+
+  return {
+    id: marketId,
+    marketId,
+    eventId: market.eventId ?? market.canonicalEventId,
+    title: market.title,
+    category: `${category} - ${marketClass}`,
+    icon: categoryIconFallback[market.category.toLowerCase()] ?? 'L',
+    volume: 'Backend catalog',
+    venueCount: market.venueCount,
+    routeType,
+    venues,
+    marketType: market.outcomeCount > 2 ? 'multi' : 'binary',
+    marketClass,
+    status: market.status,
+    outcomes: outcomeLabels.length > 0
+      ? outcomeLabels.map((label) => ({ name: label, prob: 'Quote' }))
+      : [{ name: 'Outcomes load in terminal', prob: 'Quote' }],
+    imageUrl: getSafeMediaUrl(market.imageUrl),
+    iconUrl: getSafeMediaUrl(market.iconUrl),
+    priceLabel: 'Quote',
+    changeLabel: 'Quote required',
+    savings: 'Quote required',
+    spread: 'Quote required',
+    fallbackLabel: routeType === 'Single' ? 'Single venue' : 'Route preview',
+    closesBy: formatMarketDate(market.expiresAt ?? market.resolvesAt),
+    quoteRequired: true,
+    prob: null,
+    change: null,
+    txnBuy: 0,
+    txnSell: 0,
+    badges: venues,
+  };
+};
+
+const toSafeErrorMessage = (error: unknown, fallback: string): string => {
+  if (error instanceof ApiClientError) {
+    return error.message || fallback;
+  }
+  if (error instanceof Error) return error.message || fallback;
+  return fallback;
+};
+
+const formatRelativeTime = (value: string): string => {
+  const timestamp = new Date(value).getTime();
+  if (Number.isNaN(timestamp)) return '';
+  const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
+  if (seconds < 60) return 'Now';
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  return `${Math.floor(hours / 24)}d`;
+};
+
+const mapNotificationForDashboard = (notification: UserNotification) => {
+  switch (notification.severity) {
+    case 'success':
+      return { Icon: CheckCircle2, tone: 'text-emerald-500', ring: 'bg-emerald-500/10 border-emerald-500/20', meta: notification.targetKind ?? notification.type };
+    case 'warning':
+      return { Icon: AlertTriangle, tone: 'text-amber-400', ring: 'bg-amber-500/10 border-amber-500/20', meta: notification.targetKind ?? notification.type };
+    case 'error':
+      return { Icon: AlertTriangle, tone: 'text-red-400', ring: 'bg-red-500/10 border-red-500/20', meta: notification.targetKind ?? notification.type };
+    default:
+      return { Icon: Clock, tone: 'text-sky-400', ring: 'bg-sky-500/10 border-sky-500/20', meta: notification.targetKind ?? notification.type };
+  }
+};
+
 export const DashboardV2Mockup = ({
   activePage = 'home',
   onNavigate,
+  session,
 }: {
   activePage?: LotusAppPage;
   onNavigate?: (page: LotusAppPage) => void;
+  session?: AuthSession | null;
 }) => {
   const [isDarkMode, setIsDarkMode] = useState(true);
   const [isFilterCollapsed, setIsFilterCollapsed] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [marketViewMode, setMarketViewMode] = useState<'grid' | 'list'>('grid');
   const [selectedTerminalMarket, setSelectedTerminalMarket] = useState<TerminalMarketSelection | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [marketsLoading, setMarketsLoading] = useState(false);
+  const [marketsError, setMarketsError] = useState<string | null>(null);
+  const [marketRows, setMarketRows] = useState<DashboardMarketRow[]>([]);
+  const [marketCount, setMarketCount] = useState(0);
+  const [notificationsLoading, setNotificationsLoading] = useState(false);
+  const [notificationsError, setNotificationsError] = useState<string | null>(null);
+  const [notificationItems, setNotificationItems] = useState<UserNotification[]>([]);
   const [expandedCategories, setExpandedCategories] = useState<Record<string, boolean>>({
     'Sports': true,
     'Politics': true,
@@ -57,6 +215,16 @@ export const DashboardV2Mockup = ({
   const pageTitle = activePage === 'markets' ? 'Markets' : 'Top Opportunities';
   const effectiveMarketViewMode = activePage === 'markets' ? 'list' : marketViewMode;
   const isMarketSurface = activePage === 'home' || activePage === 'markets';
+  const displayedMarkets = activePage === 'home' ? marketRows.slice(0, 6) : marketRows;
+  const marketSummary = useMemo(() => {
+    const crossVenue = marketRows.filter((market) => market.routeType !== 'Single').length;
+    const routePreviewRequired = marketRows.filter((market) => market.quoteRequired).length;
+    return {
+      routeable: marketCount || marketRows.length,
+      crossVenue,
+      routePreviewRequired,
+    };
+  }, [marketCount, marketRows]);
   const inferTerminalMarketType = (title: string): 'binary' | 'multi' => (
     title.includes('Winner') || title.includes('Champion') || title.includes('Region') || title.includes('Season')
       ? 'multi'
@@ -70,42 +238,72 @@ export const DashboardV2Mockup = ({
     onNavigate?.('terminal');
   };
 
-  const notificationItems = [
-    {
-      id: 'fill-confirmed',
-      title: 'Fill confirmed',
-      message: 'Predict.fun order filled. Unified position and venue PnL are updating.',
-      meta: 'Execution',
-      time: 'Now',
-      Icon: CheckCircle2,
-      tone: 'text-emerald-500',
-      ring: 'bg-emerald-500/10 border-emerald-500/20',
-      unread: true,
-    },
-    {
-      id: 'limit-resting',
-      title: 'Limit order resting',
-      message: 'Your limit order is live and waiting for venue liquidity.',
-      meta: 'Open order',
-      time: '2m',
-      Icon: Clock,
-      tone: 'text-sky-400',
-      ring: 'bg-sky-500/10 border-sky-500/20',
-      unread: true,
-    },
-    {
-      id: 'fund-activation',
-      title: 'Polymarket activation required',
-      message: 'Activate venue-ready funds before Polymarket can route live orders.',
-      meta: 'Funding',
-      time: '5m',
-      Icon: Wallet,
-      tone: 'text-amber-400',
-      ring: 'bg-amber-500/10 border-amber-500/20',
-      unread: true,
-    },
-  ];
-  const unreadNotificationCount = notificationItems.filter(item => item.unread).length;
+  useEffect(() => {
+    if (!isMarketSurface) return;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setMarketsLoading(true);
+      setMarketsError(null);
+      listMarkets({
+        search: searchQuery.trim() || undefined,
+        limit: activePage === 'markets' ? 80 : 18,
+      })
+        .then((response) => {
+          if (cancelled) return;
+          setMarketRows(response.markets.map(mapCatalogMarketToDashboardRow));
+          setMarketCount(response.count);
+        })
+        .catch((error) => {
+          if (cancelled) return;
+          setMarketsError(toSafeErrorMessage(error, 'Market catalog is unavailable right now.'));
+          setMarketRows([]);
+          setMarketCount(0);
+        })
+        .finally(() => {
+          if (!cancelled) setMarketsLoading(false);
+        });
+    }, searchQuery.trim() ? 250 : 0);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [activePage, isMarketSurface, searchQuery]);
+
+  useEffect(() => {
+    if (!session?.userJwt) return;
+    let cancelled = false;
+    setNotificationsLoading(true);
+    setNotificationsError(null);
+    getNotifications(session.userJwt, { limit: 8 })
+      .then((response) => {
+        if (!cancelled) setNotificationItems(response.items);
+      })
+      .catch((error) => {
+        if (!cancelled) setNotificationsError(toSafeErrorMessage(error, 'Notifications are unavailable right now.'));
+      })
+      .finally(() => {
+        if (!cancelled) setNotificationsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.userJwt]);
+
+  const handleReadNotification = (notification: UserNotification) => {
+    if (!session?.userJwt || notification.readAt) return;
+    setNotificationItems((items) =>
+      items.map((item) => item.notificationId === notification.notificationId ? { ...item, readAt: new Date().toISOString() } : item)
+    );
+    markNotificationRead(session.userJwt, notification.notificationId).catch(() => {
+      setNotificationItems((items) =>
+        items.map((item) => item.notificationId === notification.notificationId ? { ...item, readAt: null } : item)
+      );
+    });
+  };
+
+  const unreadNotificationCount = notificationItems.filter(item => item.readAt === null).length;
 
   return (
     <div className={`${isDarkMode ? 'dark' : ''} w-full h-full`}>
@@ -137,6 +335,8 @@ export const DashboardV2Mockup = ({
               <input 
                 type="text" 
                 placeholder="Search markets, events, or venues..." 
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
                 className="w-full bg-zinc-100/80 dark:bg-zinc-800/80 border border-transparent rounded-full pl-9 pr-4 py-1.5 text-xs focus:outline-none focus:bg-white dark:focus:bg-zinc-900 focus:border-zinc-300 dark:focus:border-zinc-700 focus:ring-4 focus:ring-zinc-100 dark:focus:ring-zinc-800 transition-all text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-500 dark:placeholder:text-zinc-400"
               />
             </div>
@@ -176,27 +376,46 @@ export const DashboardV2Mockup = ({
                       </span>
                     </div>
                     <div className="max-h-[22rem] overflow-y-auto p-2 bg-zinc-50/80 dark:bg-transparent custom-scrollbar">
-                      {notificationItems.map(item => {
-                        const Icon = item.Icon;
+                      {notificationsLoading && (
+                        <div className="space-y-2 p-1">
+                          {[0, 1, 2].map((item) => (
+                            <div key={item} className="h-20 rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900/70 animate-pulse" />
+                          ))}
+                        </div>
+                      )}
+                      {!notificationsLoading && notificationsError && (
+                        <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-3 text-xs font-medium text-amber-700 dark:text-amber-300">
+                          {notificationsError}
+                        </div>
+                      )}
+                      {!notificationsLoading && !notificationsError && notificationItems.length === 0 && (
+                        <div className="rounded-lg border border-zinc-200 bg-white p-4 text-xs text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400">
+                          No notifications yet. Execution, funding, and readiness updates will appear here once the backend creates them.
+                        </div>
+                      )}
+                      {!notificationsLoading && !notificationsError && notificationItems.map(item => {
+                        const display = mapNotificationForDashboard(item);
+                        const Icon = display.Icon;
                         return (
                           <button
-                            key={item.id}
+                            key={item.notificationId}
                             type="button"
+                            onClick={() => handleReadNotification(item)}
                             className="group/notice flex w-full items-start gap-3 rounded-lg border border-transparent p-2.5 text-left transition-colors hover:border-zinc-200 hover:bg-white dark:hover:border-zinc-700 dark:hover:bg-zinc-900/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
                           >
-                            <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border ${item.ring}`}>
-                              <Icon className={`h-4 w-4 ${item.tone}`} />
+                            <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border ${display.ring}`}>
+                              <Icon className={`h-4 w-4 ${display.tone}`} />
                             </span>
                             <span className="min-w-0 flex-1">
                               <span className="flex items-center justify-between gap-2">
                                 <span className="truncate text-xs font-bold text-zinc-900 dark:text-zinc-100">{item.title}</span>
-                                <span className="shrink-0 text-[10px] font-mono text-zinc-400">{item.time}</span>
+                                <span className="shrink-0 text-[10px] font-mono text-zinc-400">{formatRelativeTime(item.createdAt)}</span>
                               </span>
                               <span className="mt-1 block text-[11px] leading-snug text-zinc-600 dark:text-zinc-400">
-                                {item.message}
+                                {item.body}
                               </span>
                               <span className="mt-2 inline-flex rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-500">
-                                {item.meta}
+                                {display.meta}
                               </span>
                             </span>
                           </button>
@@ -689,6 +908,23 @@ export const DashboardV2Mockup = ({
               
               {effectiveMarketViewMode === 'grid' ? (
               <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-3">
+                {marketsLoading && displayedMarkets.length === 0 && [0, 1, 2, 3, 4, 5].map((item) => (
+                  <MarketCardSkeleton key={item} />
+                ))}
+                {!marketsLoading && marketsError && (
+                  <MarketGridMessage title="Markets unavailable" body={marketsError} />
+                )}
+                {!marketsLoading && !marketsError && displayedMarkets.length === 0 && (
+                  <MarketGridMessage title="No markets found" body="Try another search. Lotus only shows backend-approved market metadata here." />
+                )}
+                {displayedMarkets.map((market) => (
+                  <MarketCard
+                    key={market.id}
+                    {...market}
+                    onOpenTerminal={openMarketInTerminal}
+                  />
+                ))}
+                {false && <>
                 <MarketCard
                   title="NBA Eastern Conference Champion"
                   category="Sports · Winner market"
@@ -832,9 +1068,15 @@ export const DashboardV2Mockup = ({
                     { name: 'team from CBLOL (Brazil)', prob: '1' },
                   ]}
                 />
+                </>}
               </div>
               ) : (
-                <LotusMarketList onOpenMarket={openMarketInTerminal} />
+                <LotusMarketList
+                  markets={displayedMarkets}
+                  loading={marketsLoading}
+                  error={marketsError}
+                  onOpenMarket={openMarketInTerminal}
+                />
               )}
             </div>
 
@@ -851,15 +1093,15 @@ export const DashboardV2Mockup = ({
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-medium text-zinc-600 dark:text-zinc-400">Routeable Opportunities</span>
-                  <span className="text-xs font-mono font-bold text-zinc-900 dark:text-zinc-100">14</span>
+                  <span className="text-xs font-mono font-bold text-zinc-900 dark:text-zinc-100">{marketSummary.routeable}</span>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-medium text-zinc-600 dark:text-zinc-400">Improved Routes</span>
-                  <span className="text-xs font-mono font-bold text-[#99cc00]">7</span>
+                  <span className="text-xs font-medium text-zinc-600 dark:text-zinc-400">Cross-Venue Markets</span>
+                  <span className="text-xs font-mono font-bold text-[#99cc00]">{marketSummary.crossVenue}</span>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-medium text-zinc-600 dark:text-zinc-400">Review-Gated Markets</span>
-                  <span className="text-xs font-mono font-bold text-zinc-900 dark:text-zinc-100">3</span>
+                  <span className="text-xs font-medium text-zinc-600 dark:text-zinc-400">Quote Required</span>
+                  <span className="text-xs font-mono font-bold text-zinc-900 dark:text-zinc-100">{marketSummary.routePreviewRequired}</span>
                 </div>
               </div>
             </div>
@@ -868,20 +1110,20 @@ export const DashboardV2Mockup = ({
             <div className="bg-zinc-900 dark:bg-zinc-800 rounded-2xl p-4 text-white shadow-lg relative overflow-hidden border border-transparent dark:border-zinc-700">
               <div className="absolute top-0 right-0 w-32 h-32 bg-[#ccff00]/10 rounded-full blur-2xl -mr-10 -mt-10 pointer-events-none"></div>
               
-              <h3 className="text-xs font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-widest mb-2">Total Value</h3>
+              <h3 className="text-xs font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-widest mb-2">Portfolio</h3>
               <div className="flex items-end gap-2 mb-5">
-                <span className="text-2xl font-bold tracking-tight">$142,500.00</span>
-                <span className="text-xs font-medium text-[#ccff00] mb-1">+2.4%</span>
+                <span className="text-2xl font-bold tracking-tight">Backend-led</span>
+                <span className="text-xs font-medium text-[#ccff00] mb-1">MTM</span>
               </div>
               
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="text-xs text-zinc-400 dark:text-zinc-500">Available Cash</span>
-                  <span className="text-xs font-mono font-medium">$24,500.00</span>
+                  <span className="text-xs font-mono font-medium">Open portfolio</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-xs text-zinc-400 dark:text-zinc-500">Active Positions</span>
-                  <span className="text-xs font-mono font-medium">$118,000.00</span>
+                  <span className="text-xs font-mono font-medium">Verified only</span>
                 </div>
               </div>
             </div>
@@ -895,24 +1137,24 @@ export const DashboardV2Mockup = ({
               <div className="space-y-4 relative before:absolute before:inset-y-0 before:left-[11px] before:w-px before:bg-zinc-200 dark:before:bg-zinc-700">
                 <ActivityItem 
                   type="route"
-                  title="Smart Route Executed"
-                  market="Pair route completed across 2 venues"
-                  time="2h ago"
+                  title="Market catalog synced"
+                  market={`${marketSummary.routeable} backend-approved markets loaded`}
+                  time={marketsLoading ? 'Loading' : 'Live'}
                   price=""
                 />
                 <ActivityItem 
                   type="route"
-                  title="Saved $45.20"
-                  market="Improved execution via custom routing"
-                  time="3h ago"
+                  title="Route preview required"
+                  market="Savings and spreads appear after backend quote evidence"
+                  time="Safe"
                   price=""
                 />
                 <ActivityItem 
                   type="buy"
-                  title="Bought 10,000 Yes"
-                  market="Will Gavin Newsom be the US 2028 Democratic Nominee?"
-                  time="5h ago"
-                  price="45.0¢"
+                  title="Open terminal"
+                  market="Market clicks carry canonical IDs into the terminal"
+                  time="Ready"
+                  price=""
                 />
               </div>
             </div>
@@ -972,7 +1214,7 @@ const ActivityItem = ({ type, title, market, time, price }: any) => {
       <div className="flex-1 pb-4">
         <div className="flex items-start justify-between mb-0.5">
           <h4 className="text-xs font-bold text-zinc-900 dark:text-zinc-100">{title}</h4>
-          {price && <span className="text-xs font-mono font-bold text-zinc-900 dark:text-zinc-100">{price}</span>}
+          {price && title !== 'Open terminal' && <span className="text-xs font-mono font-bold text-zinc-900 dark:text-zinc-100">{price}</span>}
         </div>
         <div className="flex items-center justify-between">
           <p className="text-[11px] text-zinc-500 dark:text-zinc-400 line-clamp-1 pr-4">{market}</p>
@@ -1111,6 +1353,68 @@ const VenueChip = ({ id, size = 'sm' }: { id: string; size?: 'xs' | 'sm' }) => {
   );
 };
 
+const MarketMediaThumb = ({
+  title,
+  icon,
+  imageUrl,
+  iconUrl,
+  className = 'h-11 w-11 text-xl',
+}: {
+  title: string;
+  icon: string;
+  imageUrl?: string | null;
+  iconUrl?: string | null;
+  className?: string;
+}) => {
+  const mediaUrl = imageUrl ?? iconUrl;
+  const [imageFailed, setImageFailed] = useState(false);
+  const showMedia = mediaUrl && !imageFailed;
+
+  return (
+    <span className={`relative flex shrink-0 items-center justify-center overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-800 ${className}`}>
+      {showMedia ? (
+        <img
+          src={mediaUrl}
+          alt=""
+          referrerPolicy="no-referrer"
+          loading="lazy"
+          className="h-full w-full object-cover"
+          onError={() => setImageFailed(true)}
+        />
+      ) : (
+        <span aria-hidden="true">{icon}</span>
+      )}
+      <span className="absolute -bottom-1 -left-1 flex h-5 w-5 items-center justify-center rounded-full bg-[#ccff00] text-[9px] font-black text-black">L</span>
+      <span className="sr-only">{title}</span>
+    </span>
+  );
+};
+
+const MarketCardSkeleton = () => (
+  <div className="min-h-[260px] rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-[#121214]">
+    <div className="flex gap-3">
+      <div className="h-10 w-10 rounded-xl bg-zinc-100 dark:bg-zinc-800 animate-pulse" />
+      <div className="flex-1 space-y-2">
+        <div className="h-4 w-4/5 rounded bg-zinc-100 dark:bg-zinc-800 animate-pulse" />
+        <div className="h-3 w-2/3 rounded bg-zinc-100 dark:bg-zinc-800 animate-pulse" />
+      </div>
+    </div>
+    <div className="mt-5 h-8 rounded-lg bg-zinc-100 dark:bg-zinc-800 animate-pulse" />
+    <div className="mt-5 space-y-3">
+      {[0, 1, 2].map((item) => (
+        <div key={item} className="h-4 rounded bg-zinc-100 dark:bg-zinc-800 animate-pulse" />
+      ))}
+    </div>
+  </div>
+);
+
+const MarketGridMessage = ({ title, body }: { title: string; body: string }) => (
+  <div className="col-span-full rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-[#121214]">
+    <div className="text-sm font-bold text-zinc-900 dark:text-zinc-100">{title}</div>
+    <p className="mt-2 max-w-xl text-xs leading-5 text-zinc-500 dark:text-zinc-400">{body}</p>
+  </div>
+);
+
 const listMarketMeta = [
   { noPrice: '74¢', move: '+1.6%', closesBy: '36d 4h', sparkline: [36, 34, 39, 38, 41, 37, 35, 33, 36, 32, 31, 34] },
   { noPrice: '49¢', move: '+0.8%', closesBy: '36d 4h', sparkline: [45, 44, 46, 48, 47, 49, 51, 52, 50, 51, 52, 51] },
@@ -1123,6 +1427,13 @@ const listMarketMeta = [
 const Sparkline = ({ points, positive }: { points: number[]; positive: boolean }) => {
   const width = 96;
   const height = 36;
+  if (points.length < 2) {
+    return (
+      <svg viewBox={`0 0 ${width} ${height}`} className="h-9 w-24 overflow-visible" aria-hidden="true">
+        <path d={`M0,${height / 2} L${width},${height / 2}`} fill="none" stroke="#71717a" strokeDasharray="3 4" strokeWidth="1.5" strokeLinecap="round" />
+      </svg>
+    );
+  }
   const min = Math.min(...points);
   const max = Math.max(...points);
   const range = Math.max(max - min, 1);
@@ -1143,8 +1454,14 @@ const Sparkline = ({ points, positive }: { points: number[]; positive: boolean }
 };
 
 const LotusMarketList = ({
+  markets,
+  loading,
+  error,
   onOpenMarket,
 }: {
+  markets: DashboardMarketRow[];
+  loading: boolean;
+  error: string | null;
   onOpenMarket?: (market: Pick<TerminalMarketSelection, 'title' | 'category' | 'icon' | 'volume' | 'venueCount' | 'routeType'>) => void;
 }) => (
   <div className="overflow-hidden rounded-2xl border border-zinc-800 bg-[#101012] shadow-sm">
@@ -1159,6 +1476,75 @@ const LotusMarketList = ({
       <div className="text-right">Trade</div>
     </div>
     <div className="divide-y divide-zinc-800">
+      {loading && markets.length === 0 && [0, 1, 2, 3, 4, 5].map((item) => (
+        <div key={item} className="grid grid-cols-[minmax(360px,1.7fr)_112px_96px_84px_116px_92px_96px_150px] items-center gap-4 px-5 py-3.5">
+          {[0, 1, 2, 3, 4, 5, 6, 7].map((cell) => (
+            <div key={cell} className="h-8 rounded bg-zinc-900 animate-pulse" />
+          ))}
+        </div>
+      ))}
+      {!loading && error && (
+        <div className="px-5 py-6 text-sm font-medium text-amber-300">{error}</div>
+      )}
+      {!loading && !error && markets.length === 0 && (
+        <div className="px-5 py-6 text-sm font-medium text-zinc-400">No backend-approved markets found for this search.</div>
+      )}
+      {markets.map((market) => (
+        <div key={market.id} className="group grid grid-cols-[minmax(360px,1.7fr)_112px_96px_84px_116px_92px_96px_150px] items-center gap-4 px-5 py-3.5 transition-colors hover:bg-[#ccff00]/[0.035]">
+          <div className="flex min-w-0 items-center gap-3">
+            <button type="button" className="flex h-7 w-5 shrink-0 items-center justify-center rounded-md text-zinc-500 transition hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70" aria-label={`Expand ${market.title}`}>
+              <ChevronDown className="h-3.5 w-3.5" />
+            </button>
+            <button type="button" className="flex h-7 w-5 shrink-0 items-center justify-center rounded-md text-zinc-500 transition hover:text-[#ccff00] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70" aria-label={`Watch ${market.title}`} disabled>
+              <Bookmark className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => onOpenMarket?.(market)}
+              className="flex min-w-0 flex-1 items-center gap-3 rounded-xl text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 focus-visible:ring-offset-2 focus-visible:ring-offset-[#101012]"
+              aria-label={`Open ${market.title} in terminal`}
+            >
+              <MarketMediaThumb title={market.title} icon={market.icon} imageUrl={market.imageUrl} iconUrl={market.iconUrl} className="h-11 w-11 text-xl" />
+              <span className="min-w-0">
+                <span className="block truncate text-sm font-semibold text-zinc-100 transition-colors group-hover:text-[#ccff00]">{market.title}</span>
+                <span className="mt-1 flex items-center gap-2 text-xs text-zinc-500">
+                  <span>{market.category}</span>
+                  <span>-</span>
+                  <span>{market.routeType} route</span>
+                  <span>-</span>
+                  <span>{market.venueCount} venues</span>
+                  <span className="flex items-center gap-1">
+                    {market.venues.map((venue) => (
+                      <VenueChip key={venue} id={venue} size="xs" />
+                    ))}
+                  </span>
+                </span>
+              </span>
+            </button>
+          </div>
+          <Sparkline points={[]} positive={false} />
+          <div className="font-mono">
+            <div className="text-sm font-bold text-zinc-100">{market.priceLabel}</div>
+            <div className="mt-1 text-[10px] font-semibold text-zinc-500">{market.changeLabel}</div>
+          </div>
+          <div className="font-mono text-xs font-bold text-zinc-500">Quote</div>
+          <div>
+            <div className="font-mono text-sm font-semibold text-zinc-100">{market.volume}</div>
+            <div className="mt-1 font-mono text-[10px] text-zinc-500">
+              <span className="text-emerald-500">Quote required</span>
+            </div>
+          </div>
+          <div className="font-mono text-xs font-bold text-zinc-400">{market.closesBy}</div>
+          <div className="font-mono text-sm font-semibold text-zinc-100">
+            <span className="rounded-full border border-zinc-800 bg-zinc-900 px-2.5 py-1">{market.spread}</span>
+          </div>
+          <div className="flex justify-end gap-2">
+            <button type="button" onClick={() => onOpenMarket?.(market)} className="h-8 rounded-lg border border-emerald-500/60 bg-emerald-500/10 px-3 text-xs font-bold text-emerald-300 transition hover:bg-emerald-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70">Yes</button>
+            <button type="button" onClick={() => onOpenMarket?.(market)} className="h-8 rounded-lg border border-red-500/60 bg-red-500/10 px-3 text-xs font-bold text-red-300 transition hover:bg-red-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70">No</button>
+          </div>
+        </div>
+      ))}
+      {false && <>
       {marketListRows.map((market, index) => {
         const meta = listMarketMeta[index] ?? listMarketMeta[0];
         const positiveMove = !meta.move.startsWith('-');
@@ -1225,6 +1611,7 @@ const LotusMarketList = ({
           </div>
         );
       })}
+      </>}
     </div>
   </div>
 );
@@ -1339,7 +1726,7 @@ const NavItem = ({
   </div>
 );
 
-const MarketCard = ({ title, category, venueCount, routeType, savings, spread, fallback, icon, prob, change, changeTrend, volume, txnBuy, txnSell, badges, outcomes, onOpenTerminal }: any) => {
+const MarketCard = ({ title, category, venueCount, routeType, savings, spread, fallback, fallbackLabel, icon, imageUrl, iconUrl, priceLabel, changeLabel, prob, change, volume, txnBuy, txnSell, badges = [], outcomes, marketType, onOpenTerminal }: any) => {
   const allVenues = [
     { id: 'polymarket', label: 'Polymarket' },
     { id: 'predict', label: 'Predict.fun' },
@@ -1348,6 +1735,13 @@ const MarketCard = ({ title, category, venueCount, routeType, savings, spread, f
     { id: 'myriad', label: 'Myriad' }
   ];
 
+  const displayPrice = priceLabel ?? (prob !== null && prob !== undefined ? `${prob}Â¢` : 'Quote');
+  const displayChange = changeLabel ?? (change ? `+${change}Â¢ vs single venue` : 'Quote required');
+  const buyCount = typeof txnBuy === 'number' ? txnBuy : 0;
+  const sellCount = typeof txnSell === 'number' ? txnSell : 0;
+  const totalCount = buyCount + sellCount;
+  const fallbackText = fallbackLabel ?? (fallback ? 'Yes' : 'No');
+
   return (
     <div className="bg-white dark:bg-[#121214] border border-zinc-200 dark:border-zinc-800 rounded-2xl p-4 flex min-h-[260px] flex-col justify-between gap-3 shadow-sm hover:border-zinc-300 dark:hover:border-zinc-700 hover:shadow-md transition-all group">
       
@@ -1355,13 +1749,11 @@ const MarketCard = ({ title, category, venueCount, routeType, savings, spread, f
       <div className="flex justify-between items-start">
         <button
           type="button"
-          onClick={() => onOpenTerminal?.({ title, category, icon, volume, venueCount, routeType })}
+          onClick={() => onOpenTerminal?.({ title, category, icon, volume, venueCount, routeType, marketType })}
           className="flex min-w-0 flex-1 gap-3 items-start rounded-xl text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-[#121214]"
           aria-label={`Open ${title} in terminal`}
         >
-          <span className="w-10 h-10 rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200/80 dark:border-zinc-700/80 flex items-center justify-center shrink-0 text-xl shadow-sm">
-            {icon}
-          </span>
+          <MarketMediaThumb title={title} icon={icon} imageUrl={imageUrl} iconUrl={iconUrl} className="h-10 w-10 text-xl shadow-sm" />
           <span className="flex-1 min-w-0">
             <span className="block text-sm font-bold text-zinc-900 dark:text-zinc-100 leading-tight mb-1 line-clamp-2 pr-2 transition-colors group-hover:text-[#5c7300] dark:group-hover:text-[#ccff00]">{title}</span>
             <span className="block text-[11px] font-medium text-zinc-500 dark:text-zinc-400 mb-2.5">
@@ -1385,6 +1777,10 @@ const MarketCard = ({ title, category, venueCount, routeType, savings, spread, f
           </span>
         </button>
         <div className="text-right shrink-0 ml-2">
+          <div className="text-base font-mono font-bold text-zinc-900 dark:text-zinc-100 leading-none mb-1">{displayPrice}</div>
+          <div className="text-[10px] font-bold text-zinc-500 dark:text-zinc-400">{displayChange}</div>
+        </div>
+        <div className="hidden">
           <div className="text-base font-mono font-bold text-zinc-900 dark:text-zinc-100 leading-none mb-1">{prob}¢</div>
           <div className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
             +{change}¢ vs single venue
@@ -1397,10 +1793,10 @@ const MarketCard = ({ title, category, venueCount, routeType, savings, spread, f
         <div className="flex items-center justify-between px-3 py-1.5 bg-[#ccff00]/5 border border-[#ccff00]/20 rounded-lg text-[10px] font-medium">
           <div className="flex items-center gap-3">
              <span className="text-zinc-700 dark:text-zinc-300"><span className="text-zinc-500 dark:text-zinc-400">Route:</span> {routeType}</span>
-             <span className="text-zinc-700 dark:text-zinc-300"><span className="text-zinc-500 dark:text-zinc-400">Savings:</span> <span className="text-[#99cc00] font-bold">+{savings}</span></span>
+             <span className="text-zinc-700 dark:text-zinc-300"><span className="text-zinc-500 dark:text-zinc-400">Savings:</span> <span className="text-[#99cc00] font-bold">{savings}</span></span>
              {spread && <span className="text-zinc-700 dark:text-zinc-300"><span className="text-zinc-500 dark:text-zinc-400">Spread:</span> {spread}</span>}
           </div>
-          <span className="text-zinc-700 dark:text-zinc-300"><span className="text-zinc-500 dark:text-zinc-400">Fallback:</span> {fallback ? 'Yes' : 'No'}</span>
+          <span className="text-zinc-700 dark:text-zinc-300"><span className="text-zinc-500 dark:text-zinc-400">Fallback:</span> {fallbackText}</span>
         </div>
       )}
 
@@ -1413,10 +1809,10 @@ const MarketCard = ({ title, category, venueCount, routeType, savings, spread, f
             <div key={idx} className="flex items-center justify-between text-sm">
               <span className="font-semibold text-zinc-600 dark:text-zinc-400 truncate pr-2 flex-1 text-xs">{outcome.name}</span>
               <div className="flex items-center gap-3 shrink-0">
-                <span className="font-mono font-bold text-zinc-900 dark:text-zinc-100 w-8 text-right text-xs">{outcome.prob}%</span>
+                <span className="font-mono font-bold text-zinc-900 dark:text-zinc-100 w-12 text-right text-xs">{outcome.prob}{/^\d+(\.\d+)?$/.test(String(outcome.prob)) ? '%' : ''}</span>
                 <div className="flex gap-1.5">
-                  <button className="w-9 py-1 bg-emerald-500 hover:bg-emerald-600 text-white text-[10px] transition-colors rounded font-bold shadow-sm">Yes</button>
-                  <button className="w-9 py-1 bg-red-500 hover:bg-red-600 text-white text-[10px] transition-colors rounded font-bold shadow-sm">No</button>
+                  <button type="button" onClick={() => onOpenTerminal?.({ title, category, icon, volume, venueCount, routeType, marketType })} className="w-9 py-1 bg-emerald-500 hover:bg-emerald-600 text-white text-[10px] transition-colors rounded font-bold shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70">Yes</button>
+                  <button type="button" onClick={() => onOpenTerminal?.({ title, category, icon, volume, venueCount, routeType, marketType })} className="w-9 py-1 bg-red-500 hover:bg-red-600 text-white text-[10px] transition-colors rounded font-bold shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70">No</button>
                 </div>
               </div>
             </div>
@@ -1435,11 +1831,34 @@ const MarketCard = ({ title, category, venueCount, routeType, savings, spread, f
           <span>Vol <span className="text-zinc-700 dark:text-zinc-300 font-mono">{volume}</span></span>
         </div>
         <div className="flex items-center justify-between text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
+          {totalCount > 0 ? (
+            <>
+              <span className="text-emerald-600 dark:text-emerald-500/90">{buyCount.toLocaleString()} Buys</span>
+              <span>-</span>
+              <span className="text-red-600 dark:text-red-500/90">{sellCount.toLocaleString()} Sells</span>
+            </>
+          ) : (
+            <span className="text-zinc-500">Live quote required for order flow</span>
+          )}
+        </div>
+        <div className="hidden">
           <span className="text-emerald-600 dark:text-emerald-500/90">{txnBuy.toLocaleString()} Buys</span>
           <span>·</span>
           <span className="text-red-600 dark:text-red-500/90">{txnSell.toLocaleString()} Sells</span>
         </div>
         <div className="flex items-center gap-1.5 w-full">
+          <div className="flex-1 h-1 bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden flex">
+            {totalCount > 0 ? (
+              <>
+                <div className="h-full bg-emerald-500" style={{ width: `${(buyCount / totalCount) * 100}%` }}></div>
+                <div className="h-full bg-red-500" style={{ width: `${(sellCount / totalCount) * 100}%` }}></div>
+              </>
+            ) : (
+              <div className="h-full w-full bg-zinc-300 dark:bg-zinc-700"></div>
+            )}
+          </div>
+        </div>
+        <div className="hidden">
           <div className="flex-1 h-1 bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden flex">
             <div className="h-full bg-emerald-500" style={{ width: `${(txnBuy / (txnBuy + txnSell)) * 100}%` }}></div>
             <div className="h-full bg-red-500" style={{ width: `${(txnSell / (txnBuy + txnSell)) * 100}%` }}></div>
