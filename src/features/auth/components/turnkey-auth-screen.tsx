@@ -35,10 +35,8 @@ export function TurnkeyAuthScreen({
       loading={loading || !turnkeyReady}
       error={error ?? (turnkeyError ? "Turnkey login configuration failed to initialize." : null)}
       onEmailSubmit={onEmailSubmit}
-      onGoogleLogin={() => runTurnkeyFlow(() => handleGoogleOauth({ openInPage: false }))}
-      onTwitterLogin={() => runTurnkeyFlow(() => handleXOauth({ openInPage: false }))}
-      onPasskeyLogin={() => onError("Passkey login is disabled while OAuth login is being verified.")}
-      onWalletLogin={() => onError("Wallet login is disabled while OAuth login is being verified.")}
+      onGoogleLogin={() => runTurnkeyFlow(() => handleGoogleOauth({ openInPage: true }))}
+      onTwitterLogin={() => runTurnkeyFlow(() => handleXOauth({ openInPage: true }))}
     />
   );
 }

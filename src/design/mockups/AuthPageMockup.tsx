@@ -1,6 +1,6 @@
 import type { FormEvent, ReactNode } from "react";
 import { useState } from "react";
-import { GoogleIcon, TwitterIcon, MailIcon, WalletIcon, UserIcon, KeyIcon } from '@/components/icons/lotus-icons';
+import { GoogleIcon, TwitterIcon, MailIcon } from '@/components/icons/lotus-icons';
 
 const AuthButton = ({ icon, label, onClick, disabled = false }: { icon: ReactNode; label: string; onClick?: () => void; disabled?: boolean }) => (
   <button 
@@ -20,16 +20,12 @@ export function AuthPageMockup({
   onEmailSubmit,
   onGoogleLogin,
   onTwitterLogin,
-  onPasskeyLogin,
-  onWalletLogin,
   loading = false,
   error,
 }: {
   onEmailSubmit?: (email: string) => Promise<void> | void;
   onGoogleLogin?: () => Promise<void> | void;
   onTwitterLogin?: () => Promise<void> | void;
-  onPasskeyLogin?: () => Promise<void> | void;
-  onWalletLogin?: () => Promise<void> | void;
   loading?: boolean;
   error?: string | null;
 }) {
@@ -100,9 +96,6 @@ export function AuthPageMockup({
 
               <AuthButton icon={<GoogleIcon />} label="Continue with Google" onClick={onGoogleLogin} disabled={loading} />
               <AuthButton icon={<TwitterIcon />} label="Continue with Twitter" onClick={onTwitterLogin} disabled={loading} />
-              <AuthButton icon={<KeyIcon />} label="Continue with Passkey" onClick={onPasskeyLogin} disabled={loading} />
-              <AuthButton icon={<WalletIcon />} label="Continue with a Wallet" onClick={onWalletLogin} disabled={loading} />
-              <AuthButton icon={<UserIcon />} label="Other socials" disabled />
             </div>
 
             <div className="mt-8 text-center">
