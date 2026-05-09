@@ -569,6 +569,7 @@ Rules and Risk tab:
   - `GET /resolution-risk/market/:venue/:marketId`
 - Current wiring: terminal loads canonical assessment and venue market profiles for the selected market immediately on selection. Pair-level comparison remains available in backend contracts but is not called by the terminal UI in this slice.
 - Dashboard market cards must pass `canonicalEventId`, `venues`, and `venueMarkets` into the terminal payload; otherwise the terminal can render the market but cannot load rules/risk profiles.
+- Platform Rules presents venue rule text, supplemental rules, oracle/source type, authority type, outcome schema, and boundary flags. Aggregation Justification presents the semantic comparison factors and backend pooling decision rather than treating a market title as an execution source.
 - Risk and compatibility belongs inside this tab, not beside the order book.
 
 ### Phase 8 - Terminal Trade Panel

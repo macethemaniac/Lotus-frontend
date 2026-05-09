@@ -232,6 +232,40 @@ const riskTone = (assessment: ResolutionRiskAssessment | null) => {
   return { icon: ShieldAlert, color: 'text-red-400', bg: 'bg-red-500/10', title: 'Execution isolation required' };
 };
 
+const formatRiskFactorName = (factor: string): string =>
+  factor.replace(/([A-Z])/g, ' $1').replace(/^./, (letter) => letter.toUpperCase());
+
+const riskFactorRows = (assessment: ResolutionRiskAssessment) =>
+  Object.entries(assessment.factorBreakdown ?? {}).map(([name, value]) => {
+    const factor = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+    const score = typeof factor.score === 'string' || typeof factor.score === 'number' ? String(factor.score) : null;
+    const confidence = typeof factor.confidence === 'string' || typeof factor.confidence === 'number' ? String(factor.confidence) : null;
+    const reason = typeof factor.reason === 'string' ? factor.reason : null;
+    return { name, score, confidence, reason };
+  });
+
+const ruleTextForProfile = (profile: ResolutionRiskProfile): string =>
+  profile.primaryResolutionText || profile.supplementalRulesText || 'Backend has not returned public venue rule text for this market.';
+
+const describeOutcomeSchema = (schema: Record<string, unknown> | null | undefined): string => {
+  if (!schema) return 'Outcome schema not specified';
+  const yes = typeof schema.yesLabel === 'string' ? schema.yesLabel : 'Yes';
+  const no = typeof schema.noLabel === 'string' ? schema.noLabel : 'No';
+  const shape = typeof schema.marketShape === 'string' ? schema.marketShape : 'market';
+  return `${shape} - ${yes} / ${no}`;
+};
+
+const semanticComparisonSummary = (profiles: ResolutionRiskProfile[], assessment: ResolutionRiskAssessment | null): string => {
+  if (profiles.length < 2) {
+    return 'Backend needs at least two venue rule profiles before Lotus can explain aggregation compatibility.';
+  }
+  const venues = profiles.map((profile) => formatVenueLabel(profile.venue)).join(' vs ');
+  if (!assessment) {
+    return `${venues}: venue rules are loaded, but no backend aggregation decision has been returned yet.`;
+  }
+  return `${venues}: Lotus compares the venue rule text, oracle/source type, outcome schema, wording boundaries, dispute windows, settlement lag, and historical divergence before deciding whether these markets can be aggregated.`;
+};
+
 const initialOutcomeRows = (market: TerminalMarketSelection): TerminalOutcomeRow[] => {
   const rows = market.outcomes ?? [];
   return rows.map((outcome, index) => ({
@@ -619,6 +653,7 @@ export const InfraTradingTerminal = ({
   const primaryRiskAssessment = riskState.assessments[0] ?? null;
   const primaryRiskTone = riskTone(primaryRiskAssessment);
   const PrimaryRiskIcon = primaryRiskTone.icon;
+  const primaryRiskFactors = primaryRiskAssessment ? riskFactorRows(primaryRiskAssessment) : [];
   const bottomPanelHeight = bottomTab === 'Outcomes'
     ? 'h-[440px] 2xl:h-[500px]'
     : 'h-[620px] 2xl:h-[720px]';
@@ -1343,9 +1378,23 @@ export const InfraTradingTerminal = ({
                                                                 <VenueLogo id={normalizeVenueId(profile.venue)} label={formatVenueLabel(profile.venue)} className="h-3.5 w-3.5 rounded-full" />
                                                                 {formatVenueLabel(profile.venue)}
                                                             </div>
-                                                            <div className="space-y-3 text-xs text-zinc-300 leading-relaxed max-w-xl font-medium">
-                                                                <p>{profile.primaryResolutionText || profile.supplementalRulesText || 'Backend has not returned public resolution text for this venue market.'}</p>
-                                                                {profile.oracleName && <p className="text-zinc-400">Resolution source: {profile.oracleName}</p>}
+                                                            <div className="space-y-3 text-xs text-zinc-300 leading-relaxed max-w-3xl font-medium">
+                                                                <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-3">
+                                                                  <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500">Venue rule text</div>
+                                                                  <p className="mt-2">{ruleTextForProfile(profile)}</p>
+                                                                </div>
+                                                                {profile.supplementalRulesText && profile.supplementalRulesText !== profile.primaryResolutionText && (
+                                                                  <div className="rounded-lg border border-zinc-800 bg-zinc-950/30 p-3">
+                                                                    <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500">Supplemental venue rules</div>
+                                                                    <p className="mt-2 text-zinc-400">{profile.supplementalRulesText}</p>
+                                                                  </div>
+                                                                )}
+                                                                <div className="grid grid-cols-2 gap-2 text-[11px] text-zinc-400">
+                                                                  <div><span className="text-zinc-500">Oracle/source type:</span> {profile.oracleType ?? 'Not specified'}</div>
+                                                                  <div><span className="text-zinc-500">Resolution authority:</span> {profile.resolutionAuthorityType ?? 'Not specified'}</div>
+                                                                  <div><span className="text-zinc-500">Outcome schema:</span> {describeOutcomeSchema(profile.outcomeSchema)}</div>
+                                                                  <div><span className="text-zinc-500">Venue market:</span> {profile.venueMarketId}</div>
+                                                                </div>
                                                                 {(profile.disputeWindowHours || profile.settlementLagHours) && (
                                                                   <p className="text-zinc-500">
                                                                     Dispute window {profile.disputeWindowHours ?? 'n/a'}h - settlement lag {profile.settlementLagHours ?? 'n/a'}h
@@ -1360,17 +1409,40 @@ export const InfraTradingTerminal = ({
                                             )}
                                             {rulesInnerTab === 'aggregation' && (
                                                 riskState.assessments.length > 0 ? (
-                                                    <div className="space-y-4 text-sm text-zinc-300 leading-relaxed max-w-xl">
+                                                    <div className="space-y-4 text-sm text-zinc-300 leading-relaxed max-w-3xl">
                                                         {riskState.assessments.map((assessment, index) => (
                                                           <div key={`${assessment.label}-${index}`} className="rounded-xl border border-zinc-800 bg-zinc-950/30 p-4">
                                                             <div className="flex items-center justify-between gap-3">
-                                                              <div className="font-bold text-zinc-100">{assessment.label}</div>
+                                                              <div>
+                                                                <div className="font-bold text-zinc-100">Semantic rule comparison</div>
+                                                                <div className="mt-1 text-xs text-zinc-500">{semanticComparisonSummary(riskState.profiles, assessment)}</div>
+                                                              </div>
                                                               <div className="rounded-full border border-zinc-700 px-2 py-1 text-[10px] font-bold uppercase tracking-widest text-zinc-300">{assessment.recommendedAction}</div>
                                                             </div>
-                                                            <div className="mt-3 space-y-2 text-xs text-zinc-400">
-                                                              {assessment.shortReasons.length > 0
-                                                                ? assessment.shortReasons.map((reason) => <p key={reason}>{reason}</p>)
-                                                                : <p>Backend did not return explanatory reasons for this assessment.</p>}
+                                                            <div className="mt-4 grid gap-3 md:grid-cols-2">
+                                                              {riskFactorRows(assessment).length > 0 ? riskFactorRows(assessment).map((factor) => (
+                                                                <div key={factor.name} className="rounded-lg border border-zinc-800 bg-[#0c0c0e] p-3">
+                                                                  <div className="flex items-center justify-between gap-2">
+                                                                    <div className="text-xs font-bold text-zinc-200">{formatRiskFactorName(factor.name)}</div>
+                                                                    <div className="text-[10px] font-mono text-zinc-500">
+                                                                      score {factor.score ?? 'n/a'} / conf {factor.confidence ?? 'n/a'}
+                                                                    </div>
+                                                                  </div>
+                                                                  <p className="mt-2 text-xs text-zinc-500">{factor.reason ?? 'No mismatch returned for this semantic factor.'}</p>
+                                                                </div>
+                                                              )) : (
+                                                                <div className="rounded-lg border border-zinc-800 bg-[#0c0c0e] p-3 md:col-span-2">
+                                                                  <div className="text-xs font-bold text-zinc-200">Backend decision reason</div>
+                                                                  <div className="mt-2 space-y-2 text-xs text-zinc-400">
+                                                                    {assessment.shortReasons.length > 0
+                                                                      ? assessment.shortReasons.map((reason) => <p key={reason}>{reason}</p>)
+                                                                      : <p>Backend did not return explanatory reasons for this assessment.</p>}
+                                                                  </div>
+                                                                </div>
+                                                              )}
+                                                            </div>
+                                                            <div className="mt-3 rounded-lg border border-zinc-800 bg-zinc-950/40 p-3 text-xs text-zinc-400">
+                                                              <span className="font-bold text-zinc-200">Aggregation decision:</span> {assessment.label}. Lotus should only aggregate when the venue rules are semantically compatible and the backend recommendation allows pooling.
                                                             </div>
                                                           </div>
                                                         ))}
@@ -1398,7 +1470,7 @@ export const InfraTradingTerminal = ({
                                                               <>
                                                                 <li className="flex items-center gap-1.5"><div className={`w-1.5 h-1.5 rounded-full ${primaryRiskAssessment.equivalenceClass === 'SAFE_EQUIVALENT' ? 'bg-emerald-500' : 'bg-amber-500'}`}></div>{primaryRiskAssessment.recommendedAction}</li>
                                                                 <li className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-zinc-500"></div>Risk {primaryRiskAssessment.riskScore} - confidence {primaryRiskAssessment.confidenceScore}</li>
-                                                                {primaryRiskAssessment.shortReasons.slice(0, 3).map((reason) => (
+                                                                {(primaryRiskFactors.length > 0 ? primaryRiskFactors.slice(0, 3).map((factor) => `${formatRiskFactorName(factor.name)}: ${factor.reason ?? 'compatible'}`) : primaryRiskAssessment.shortReasons.slice(0, 3)).map((reason) => (
                                                                   <li key={reason} className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-zinc-500"></div>{reason}</li>
                                                                 ))}
                                                               </>
