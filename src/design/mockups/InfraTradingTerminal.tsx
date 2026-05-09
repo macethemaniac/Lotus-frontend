@@ -283,6 +283,26 @@ const sourceUrlForProfile = (profile: ResolutionRiskProfile): string | null => {
   return typeof sourceUrl === 'string' && /^https:\/\//i.test(sourceUrl) ? sourceUrl : null;
 };
 
+const sourceProviderForProfile = (profile: ResolutionRiskProfile): string | null => {
+  const oracleName = profile.oracleName?.trim();
+  if (!oracleName) return null;
+  const [provider] = oracleName.split(/\s+/);
+  return provider || null;
+};
+
+const sourceMarketForProfile = (profile: ResolutionRiskProfile): string | null => {
+  const provider = sourceProviderForProfile(profile);
+  const oracleName = profile.oracleName?.trim();
+  if (!provider || !oracleName || oracleName === provider) return null;
+  return oracleName.slice(provider.length).trim() || null;
+};
+
+const formatSourceMethod = (oracleType: string | null | undefined): string =>
+  (oracleType ?? 'Not specified')
+    .toLowerCase()
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+
 const describeOutcomeSchema = (schema: Record<string, unknown> | null | undefined): string => {
   if (!schema) return 'Outcome schema not specified';
   const yes = typeof schema.yesLabel === 'string' ? schema.yesLabel : 'Yes';
@@ -1426,8 +1446,9 @@ export const InfraTradingTerminal = ({
                                                                   </div>
                                                                 )}
                                                                 <div className="grid grid-cols-2 gap-2 text-[11px] text-zinc-400">
-                                                                  <div><span className="text-zinc-500">Oracle/source:</span> {profile.oracleName ?? 'Not specified'}</div>
-                                                                  <div><span className="text-zinc-500">Source type:</span> {profile.oracleType ?? 'Not specified'}</div>
+                                                                  <div><span className="text-zinc-500">Source type:</span> {sourceProviderForProfile(profile) ?? 'Not specified'}</div>
+                                                                  <div><span className="text-zinc-500">Source market:</span> {sourceMarketForProfile(profile) ?? profile.oracleName ?? 'Not specified'}</div>
+                                                                  <div><span className="text-zinc-500">Resolution method:</span> {formatSourceMethod(profile.oracleType)}</div>
                                                                   <div><span className="text-zinc-500">Resolution authority:</span> {profile.resolutionAuthorityType ?? 'Not specified'}</div>
                                                                   <div><span className="text-zinc-500">Outcome schema:</span> {describeOutcomeSchema(profile.outcomeSchema)}</div>
                                                                   <div><span className="text-zinc-500">Venue market:</span> {profile.venueMarketId}</div>
