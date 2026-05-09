@@ -705,23 +705,32 @@ export const InfraTradingTerminal = ({
       setAccountError(null);
       return;
     }
+    if (bottomTab !== 'Positions' && bottomTab !== 'Open Orders' && bottomTab !== 'Trade History') {
+      setAccountLoading(false);
+      setAccountError(null);
+      return;
+    }
     setAccountLoading(true);
     setAccountError(null);
     try {
-      const [positionsResponse, openOrdersResponse, historyResponse] = await Promise.all([
-        getPositions(token, { limit: 100 }),
-        getOpenOrders(token, { limit: 50 }),
-        getExecutionHistory(token, { limit: 50 }),
-      ]);
-      setPositions(positionsResponse.positions.filter((position) => matchesPositionMarket(position, terminalMarketId, null)));
-      setOpenOrders(openOrdersResponse.items.filter((order) => matchesTerminalMarket(order, terminalMarketId)));
-      setTradeHistory(historyResponse.items.filter((item) => matchesTerminalMarket(item, terminalMarketId)));
+      if (bottomTab === 'Positions') {
+        const positionsResponse = await getPositions(token, { limit: 100 });
+        setPositions(positionsResponse.positions.filter((position) => matchesPositionMarket(position, terminalMarketId, null)));
+      }
+      if (bottomTab === 'Open Orders') {
+        const openOrdersResponse = await getOpenOrders(token, { limit: 50 });
+        setOpenOrders(openOrdersResponse.items.filter((order) => matchesTerminalMarket(order, terminalMarketId)));
+      }
+      if (bottomTab === 'Trade History') {
+        const historyResponse = await getExecutionHistory(token, { limit: 50 });
+        setTradeHistory(historyResponse.items.filter((item) => matchesTerminalMarket(item, terminalMarketId)));
+      }
     } catch (error) {
       setAccountError(error instanceof Error ? error.message : 'Unable to load execution records');
     } finally {
       setAccountLoading(false);
     }
-  }, [terminalMarketId, token]);
+  }, [bottomTab, terminalMarketId, token]);
 
   React.useEffect(() => {
     void refreshAccountData();

@@ -542,7 +542,7 @@ Positions tab:
 
 - Data: `GET /execution/positions`
 - WebSocket: `execution:positions:<userId>:<marketHash>:<outcomeHash>`
-- Current wiring: terminal polls `GET /execution/positions` about every 15 seconds while authenticated and filters to the selected market client-side because the backend positions endpoint requires market/outcome together when filtering.
+- Current wiring: terminal polls `GET /execution/positions` about every 15 seconds only while the Positions tab is open, then filters to the selected market client-side because the backend positions endpoint requires market/outcome together when filtering.
 - Show unified position and per-venue position where backend returns verified fill evidence.
 - Do not show unverified submitted orders as positions.
 
@@ -550,7 +550,7 @@ Open Orders tab:
 
 - Show current active execution if selected.
 - Data: `GET /execution/open-orders`
-- Current wiring: terminal polls open orders about every 15 seconds while authenticated and filters backend-returned executions to the selected market route.
+- Current wiring: terminal polls open orders about every 15 seconds only while the Open Orders tab is open, then filters backend-returned executions to the selected market route.
 - Show only backend-returned non-dry-run executions in `SUBMITTED` or `PARTIAL` status.
 - Do not show limit orders here until the separate limit-order contract is implemented.
 
@@ -558,7 +558,7 @@ Trade History tab:
 
 - Show backend-confirmed execution history only.
 - Data: `GET /execution/history`
-- Current wiring: terminal polls execution history about every 15 seconds while authenticated and filters backend-returned executions to the selected market route.
+- Current wiring: terminal polls execution history about every 15 seconds only while the Trade History tab is open, then filters backend-returned executions to the selected market route.
 - Receipts: `GET /execution/:executionId/receipt`
 
 Rules and Risk tab:
