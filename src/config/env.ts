@@ -17,7 +17,9 @@ export const env = {
     ? turnkeyAuthProxyUrl.replace(/\/$/, "")
     : "/turnkey-auth-proxy",
   turnkeyOauthRedirectUri: typeof turnkeyOauthRedirectUri === "string" ? turnkeyOauthRedirectUri : "",
-  lotusAuthExchangePath: typeof lotusAuthExchangePath === "string" ? lotusAuthExchangePath : "",
+  lotusAuthExchangePath: typeof lotusAuthExchangePath === "string" && lotusAuthExchangePath.length > 0
+    ? lotusAuthExchangePath
+    : "/auth/turnkey/exchange",
 };
 
 export function lotusWsUrl(): string {

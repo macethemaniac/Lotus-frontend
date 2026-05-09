@@ -3,14 +3,19 @@ import { lotusWsUrl } from "@/config/env";
 export type ExecutionTopic =
   | `execution:user:${string}`
   | `execution:quote:${string}`
-  | `execution:positions:${string}:${string}:${string}`;
+  | `execution:portfolio:${string}`
+  | `execution:positions:${string}:${string}:${string}`
+  | `notifications:user:${string}`;
 
 export type ExecutionWsEvent = {
   type:
     | "EXECUTION_STATUS_UPDATE"
     | "EXECUTION_POSITION_UPDATE"
+    | "EXECUTION_MARK_UPDATE"
+    | "EXECUTION_PORTFOLIO_UPDATE"
     | "EXECUTION_READINESS_UPDATE"
-    | "EXECUTION_BALANCE_UPDATE";
+    | "EXECUTION_BALANCE_UPDATE"
+    | "USER_NOTIFICATION";
   topic: ExecutionTopic;
   emittedAt: string;
   payload: unknown;
@@ -58,5 +63,7 @@ function parseMessage(data: unknown): unknown {
 function isExecutionEvent(value: unknown): value is ExecutionWsEvent {
   if (!value || typeof value !== "object") return false;
   const event = value as Record<string, unknown>;
-  return typeof event.type === "string" && event.type.startsWith("EXECUTION_") && typeof event.topic === "string";
+  return typeof event.type === "string" &&
+    (event.type.startsWith("EXECUTION_") || event.type === "USER_NOTIFICATION") &&
+    typeof event.topic === "string";
 }

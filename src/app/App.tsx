@@ -19,9 +19,8 @@ import {
   loadStoredSession,
   storeSession,
 } from "@/features/auth/session-storage";
-import { DashboardV2Mockup, type LotusAppPage } from "@/design/mockups/DashboardV2Mockup";
-import { DenseStripFooter } from "@/design/mockups/GlobalFooterVariations";
 import { TurnkeyAuthScreen } from "@/features/auth/components/turnkey-auth-screen";
+import { LotusBetaShell } from "@/features/beta/components/lotus-beta-shell";
 
 function formatTurnkeyError(error: unknown): string {
   if (!(error instanceof Error)) {
@@ -218,7 +217,6 @@ export function App() {
   const [session, setSession] = useState<AuthSession | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
-  const [activePage, setActivePage] = useState<LotusAppPage>("home");
 
   useEffect(() => {
     setSession(loadStoredSession());
@@ -269,14 +267,7 @@ export function App() {
         });
       })
       .catch(() => {
-        applySession({
-          userJwt: params.session?.token ?? "",
-          userId: params.session?.userId ?? "turnkey-user",
-          turnkeySessionToken: params.session?.token,
-          turnkeyOrganizationId: params.session?.organizationId,
-          source: "turnkey",
-        });
-        setAuthError("Logged in with Turnkey. Lotus backend JWT exchange is not configured yet.");
+        setAuthError("Turnkey login succeeded, but Lotus could not issue a session. Try again or check backend auth.");
       })
       .finally(() => setAuthLoading(false));
   };
@@ -300,8 +291,7 @@ export function App() {
   return (
     <div className="h-screen overflow-hidden bg-black pb-10">
       <AccountDropdown session={session} onLogout={handleLogout} />
-      <DashboardV2Mockup activePage={activePage} onNavigate={setActivePage} />
-      <DenseStripFooter fixed />
+      <LotusBetaShell session={session} />
     </div>
   );
 }

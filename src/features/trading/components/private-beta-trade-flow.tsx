@@ -169,7 +169,10 @@ export function PrivateBetaTradeFlow({ session }: { session: AuthSession | null 
       const result = await getExecutionStatus(session.userJwt, id);
       setExecutionStatus(result);
       if (result.route?.marketId && result.route?.outcomeId) {
-        const positionResponse = await getPositions(session.userJwt, result.route.marketId, result.route.outcomeId);
+        const positionResponse = await getPositions(session.userJwt, {
+          marketId: result.route.marketId,
+          outcomeId: result.route.outcomeId,
+        });
         setPositions(positionResponse.positions ?? []);
       }
       if (noisy) setMessage("Execution status refreshed.");

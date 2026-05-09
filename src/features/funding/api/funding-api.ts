@@ -10,6 +10,16 @@ export type VenueBalance = {
   updatedAt?: string;
 };
 
+export type VenueCapability = {
+  venue?: string;
+  status?: string;
+  supported?: boolean;
+  fundingSupported?: boolean;
+  withdrawalSupported?: boolean;
+  blockers?: string[];
+  [key: string]: unknown;
+};
+
 export type VenueActivation = {
   venue: string;
   token?: string;
@@ -28,8 +38,46 @@ export type FundingHistoryRow = {
   updatedAt?: string;
 };
 
+export type FundingReceipt = {
+  fundingIntentId: string;
+  currentStatus: string;
+  sourceChain: string;
+  sourceToken: string;
+  sourceAmount: string;
+  sourceWalletAddress: string;
+  totalEstimatedFees: string;
+  totalEstimatedTimeSeconds: number | null;
+  createdAt: string;
+  updatedAt: string;
+  targets: unknown[];
+  routeLegs: unknown[];
+  reconciliations: unknown[];
+  userSafeMessage: string;
+};
+
+export type WithdrawalReceipt = {
+  withdrawalIntentId: string;
+  currentStatus: string;
+  token: string;
+  amount: string;
+  destinationChain: string;
+  destinationWalletAddress: string;
+  totalEstimatedFees: string;
+  totalEstimatedTimeSeconds: number | null;
+  createdAt: string;
+  updatedAt: string;
+  sources: unknown[];
+  routeLegs: unknown[];
+  reconciliations: unknown[];
+  userSafeMessage: string;
+};
+
 export function getVenueBalances(token: string) {
   return apiRequest<{ balances?: VenueBalance[]; venues?: VenueBalance[] }>("/funding/venue-balances", { token });
+}
+
+export function getVenueCapabilities(token: string) {
+  return apiRequest<{ capabilities: VenueCapability[] | Record<string, VenueCapability> }>("/funding/venues/capabilities", { token });
 }
 
 export function getVenueActivations(token: string) {
@@ -38,4 +86,18 @@ export function getVenueActivations(token: string) {
 
 export function getFundingHistory(token: string) {
   return apiRequest<{ rows?: FundingHistoryRow[]; history?: FundingHistoryRow[] }>("/funding/history?pageSize=10", { token });
+}
+
+export function getFundingReceipt(token: string, fundingIntentId: string) {
+  return apiRequest<{ generatedAt: string; receipt: FundingReceipt }>(
+    `/funding/intents/${encodeURIComponent(fundingIntentId)}/receipt`,
+    { token }
+  );
+}
+
+export function getWithdrawalReceipt(token: string, withdrawalIntentId: string) {
+  return apiRequest<{ generatedAt: string; receipt: WithdrawalReceipt }>(
+    `/funding/withdrawals/${encodeURIComponent(withdrawalIntentId)}/receipt`,
+    { token }
+  );
 }
