@@ -119,6 +119,8 @@ type TerminalRiskState = {
 
 type TerminalOpenOrder = OpenOrdersResponse['items'][number];
 
+const EMPTY_VENUE_MARKETS: MarketCatalogVenueMarket[] = [];
+
 const isUuid = (value: string | null | undefined): value is string =>
   Boolean(value && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value));
 
@@ -405,8 +407,8 @@ const CanonicalChart = ({ marketType }: { marketType: 'binary' | 'multi' }) => {
       </div>
 
       {/* Chart Area */}
-      <div className="flex-1 w-full mt-6 pr-4 relative">
-        <ResponsiveContainer width="100%" height="100%">
+      <div className="h-[300px] min-h-[300px] w-full mt-6 pr-4 relative">
+        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={260}>
           <LineChart data={data} margin={{ top: 20, right: 30, left: 10, bottom: 5 }}>
             <XAxis 
               dataKey="date" 
@@ -564,7 +566,7 @@ export const InfraTradingTerminal = ({
   */
   const terminalMarketId = executionMarketId(terminalMarket);
   const terminalCanonicalEventId = selectedMarket?.canonicalEventId ?? selectedMarket?.eventId ?? null;
-  const selectedVenueMarkets = selectedMarket?.venueMarkets ?? [];
+  const selectedVenueMarkets = selectedMarket?.venueMarkets ?? EMPTY_VENUE_MARKETS;
   const token = session?.userJwt ?? null;
   const marketVenueList = useMemo(() => {
     const venues = terminalMarket.venues?.length
@@ -623,7 +625,7 @@ export const InfraTradingTerminal = ({
             prob: 'Quote',
             yesPrice: 'Quote',
             noPrice: 'Quote',
-            active: selectedOutcomeId ? selectedOutcomeId === outcome.id : index === 0,
+            active: index === 0,
             venues: outcome.venues.length ? outcome.venues : marketVenueList,
             status: 'auth_required',
             blocker: 'Login required for live route quote',
@@ -651,7 +653,7 @@ export const InfraTradingTerminal = ({
             prob: formatProbabilityPercent(average),
             yesPrice: formatProbabilityPrice(best?.price ?? average),
             noPrice: terminalMarket.marketType === 'binary' && average ? formatProbabilityPrice(1 - average) : 'Quote',
-            active: selectedOutcomeId ? selectedOutcomeId === outcome.id : index === 0,
+            active: index === 0,
             venues,
             status: candidateResponse.candidates.length ? 'live' : 'unavailable',
             blocker: candidateResponse.blocked[0]?.reason ?? null,
@@ -665,7 +667,7 @@ export const InfraTradingTerminal = ({
             prob: 'Quote',
             yesPrice: 'Quote',
             noPrice: 'Quote',
-            active: selectedOutcomeId ? selectedOutcomeId === outcome.id : index === 0,
+            active: index === 0,
             venues: outcome.venues.length ? outcome.venues : marketVenueList,
             status: 'unavailable',
             blocker: error instanceof Error ? error.message : 'Live quote unavailable',
@@ -682,7 +684,7 @@ export const InfraTradingTerminal = ({
     } finally {
       setOutcomesLoading(false);
     }
-  }, [marketVenueList, selectedOutcomeId, terminalMarket, terminalMarketId, token]);
+  }, [marketVenueList, terminalMarket, terminalMarketId, token]);
 
   React.useEffect(() => {
     setShowAllOutcomes(false);
@@ -1094,7 +1096,7 @@ export const InfraTradingTerminal = ({
                             <div
                               key={m.id}
                               onClick={() => setSelectedOutcomeId(m.id)}
-                              className={`px-5 py-2.5 rounded-xl flex items-center justify-between transition-colors cursor-pointer ${m.active ? 'border border-emerald-500/30 bg-emerald-500/5 shadow-[0_0_15px_rgba(16,185,129,0.05)]' : 'border border-transparent hover:border-zinc-800 hover:bg-zinc-900/30 bg-transparent'}`}
+                              className={`px-5 py-2.5 rounded-xl flex items-center justify-between transition-colors cursor-pointer ${(selectedOutcomeId ? selectedOutcomeId === m.id : m.active) ? 'border border-emerald-500/30 bg-emerald-500/5 shadow-[0_0_15px_rgba(16,185,129,0.05)]' : 'border border-transparent hover:border-zinc-800 hover:bg-zinc-900/30 bg-transparent'}`}
                             >
                                  <div className="flex items-center gap-5">
                                      <div className="flex items-center [&>div:first-child]:hidden">
