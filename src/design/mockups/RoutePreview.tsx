@@ -1,5 +1,6 @@
 import React from 'react';
 import { ShieldCheck, Server, Network, Zap } from 'lucide-react';
+import { VenueLogo } from '@/components/icons/asset-logo';
 import { Card } from './UserInfraMockups';
 
 export const RoutePreview = () => {
@@ -34,7 +35,7 @@ export const RoutePreview = () => {
               {/* Route 1 */}
               <div className="flex items-center justify-between p-4 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden">
                 <div className="flex items-center gap-4">
-                  <div className="w-10 h-10 rounded-full bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center text-xs font-bold">PM</div>
+                  <VenueLogo id="polymarket" label="Polymarket" className="h-10 w-10 rounded-full border border-zinc-200 dark:border-zinc-800" />
                   <div>
                     <p className="text-sm font-medium text-zinc-900 dark:text-white">Polymarket Public Book</p>
                     <p className="text-xs text-zinc-500 mt-0.5">Clearing at 48.2¢</p>

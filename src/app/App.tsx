@@ -20,6 +20,7 @@ import {
   storeSession,
 } from "@/features/auth/session-storage";
 import { DashboardV2Mockup, type LotusAppPage } from "@/design/mockups/DashboardV2Mockup";
+import { DenseStripFooter } from "@/design/mockups/GlobalFooterVariations";
 import { TurnkeyAuthScreen } from "@/features/auth/components/turnkey-auth-screen";
 
 function formatTurnkeyError(error: unknown): string {
@@ -297,9 +298,10 @@ export function App() {
   }
 
   return (
-    <div className="h-screen overflow-hidden bg-black">
+    <div className="h-screen overflow-hidden bg-black pb-10">
       <AccountDropdown session={session} onLogout={handleLogout} />
       <DashboardV2Mockup activePage={activePage} onNavigate={setActivePage} />
+      <DenseStripFooter fixed />
     </div>
   );
 }

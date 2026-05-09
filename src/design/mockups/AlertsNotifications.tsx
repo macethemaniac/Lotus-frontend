@@ -2,13 +2,46 @@ import React, { useState } from 'react';
 import { 
     CheckCircle2, XCircle, AlertTriangle, Info, Bell, Wallet, 
     ArrowRightLeft, ShieldAlert, Cpu, Network, Check, 
-    Zap, Flame, TrendingUp, Trophy, ArrowDownLeft
+    Zap, Flame, TrendingUp, Trophy, ArrowDownLeft, Clock
 } from 'lucide-react';
 
 export const AlertsNotifications = () => {
     const [filter, setFilter] = useState<'all' | 'unread' | 'system' | 'trading' | 'wallet'>('all');
 
     const alerts = [
+        {
+            id: 'fill-confirmed',
+            type: 'success',
+            category: 'trading',
+            title: 'Fill Confirmed',
+            message: 'Predict.fun order filled. Unified position and venue-level PnL are updating from verified fill evidence.',
+            time: 'Just now',
+            icon: <CheckCircle2 className="w-5 h-5 text-[#00ff88]" />,
+            action: 'View Position',
+            unread: true
+        },
+        {
+            id: 'limit-order-resting',
+            type: 'info',
+            category: 'trading',
+            title: 'Limit Order Resting',
+            message: 'Your limit order is live and waiting for venue liquidity. Lotus will notify you when it fills, cancels, or needs attention.',
+            time: '2 mins ago',
+            icon: <Clock className="w-5 h-5 text-sky-400" />,
+            action: 'View Order',
+            unread: true
+        },
+        {
+            id: 'fund-activation-required',
+            type: 'warning',
+            category: 'wallet',
+            title: 'Venue Funds Activation Required',
+            message: 'Polymarket needs a venue activation or approval before this balance can be used for live routes.',
+            time: '5 mins ago',
+            icon: <Wallet className="w-5 h-5 text-amber-500" />,
+            action: 'Activate Funds',
+            unread: true
+        },
         {
             id: 1,
             type: 'error',
@@ -36,7 +69,7 @@ export const AlertsNotifications = () => {
             type: 'warning',
             category: 'trading',
             title: 'High Slippage Prevented',
-            message: 'Order paused. Executing your 50,000 USDC order on the Kalshi pair would incur 8.4% slippage. Recommend using Lotus Time-Weighted execution.',
+            message: 'Order paused. Executing your 50,000 USDC order on the Limitless pair would incur 8.4% slippage. Recommend using Lotus Time-Weighted execution.',
             time: '14 mins ago',
             icon: <AlertTriangle className="w-5 h-5 text-amber-500" />,
             action: 'Switch to TWAP',
@@ -119,7 +152,7 @@ export const AlertsNotifications = () => {
             <div className="flex gap-2 mb-6 border-b border-zinc-200 dark:border-zinc-800 pb-4 overflow-x-auto no-scrollbar">
                 {[
                     { id: 'all', label: 'All Activity' },
-                    { id: 'unread', label: 'Unread', count: 2 },
+                    { id: 'unread', label: 'Unread', count: alerts.filter(alert => alert.unread).length },
                     { id: 'trading', label: 'Trading' },
                     { id: 'wallet', label: 'Wallet & Funding' },
                     { id: 'system', label: 'System & Security' }

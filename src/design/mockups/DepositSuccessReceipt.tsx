@@ -1,5 +1,6 @@
 import React from 'react';
 import { CheckCircle2, ArrowRight, ExternalLink, ShieldCheck, Wallet, Check } from 'lucide-react';
+import { CryptoLogo, VenueLogo } from '@/components/icons/asset-logo';
 
 export const DepositSuccessReceipt = () => {
     return (
@@ -37,9 +38,7 @@ export const DepositSuccessReceipt = () => {
                         <div className="flex justify-between items-center text-[13px] border-b border-zinc-800/50 pb-3">
                             <span className="text-zinc-500 font-medium">Asset</span>
                             <div className="flex items-center gap-1.5">
-                                <div className="w-3.5 h-3.5 rounded-full bg-blue-500/20 flex items-center justify-center border border-blue-500/30">
-                                    <div className="w-1.5 h-1.5 rounded-full bg-blue-400"></div>
-                                </div>
+                                <CryptoLogo id="USDC" label="USDC" className="h-4 w-4" />
                                 <span className="text-zinc-200 font-medium">USD Coin (USDC)</span>
                             </div>
                         </div>
@@ -61,7 +60,7 @@ export const DepositSuccessReceipt = () => {
                     <div className="bg-zinc-900/30 border border-zinc-800/50 rounded-xl p-4 w-full mb-8 flex gap-3 text-left">
                         <ShieldCheck className="w-5 h-5 text-emerald-500 shrink-0 opacity-80 mt-0.5" />
                         <p className="text-[12px] text-zinc-400 leading-relaxed font-medium">
-                            Funds have been automatically allocated and are ready for trading on <span className="text-blue-400/80 font-bold">Polymarket</span>, <span className="text-orange-400/80 font-bold">Opinion</span>, <span className="text-indigo-400/80 font-bold">Limitless</span>, and more.
+                            Funds have been automatically allocated and are ready for trading on <span className="inline-flex items-center gap-1 text-blue-400/80 font-bold"><VenueLogo id="polymarket" label="Polymarket" className="h-3.5 w-3.5" />Polymarket</span>, <span className="inline-flex items-center gap-1 text-orange-400/80 font-bold"><VenueLogo id="opinion" label="Opinion" className="h-3.5 w-3.5" />Opinion</span>, <span className="inline-flex items-center gap-1 text-indigo-400/80 font-bold"><VenueLogo id="limitless" label="Limitless" className="h-3.5 w-3.5" />Limitless</span>, and more.
                         </p>
                     </div>
 

@@ -73,7 +73,7 @@ textarea {
 
   .lotus-terminal-stage {
     width: calc(100% / var(--lotus-terminal-scale));
-    height: calc(100% / var(--lotus-terminal-scale));
+    min-height: 0;
     transform: scale(var(--lotus-terminal-scale));
   }
 }

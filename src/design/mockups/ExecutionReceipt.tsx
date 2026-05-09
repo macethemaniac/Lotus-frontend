@@ -1,5 +1,6 @@
 import React from 'react';
 import { Check } from 'lucide-react';
+import { VenueLogo } from '@/components/icons/asset-logo';
 import { Card } from './UserInfraMockups';
 
 export const ExecutionReceipt = () => {
@@ -44,7 +45,7 @@ export const ExecutionReceipt = () => {
             <h4 className="text-sm font-medium text-zinc-900 dark:text-zinc-100 mb-4">Execution Breakdown</h4>
             <div className="space-y-2">
               <div className="flex justify-between items-center text-sm">
-                <span className="text-zinc-600 dark:text-zinc-400">Polymarket (65%)</span>
+                <span className="flex items-center gap-1.5 text-zinc-600 dark:text-zinc-400"><VenueLogo id="polymarket" label="Polymarket" className="h-4 w-4" />Polymarket (65%)</span>
                 <span className="font-mono text-zinc-900 dark:text-white">48.2¢ avg</span>
               </div>
               <div className="flex justify-between items-center text-sm">

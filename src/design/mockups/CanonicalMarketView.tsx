@@ -1,5 +1,6 @@
 import React from 'react';
 import { ChevronRight, Network, Check, Lock, FileWarning } from 'lucide-react';
+import { VenueLogo } from '@/components/icons/asset-logo';
 import { Badge, Card, CardHeader } from './UserInfraMockups';
 
 export const CanonicalMarketView = () => {
@@ -34,7 +35,7 @@ export const CanonicalMarketView = () => {
         <span className="text-zinc-300 dark:text-zinc-700">·</span>
         <span className="text-zinc-500 dark:text-zinc-400">Est. savings <span className="text-[#99cc00]">~$42.50</span></span>
         <span className="text-zinc-300 dark:text-zinc-700">·</span>
-        <span className="text-zinc-500 dark:text-zinc-400">Fallback: <span className="text-zinc-900 dark:text-zinc-100">Polymarket</span></span>
+        <span className="flex items-center gap-1.5 text-zinc-500 dark:text-zinc-400">Fallback: <span className="flex items-center gap-1 text-zinc-900 dark:text-zinc-100"><VenueLogo id="polymarket" label="Polymarket" className="h-4 w-4" />Polymarket</span></span>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-6">
@@ -53,14 +54,14 @@ export const CanonicalMarketView = () => {
             <div className="divide-y divide-zinc-200 dark:divide-zinc-800">
               {[
                 { venue: 'Polymarket', title: 'Democratic Nominee wins 2028?', price: '48.2¢', vol: '$12.4M', status: 'Equivalent', risk: 'Safe', reason: 'Exact-safe shared outcome' },
-                { venue: 'Kalshi', title: 'Will a Democrat win the 2028 Presidential Election?', price: '48.5¢', vol: '$8.1M', status: 'Equivalent', risk: 'Safe', reason: 'Semantically compatible wording' },
-                { venue: 'SX Bet', title: 'Democrat President 2028', price: '49.1¢', vol: '$1.2M', status: 'Correlated', risk: 'Blocked', reason: 'Resolution Risk Block — non-standard dispute window' },
+                { venue: 'Limitless', title: 'Will a Democrat win the 2028 Presidential Election?', price: '48.5¢', vol: '$8.1M', status: 'Equivalent', risk: 'Safe', reason: 'Semantically compatible wording' },
+                { venue: 'Myriad', title: 'Democrat President 2028', price: '49.1¢', vol: '$1.2M', status: 'Correlated', risk: 'Blocked', reason: 'Resolution Risk Block — non-standard dispute window' },
               ].map((v, i) => (
                 <div key={i} className={`p-5 ${v.status === 'Correlated' ? 'opacity-60 bg-zinc-50 dark:bg-zinc-900/30' : ''}`}>
                   <div className="flex justify-between items-start mb-2">
                     <div>
                       <div className="flex items-center gap-2 mb-2">
-                        <Badge variant="outline">{v.venue}</Badge>
+                        <Badge variant="outline" className="inline-flex items-center gap-1.5"><VenueLogo id={v.venue} label={v.venue} className="h-3.5 w-3.5" />{v.venue}</Badge>
                         {v.status === 'Equivalent' ? (
                           <span className="inline-flex items-center px-1.5 py-0.5 rounded-[4px] text-[11px] font-medium text-[#99cc00] bg-[#ccff00]/10 border border-[#ccff00]/20"><Check className="w-3 h-3 mr-1" /> Executable</span>
                         ) : (
@@ -117,7 +118,7 @@ export const CanonicalMarketView = () => {
                 </div>
                 <div className="flex justify-between text-sm">
                   <span className="text-zinc-400">Fallback</span>
-                  <span className="font-medium text-zinc-100">Polymarket only</span>
+                  <span className="flex items-center gap-1.5 font-medium text-zinc-100"><VenueLogo id="polymarket" label="Polymarket" className="h-4 w-4" />Polymarket only</span>
                 </div>
                 <div className="flex justify-between text-sm pt-2 border-t border-zinc-700/50">
                   <span className="text-zinc-400">Slippage Saved</span>

@@ -5,7 +5,18 @@ import {
   Home, Terminal, PieChart, Volleyball, Settings
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceDot } from 'recharts';
+import { VenueLogo } from '@/components/icons/asset-logo';
 import { LotusLogo } from '@/components/icons/lotus-icons';
+
+export type TerminalMarketSelection = {
+  title: string;
+  category: string;
+  icon: string;
+  volume: string;
+  venueCount: number;
+  routeType: string;
+  marketType?: 'binary' | 'multi';
+};
 
 const canonicalEventMarkets = [
   {
@@ -62,7 +73,7 @@ const CanonicalChart = ({ marketType }: { marketType: 'binary' | 'multi' }) => {
     date: string;
     canonical?: number;
     poly?: number;
-    kalshi?: number;
+    limitless?: number;
     predict?: number;
     mbappe?: number;
     other?: number;
@@ -71,15 +82,15 @@ const CanonicalChart = ({ marketType }: { marketType: 'binary' | 'multi' }) => {
   };
 
   const dataMulti: ChartPoint[] = [
-    { date: 'May 01', canonical: 26.2, poly: 26.0, kalshi: 26.5, predict: 26.9 },
-    { date: 'May 02', canonical: 26.2, poly: 26.0, kalshi: 26.5, predict: 26.9 },
-    { date: 'May 03', canonical: 26.2, poly: 26.0, kalshi: 26.5, predict: 26.9 },
-    { date: 'May 03 12:00', canonical: 58.5, poly: 58.0, kalshi: 59.0, predict: 58.3 }, // Jump
-    { date: 'May 04', canonical: 58.5, poly: 58.0, kalshi: 59.0, predict: 58.3 },
-    { date: 'May 05', canonical: 59.0, poly: 58.5, kalshi: 59.5, predict: 58.8 },
-    { date: 'May 06', canonical: 59.0, poly: 58.5, kalshi: 59.5, predict: 58.8 },
-    { date: 'May 06 12:00', canonical: 99.4, poly: 99.0, kalshi: 99.5, predict: 99.2 }, // Jump to 100
-    { date: 'May 07', canonical: 99.4, poly: 99.0, kalshi: 99.5, predict: 99.2 },
+    { date: 'May 01', canonical: 26.2, poly: 26.0, limitless: 26.5, predict: 26.9 },
+    { date: 'May 02', canonical: 26.2, poly: 26.0, limitless: 26.5, predict: 26.9 },
+    { date: 'May 03', canonical: 26.2, poly: 26.0, limitless: 26.5, predict: 26.9 },
+    { date: 'May 03 12:00', canonical: 58.5, poly: 58.0, limitless: 59.0, predict: 58.3 }, // Jump
+    { date: 'May 04', canonical: 58.5, poly: 58.0, limitless: 59.0, predict: 58.3 },
+    { date: 'May 05', canonical: 59.0, poly: 58.5, limitless: 59.5, predict: 58.8 },
+    { date: 'May 06', canonical: 59.0, poly: 58.5, limitless: 59.5, predict: 58.8 },
+    { date: 'May 06 12:00', canonical: 99.4, poly: 99.0, limitless: 99.5, predict: 99.2 }, // Jump to 100
+    { date: 'May 07', canonical: 99.4, poly: 99.0, limitless: 99.5, predict: 99.2 },
   ];
 
   const dataBinary: ChartPoint[] = [
@@ -195,7 +206,7 @@ const CanonicalChart = ({ marketType }: { marketType: 'binary' | 'multi' }) => {
             </div>
             <div className="flex items-center gap-1.5">
               <div className="w-2 h-2 rounded-full bg-[#10B981]"></div>
-              <span className="text-white font-bold">Kalshi 26.5¢</span>
+              <span className="text-white font-bold">Limitless 26.5¢</span>
             </div>
             <div className="flex items-center gap-1.5">
               <div className="w-2 h-2 rounded-full bg-[#8B5CF6]"></div>
@@ -262,7 +273,7 @@ const CanonicalChart = ({ marketType }: { marketType: 'binary' | 'multi' }) => {
             {marketType === 'multi' ? (
               <>
                 <Line type="linear" dataKey="poly" name="Polymarket" stroke="#3B82F6" strokeWidth={1.5} dot={false} strokeDasharray="4 2" activeDot={{ r: 4, stroke: '#18181b', strokeWidth: 2 }} />
-                <Line type="linear" dataKey="kalshi" name="Kalshi" stroke="#10B981" strokeWidth={1.5} dot={false} strokeDasharray="4 2" activeDot={{ r: 4, stroke: '#18181b', strokeWidth: 2 }} />
+                <Line type="linear" dataKey="limitless" name="Limitless" stroke="#10B981" strokeWidth={1.5} dot={false} strokeDasharray="4 2" activeDot={{ r: 4, stroke: '#18181b', strokeWidth: 2 }} />
                 <Line type="linear" dataKey="predict" name="Predict" stroke="#8B5CF6" strokeWidth={1.5} dot={false} strokeDasharray="4 2" activeDot={{ r: 4, stroke: '#18181b', strokeWidth: 2 }} />
                 <Line type="linear" dataKey="canonical" name="Canonical" stroke="#ccff00" strokeWidth={2.5} dot={false} activeDot={{ r: 5, stroke: '#18181b', strokeWidth: 2 }} />
                 
@@ -296,9 +307,11 @@ const CanonicalChart = ({ marketType }: { marketType: 'binary' | 'multi' }) => {
 export const InfraTradingTerminal = ({
   embedded = false,
   darkMode = true,
+  selectedMarket,
 }: {
   embedded?: boolean;
   darkMode?: boolean;
+  selectedMarket?: TerminalMarketSelection | null;
 } = {}) => {
   const [side, setSide] = useState<'buy' | 'sell'>('buy');
   const [orderType, setOrderType] = useState<'market' | 'limit' | 'pro'>('limit');
@@ -310,7 +323,22 @@ export const InfraTradingTerminal = ({
   const [fastLane, setFastLane] = useState(false);
   const [showMarketSelector, setShowMarketSelector] = useState(false);
   const [showAllOutcomes, setShowAllOutcomes] = useState(false);
+  React.useEffect(() => {
+    if (selectedMarket?.marketType) {
+      setMarketType(selectedMarket.marketType);
+    }
+  }, [selectedMarket?.marketType, selectedMarket?.title]);
+
   const activeEventMarket = marketType === 'binary' ? canonicalEventMarkets[0] : canonicalEventMarkets[3];
+  const terminalMarket = selectedMarket ?? {
+    title: marketType === 'binary' ? 'Cleveland / Will the Cleveland Cavaliers win...' : 'World Cup / Who will win the 2026 FIFA World Cup?',
+    category: activeEventMarket.category,
+    icon: activeEventMarket.icon,
+    volume: '$67.9M',
+    venueCount: canonicalEventMarkets.length,
+    routeType: marketType === 'binary' ? 'Pair' : 'Single',
+    marketType,
+  };
   const outcomeRows = [
     { name: 'France', vol: '$5.6M Vol.', platforms: 3, prob: '16%', yesPrice: '16.1¢', noPrice: '83.0¢', active: true },
     { name: 'Spain', vol: '$12.5M Vol.', platforms: 3, prob: '16%', yesPrice: '15.8¢', noPrice: '83.0¢', active: false },
@@ -322,10 +350,47 @@ export const InfraTradingTerminal = ({
     { name: 'Netherlands', vol: '$1.2M Vol.', platforms: 2, prob: '5%', yesPrice: '5.4¢', noPrice: '94.0¢', active: false },
   ];
   const visibleOutcomeRows = showAllOutcomes ? outcomeRows : outcomeRows.slice(0, 5);
+  const positionVenueRows = [
+    {
+      venue: 'Polymarket',
+      logo: 'poly',
+      shares: '620',
+      avgEntry: '26.0¢',
+      mark: '26.8¢',
+      pnl: '+$4.96',
+      pnlTone: 'text-emerald-400',
+      fill: '62%',
+    },
+    {
+      venue: 'Limitless',
+      logo: 'limitless',
+      shares: '210',
+      avgEntry: '26.5¢',
+      mark: '26.8¢',
+      pnl: '+$0.63',
+      pnlTone: 'text-emerald-400',
+      fill: '21%',
+    },
+    {
+      venue: 'Predict.fun',
+      logo: 'predict',
+      shares: '170',
+      avgEntry: '26.9¢',
+      mark: '26.8¢',
+      pnl: '-$0.17',
+      pnlTone: 'text-red-400',
+      fill: '17%',
+    },
+  ];
+  const bottomPanelHeight = bottomTab === 'Outcomes'
+    ? 'h-[440px] 2xl:h-[500px]'
+    : 'h-[620px] 2xl:h-[720px]';
+  const venueBadgeClass = 'h-7 w-7 rounded-full border-[2.5px] border-[#121214] bg-zinc-900 shadow-sm';
+  const tinyVenueClass = 'h-3.5 w-3.5 rounded-full border border-zinc-800 bg-zinc-950';
 
   return (
-    <div className={`lotus-terminal lotus-terminal-viewport ${darkMode ? 'lotus-terminal-dark' : 'lotus-terminal-light'} ${embedded ? 'h-[calc(100vh-6.5rem)]' : 'h-[calc(100vh-4rem)] -mx-4 -my-8 lg:-mx-12 lg:-my-12'} bg-[#09090b] text-white font-sans overflow-hidden`}>
-      <div className="lotus-terminal-stage flex h-full w-full bg-[#09090b] text-white p-2 2xl:p-3 gap-2 2xl:gap-3">
+    <div className={`lotus-terminal lotus-terminal-viewport ${darkMode ? 'lotus-terminal-dark' : 'lotus-terminal-light'} ${embedded ? 'h-[calc(100vh-6.5rem)]' : 'h-[calc(100vh-4rem)] -mx-4 -my-8 lg:-mx-12 lg:-my-12'} bg-[#09090b] text-white font-sans overflow-y-auto overflow-x-hidden custom-scrollbar`}>
+      <div className="lotus-terminal-stage flex min-h-full w-full bg-[#09090b] text-white p-2 2xl:p-3 gap-2 2xl:gap-3 items-start">
       
       {/* Focus Rail */}
       {!embedded && <div className="w-16 bg-[#121214] border border-zinc-800 rounded-xl flex flex-col items-center py-4 gap-6 shrink-0 z-10">
@@ -381,10 +446,10 @@ export const InfraTradingTerminal = ({
                       </span>
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-sm 2xl:text-base font-semibold tracking-tight text-zinc-100">
-                          {marketType === 'binary' ? 'Cleveland / Will the Cleveland Cavaliers win...' : 'World Cup / Who will win the 2026 FIFA World Cup?'}
+                          {terminalMarket.title}
                         </span>
                         <span className="mt-0.5 block truncate text-[11px] font-medium text-zinc-500">
-                          Canonical event / {canonicalEventMarkets.length} linked markets / $67.9M volume
+                          Canonical event / {terminalMarket.venueCount} linked markets / {terminalMarket.volume} volume
                         </span>
                       </span>
                       <ChevronDown className={`h-4 w-4 shrink-0 text-zinc-500 transition-transform group-hover:text-zinc-300 ${showMarketSelector ? 'rotate-180' : ''}`} />
@@ -477,7 +542,7 @@ export const InfraTradingTerminal = ({
                     )}
                 </div>
                 <div className="hidden xl:flex items-center px-2.5 py-1 rounded-md bg-[#ccff00]/10 border border-[#ccff00]/20 text-[#99cc00] text-[10px] font-bold uppercase tracking-widest ml-1 2xl:ml-2">
-                    PAIR ROUTE / 2 VENUES
+                    {terminalMarket.routeType} ROUTE / {Math.max(1, Math.min(terminalMarket.venueCount, 3))} VENUES
                 </div>
                 <div className="flex bg-zinc-900 border border-zinc-800 rounded-md p-1 ml-1 2xl:ml-2">
                     <button onClick={() => setMarketType('binary')} className={`px-2 py-1 text-[10px] font-bold uppercase rounded ${marketType === 'binary' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}>Binary</button>
@@ -501,7 +566,7 @@ export const InfraTradingTerminal = ({
          </div>
          
          {/* Chart & Order Book Grid */}
-         <div className="flex-1 bg-[#121214] border border-zinc-800 rounded-xl flex min-h-0 overflow-hidden relative">
+         <div className="h-[540px] 2xl:h-[620px] bg-[#121214] border border-zinc-800 rounded-xl flex overflow-hidden relative shrink-0">
             
             {/* Main Chart Section */}
             <div className="flex-1 flex flex-col relative border-r border-zinc-800 p-4 min-w-0">
@@ -539,7 +604,7 @@ export const InfraTradingTerminal = ({
                    <select className="bg-zinc-950 border border-zinc-700/50 rounded-md px-2 py-1.5 text-xs text-white outline-none cursor-pointer">
                        <option>All Venues</option>
                        <option>Polymarket</option>
-                       <option>Kalshi</option>
+                       <option>Limitless</option>
                    </select>
                </div>
                <div className="flex justify-between px-4 py-2 bg-zinc-950/20 text-zinc-500 font-sans text-[10px] font-bold tracking-wider uppercase border-b border-zinc-800">
@@ -553,10 +618,14 @@ export const InfraTradingTerminal = ({
                    {/* Asks (Sells) */}
                    {[...Array(10)].map((_, i) => {
                        const isConsumedAsks = i >= 8; // Highlight last 2 asks (closest to spread)
+                       const venue = i % 2 === 0 ? 'Predict' : 'Poly';
                        return (
                            <div key={'ask'+i} className={`flex justify-between px-4 py-0.5 hover:bg-zinc-800/50 cursor-pointer ${i === 9 ? 'mb-1' : ''} ${isConsumedAsks ? 'bg-[#E52B50]/5' : ''}`}>
                                <span className="w-12 text-pink-500 font-bold">{(30.6 - i*0.5).toFixed(1)}c</span>
-                               <span className="w-16 text-zinc-500 uppercase text-[9px] font-bold tracking-wider">{i % 2 === 0 ? 'Predict' : 'Poly'}</span>
+                               <span className="w-16 flex items-center gap-1.5 text-zinc-500 uppercase text-[9px] font-bold tracking-wider">
+                                   <VenueLogo id={venue} label={venue} className={tinyVenueClass} />
+                                   {venue}
+                               </span>
                                <span className="w-20 text-right text-zinc-200">{(Math.random() * 5000 + 100).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ",")}</span>
                                <span className="w-24 text-right text-white font-bold">{(Math.random() * 20000 + 10000).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",")}</span>
                            </div>
@@ -571,10 +640,14 @@ export const InfraTradingTerminal = ({
                    {/* Bids (Buys) */}
                    {[...Array(10)].map((_, i) => {
                        const isConsumedBids = i <= 2; // Highlight first 3 bids (closest to spread)
+                       const venue = i % 2 !== 0 ? 'Limitless' : 'Poly';
                        return (
                            <div key={'bid'+i} className={`flex justify-between px-4 py-0.5 hover:bg-zinc-800/50 cursor-pointer ${i === 0 ? 'mt-1' : ''} ${isConsumedBids ? 'bg-[#ccff00]/5' : ''}`}>
                                <span className="w-12 text-emerald-400 font-bold">{(26.0 - i*0.5).toFixed(1)}c</span>
-                               <span className="w-16 text-zinc-500 uppercase text-[9px] font-bold tracking-wider">{i % 2 !== 0 ? 'Kalshi' : 'Poly'}</span>
+                               <span className="w-16 flex items-center gap-1.5 text-zinc-500 uppercase text-[9px] font-bold tracking-wider">
+                                   <VenueLogo id={venue} label={venue} className={tinyVenueClass} />
+                                   {venue}
+                               </span>
                                <span className="w-20 text-right text-zinc-200">{(Math.random() * 5000 + 100).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ",")}</span>
                                <span className="w-24 text-right text-white font-bold">{(Math.random() * 8000 + 1000).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",")}</span>
                            </div>
@@ -585,7 +658,7 @@ export const InfraTradingTerminal = ({
          </div>
 
          {/* Bottom Data Table Section */}
-         <div className="h-[360px] 2xl:h-[420px] bg-[#121214] border border-zinc-800 rounded-xl overflow-hidden shrink-0 flex flex-col relative z-20">
+         <div className={`${bottomPanelHeight} bg-[#121214] border border-zinc-800 rounded-xl overflow-hidden shrink-0 flex flex-col relative z-20`}>
              <div className="flex justify-between items-center bg-zinc-950/40 pr-4">
                  <div className="flex border-b border-zinc-800 pl-4 overflow-x-auto no-scrollbar flex-1">
                      {['Outcomes', 'Positions', 'Open Orders', 'Trade History', 'Rules & Risk'].map(t => (
@@ -603,16 +676,17 @@ export const InfraTradingTerminal = ({
                      </div>
                  )}
              </div>
-             <div className="flex-1 overflow-y-auto w-full custom-scrollbar bg-[#121214] p-5">
+             <div className="flex-1 overflow-y-auto w-full custom-scrollbar bg-[#121214] p-4">
                 {bottomTab === 'Outcomes' && (
-                    <div className="flex flex-col gap-2.5 max-w-[1200px]">
+                    <div className="flex w-full flex-col gap-2">
                          {visibleOutcomeRows.map((m) => (
-                             <div key={m.name} className={`px-5 py-3 rounded-xl flex items-center justify-between transition-colors cursor-pointer ${m.active ? 'border border-emerald-500/30 bg-emerald-500/5 shadow-[0_0_15px_rgba(16,185,129,0.05)]' : 'border border-transparent hover:border-zinc-800 hover:bg-zinc-900/30 bg-transparent'}`}>
+                            <div key={m.name} className={`px-5 py-2.5 rounded-xl flex items-center justify-between transition-colors cursor-pointer ${m.active ? 'border border-emerald-500/30 bg-emerald-500/5 shadow-[0_0_15px_rgba(16,185,129,0.05)]' : 'border border-transparent hover:border-zinc-800 hover:bg-zinc-900/30 bg-transparent'}`}>
                                  <div className="flex items-center gap-5">
-                                     <div className="flex items-center">
+                                     <div className="flex items-center [&>div:first-child]:hidden">
                                          <div className="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center border-[2.5px] border-[#121214] text-white text-[11px] font-bold z-30 relative shadow-sm">⧖</div>
-                                         <div className="w-7 h-7 rounded-full bg-emerald-500 flex items-center justify-center border-[2.5px] border-[#121214] text-black text-[8px] font-extrabold z-20 relative -ml-2.5 shadow-sm">Kalshi</div>
-                                         <div className="w-7 h-7 rounded-full bg-indigo-500 flex items-center justify-center border-[2.5px] border-[#121214] text-white text-[11px] font-bold z-10 relative -ml-2.5 shadow-sm">P</div>
+                                         <VenueLogo id="polymarket" label="Polymarket" className={`${venueBadgeClass} z-30 relative`} />
+                                         <VenueLogo id="limitless" label="Limitless" className={`${venueBadgeClass} z-20 relative -ml-2.5`} />
+                                         <VenueLogo id="predict" label="Predict.fun" className={`${venueBadgeClass} z-10 relative -ml-2.5`} />
                                      </div>
                                      <div>
                                          <div className="text-zinc-100 font-bold text-base tracking-wide leading-tight">{m.name}</div>
@@ -623,10 +697,10 @@ export const InfraTradingTerminal = ({
                                      <div className="text-white font-black text-xl w-14 text-right tracking-tight">{m.prob}</div>
                                      <div className="flex items-center gap-2">
                                           <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#1A3A34] text-[#4ade80] text-xs font-bold hover:bg-[#204941] transition-colors">
-                                               <div className="w-3.5 h-3.5 rounded-full bg-indigo-500 flex items-center justify-center text-white text-[6px] font-bold">P</div> Yes {m.yesPrice}
+                                               <VenueLogo id="polymarket" label="Polymarket" className="h-3.5 w-3.5 rounded-full" /> Yes {m.yesPrice}
                                           </button>
                                           <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#3F1D24] text-[#f87171] text-xs font-bold hover:bg-[#52252f] transition-colors">
-                                               <div className="w-3.5 h-3.5 rounded-full bg-emerald-500 flex items-center justify-center text-black text-[6px] font-black">K</div> No {m.noPrice}
+                                               <VenueLogo id="limitless" label="Limitless" className="h-3.5 w-3.5 rounded-full" /> No {m.noPrice}
                                           </button>
                                           <button
                                             type="button"
@@ -639,13 +713,13 @@ export const InfraTradingTerminal = ({
                                  </div>
                              </div>
                          ))}
-                         <div className="flex justify-center mt-1 pb-2">
-                             <button
-                               type="button"
-                               onClick={() => setShowAllOutcomes((value) => !value)}
-                               className="flex h-10 items-center gap-2 rounded-full border border-zinc-800 px-4 text-xs font-semibold text-zinc-400 transition-colors hover:border-zinc-700 hover:bg-zinc-900 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
-                               aria-expanded={showAllOutcomes}
-                             >
+                        <div className="flex justify-center pt-1">
+                            <button
+                              type="button"
+                              onClick={() => setShowAllOutcomes((value) => !value)}
+                              className="flex h-9 items-center gap-2 rounded-full border border-zinc-800 px-4 text-xs font-semibold text-zinc-400 transition-colors hover:border-zinc-700 hover:bg-zinc-900 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
+                              aria-expanded={showAllOutcomes}
+                            >
                                {showAllOutcomes ? 'Show fewer outcomes' : 'Show all outcomes'}
                                <ChevronDown className={`w-4 h-4 transition-transform ${showAllOutcomes ? 'rotate-180' : ''}`} />
                              </button>
@@ -681,7 +755,7 @@ export const InfraTradingTerminal = ({
                                                 <>
                                                     <div className="space-y-3">
                                                         <div className="w-max bg-indigo-500 text-white flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-bold tracking-widest shadow-sm">
-                                                            <div className="w-3.5 h-3.5 rounded bg-white/20 flex items-center justify-center text-[8px] font-bold">P</div>
+                                                            <VenueLogo id="polymarket" label="Polymarket" className="h-3.5 w-3.5 rounded-full" />
                                                             Polymarket
                                                         </div>
                                                         <div className="space-y-3 text-xs text-zinc-300 leading-relaxed max-w-xl font-medium">
@@ -694,7 +768,8 @@ export const InfraTradingTerminal = ({
                                                     <div className="h-px bg-zinc-800" />
                                                     <div className="space-y-3">
                                                         <div className="w-max bg-[#00D180] text-black flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-bold tracking-widest shadow-sm">
-                                                            Kalshi
+                                                            <VenueLogo id="limitless" label="Limitless" className="h-3.5 w-3.5 rounded-full" />
+                                                            Limitless
                                                         </div>
                                                         <div className="space-y-3 text-xs text-zinc-300 leading-relaxed max-w-xl font-medium">
                                                             <p>If Cleveland wins the 2026 Pro Basketball Eastern Conference Championship, then the market resolves to Yes.</p>
@@ -725,7 +800,7 @@ export const InfraTradingTerminal = ({
                                                         <ul className="text-xs text-zinc-400 mt-2 space-y-2">
                                                             <li className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-emerald-500"></div>Exact-compatible across 3 venues</li>
                                                             <li className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-emerald-500"></div>Semantically compatible wording</li>
-                                                            <li className="flex items-center gap-1.5"><div className="w-1.5 h-1.5 rounded-full bg-amber-500"></div>Review required for Predict</li>
+                                                            <li className="flex items-center gap-1.5"><VenueLogo id="predict" label="Predict.fun" className="h-3.5 w-3.5 rounded-full" />Review required for Predict</li>
                                                         </ul>
                                                     </div>
                                                 </div>
@@ -833,7 +908,9 @@ export const InfraTradingTerminal = ({
                                  <div className="flex items-center gap-1 font-mono text-[9px]">
                                      <div className="flex-1 bg-[#121214] border border-zinc-800 rounded p-1.5 text-center flex flex-col justify-center">
                                         <div className="text-zinc-500 w-max mx-auto mb-0.5 text-[8px] tracking-wider uppercase font-sans font-bold">Fill 1</div>
-                                        <div className="text-blue-400 font-bold tracking-tighter">POLY <span className="text-white ml-0.5 font-medium">60%</span></div>
+                                        <div className="flex items-center justify-center gap-1 text-blue-400 font-bold tracking-tighter">
+                                           <VenueLogo id="poly" label="Polymarket" className="h-3 w-3 rounded-full" /> POLY <span className="text-white ml-0.5 font-medium">60%</span>
+                                        </div>
                                         <div className="text-zinc-400 mt-1 pb-0.5 border-b border-zinc-800 border-dashed w-max mx-auto text-[10px]">26.0¢</div>
                                      </div>
                                      <div className="flex items-center justify-center text-zinc-600">
@@ -842,7 +919,9 @@ export const InfraTradingTerminal = ({
                                      <div className="flex-1 bg-[#121214] border border-emerald-500/40 rounded p-1.5 text-center flex flex-col justify-center shadow-[0_0_10px_rgba(16,185,129,0.1)] relative">
                                         <div className="absolute -top-1 -right-1 w-2 h-2 bg-emerald-500 rounded-full border border-[#121214] animate-pulse"></div>
                                         <div className="text-zinc-500 w-max mx-auto mb-0.5 text-[8px] tracking-wider uppercase font-sans font-bold">Fill 2</div>
-                                        <div className="text-emerald-400 font-bold tracking-tighter">KALSHI <span className="text-white ml-0.5 font-medium">20%</span></div>
+                                        <div className="flex items-center justify-center gap-1 text-emerald-400 font-bold tracking-tighter">
+                                           <VenueLogo id="limitless" label="Limitless" className="h-3 w-3 rounded-full" /> LIMITLESS <span className="text-white ml-0.5 font-medium">20%</span>
+                                        </div>
                                         <div className="text-zinc-400 mt-1 pb-0.5 border-b border-zinc-800 border-dashed w-max mx-auto text-[10px]">26.5¢</div>
                                      </div>
                                      <div className="flex items-center justify-center text-zinc-600">
@@ -850,7 +929,9 @@ export const InfraTradingTerminal = ({
                                      </div>
                                      <div className="flex-1 bg-[#121214] border border-purple-500/40 rounded p-1.5 text-center flex flex-col justify-center shadow-[0_0_10px_rgba(168,85,247,0.1)]">
                                         <div className="text-zinc-500 w-max mx-auto mb-0.5 text-[8px] tracking-wider uppercase font-sans font-bold">Fill 3</div>
-                                        <div className="text-purple-400 font-bold tracking-tighter">PREDICT <span className="text-white ml-0.5 font-medium">20%</span></div>
+                                        <div className="flex items-center justify-center gap-1 text-purple-400 font-bold tracking-tighter">
+                                           <VenueLogo id="predict" label="Predict.fun" className="h-3 w-3 rounded-full" /> PREDICT <span className="text-white ml-0.5 font-medium">20%</span>
+                                        </div>
                                         <div className="text-zinc-400 mt-1 pb-0.5 border-b border-zinc-800 border-dashed w-max mx-auto text-[10px]">26.9¢</div>
                                      </div>
                                  </div>
@@ -927,21 +1008,27 @@ export const InfraTradingTerminal = ({
                             <span className="text-zinc-600">Max</span>
                          </div>
                          <div className="flex justify-between items-center text-xs">
-                             <span className="text-blue-400 font-bold uppercase tracking-wider text-[11px]">Poly</span>
+                             <span className="flex items-center gap-1.5 text-blue-400 font-bold uppercase tracking-wider text-[11px]">
+                                <VenueLogo id="poly" label="Polymarket" className="h-3.5 w-3.5 rounded-full" /> Poly
+                             </span>
                              <div className="flex gap-2 items-center">
                                 <input type="number" className="w-16 bg-[#121214] border border-zinc-800 rounded px-2 py-1 text-right text-white font-mono text-[11px] focus:border-[#ccff00] outline-none" defaultValue="600" />
                                 <span className="text-zinc-600 font-mono text-[10px]">/ 600</span>
                              </div>
                          </div>
                          <div className="flex justify-between items-center text-xs">
-                             <span className="text-emerald-400 font-bold uppercase tracking-wider text-[11px]">Kalshi</span>
+                             <span className="flex items-center gap-1.5 text-emerald-400 font-bold uppercase tracking-wider text-[11px]">
+                                <VenueLogo id="limitless" label="Limitless" className="h-3.5 w-3.5 rounded-full" /> Limitless
+                             </span>
                              <div className="flex gap-2 items-center">
                                 <input type="number" className="w-16 bg-[#121214] border border-zinc-800 rounded px-2 py-1 text-right text-white font-mono text-[11px] focus:border-[#ccff00] outline-none" defaultValue="400" />
                                 <span className="text-zinc-600 font-mono text-[10px]">/ 5,000</span>
                              </div>
                          </div>
                          <div className="flex justify-between items-center text-xs">
-                             <span className="text-purple-400 font-bold uppercase tracking-wider text-[11px]">Predict</span>
+                             <span className="flex items-center gap-1.5 text-purple-400 font-bold uppercase tracking-wider text-[11px]">
+                                <VenueLogo id="predict" label="Predict.fun" className="h-3.5 w-3.5 rounded-full" /> Predict
+                             </span>
                              <div className="flex gap-2 items-center">
                                 <input type="number" className="w-16 bg-[#121214] border border-zinc-800 rounded px-2 py-1 text-right text-zinc-500 font-mono text-[11px] outline-none disabled:opacity-50" placeholder="0" disabled />
                                 <span className="text-zinc-600 font-mono text-[10px]">/ 0</span>
@@ -971,7 +1058,9 @@ export const InfraTradingTerminal = ({
                                  <div className="flex items-center gap-1 font-mono text-[9px]">
                                      <div className="flex-1 bg-[#121214] border border-zinc-800 rounded p-1.5 text-center flex flex-col justify-center">
                                         <div className="text-zinc-500 w-max mx-auto mb-0.5 text-[8px] tracking-wider uppercase font-sans font-bold">Fill 1</div>
-                                        <div className="text-blue-400 font-bold tracking-tighter">POLY <span className="text-white ml-0.5 font-medium">60%</span></div>
+                                        <div className="flex items-center justify-center gap-1 text-blue-400 font-bold tracking-tighter">
+                                           <VenueLogo id="poly" label="Polymarket" className="h-3 w-3 rounded-full" /> POLY <span className="text-white ml-0.5 font-medium">60%</span>
+                                        </div>
                                         <div className="text-zinc-400 mt-1 pb-0.5 border-b border-zinc-800 border-dashed w-max mx-auto text-[10px]">93.5¢</div>
                                      </div>
                                      <div className="flex items-center justify-center text-zinc-600">
@@ -980,7 +1069,9 @@ export const InfraTradingTerminal = ({
                                      <div className="flex-1 bg-[#121214] border border-emerald-500/40 rounded p-1.5 text-center flex flex-col justify-center shadow-[0_0_10px_rgba(16,185,129,0.1)] relative">
                                         <div className="absolute -top-1 -right-1 w-2 h-2 bg-emerald-500 rounded-full border border-[#121214] animate-pulse"></div>
                                         <div className="text-zinc-500 w-max mx-auto mb-0.5 text-[8px] tracking-wider uppercase font-sans font-bold">Fill 2</div>
-                                        <div className="text-emerald-400 font-bold tracking-tighter">KALSHI <span className="text-white ml-0.5 font-medium">40%</span></div>
+                                        <div className="flex items-center justify-center gap-1 text-emerald-400 font-bold tracking-tighter">
+                                           <VenueLogo id="limitless" label="Limitless" className="h-3 w-3 rounded-full" /> LIMITLESS <span className="text-white ml-0.5 font-medium">40%</span>
+                                        </div>
                                         <div className="text-zinc-400 mt-1 pb-0.5 border-b border-zinc-800 border-dashed w-max mx-auto text-[10px]">94.2¢</div>
                                      </div>
                                  </div>
@@ -1022,6 +1113,63 @@ export const InfraTradingTerminal = ({
                      </div>
                  </div>
              )}
+         </div>
+
+         <div className="bg-[#121214] border border-zinc-800 rounded-xl p-3 2xl:p-4 flex flex-col gap-3 min-h-[250px] shrink-0">
+             <div className="flex items-start justify-between gap-3">
+                 <div>
+                     <div className="flex items-center gap-2">
+                         <div className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.7)]" />
+                         <h3 className="text-sm font-black text-white">Open Position</h3>
+                     </div>
+                     <p className="mt-1 text-[10px] text-zinc-500">Auto-refreshes after verified venue fills</p>
+                 </div>
+                 <span className="rounded-full border border-emerald-500/25 bg-emerald-500/10 px-2 py-1 text-[9px] font-bold uppercase tracking-widest text-emerald-300">
+                     live
+                 </span>
+             </div>
+
+             <div className="rounded-xl border border-[#ccff00]/20 bg-[#ccff00]/[0.055] p-3">
+                 <div className="flex items-end justify-between gap-3">
+                     <div>
+                         <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500">Unified PNL</p>
+                         <div className="mt-1 font-mono text-2xl font-black text-emerald-400">+$5.42</div>
+                     </div>
+                     <div className="text-right">
+                         <p className="text-[10px] font-semibold text-zinc-500">1,000 YES</p>
+                         <p className="mt-1 text-[10px] font-semibold text-zinc-400">Avg 26.2¢ → Mark 26.8¢</p>
+                     </div>
+                 </div>
+                 <div className="mt-3 flex h-1.5 overflow-hidden rounded-full bg-zinc-900">
+                     <div className="h-full w-[62%] bg-blue-500" />
+                     <div className="h-full w-[21%] bg-[#ccff00]" />
+                     <div className="h-full w-[17%] bg-purple-500" />
+                 </div>
+             </div>
+
+             <div className="space-y-2">
+                 {positionVenueRows.map((row) => (
+                     <div key={row.venue} className="rounded-lg border border-zinc-800 bg-[#0c0c0e] px-3 py-2">
+                         <div className="flex items-center justify-between gap-3">
+                             <div className="flex min-w-0 items-center gap-2">
+                                 <VenueLogo id={row.logo} label={row.venue} className="h-5 w-5 rounded-full" />
+                                 <div className="min-w-0">
+                                     <p className="truncate text-xs font-bold text-zinc-200">{row.venue}</p>
+                                     <p className="text-[10px] font-medium text-zinc-500">{row.fill} of route • {row.shares} shares</p>
+                                 </div>
+                             </div>
+                             <div className="text-right">
+                                 <p className={`font-mono text-sm font-black ${row.pnlTone}`}>{row.pnl}</p>
+                                 <p className="text-[10px] text-zinc-500">{row.avgEntry} → {row.mark}</p>
+                             </div>
+                         </div>
+                     </div>
+                 ))}
+             </div>
+
+             <div className="rounded-lg border border-zinc-800/80 bg-zinc-950/40 p-2 text-[10px] leading-relaxed text-zinc-500">
+                 Positions appear after verified fills. Unified PNL rolls up venue-level PNL across the routed venues.
+             </div>
          </div>
 
 

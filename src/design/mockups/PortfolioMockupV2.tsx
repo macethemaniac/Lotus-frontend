@@ -1,12 +1,109 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
+import {
+  Area,
+  AreaChart,
+  CartesianGrid,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 import { 
-  Wallet, Gift, Key, ArrowUpRight, ArrowDownRight, 
-  Download, ArrowDownToLine, ArrowUpFromLine, RefreshCw, Sparkles, 
-  BarChart2, Calendar, ChevronRight, Search, Share
+  Wallet, Gift, Key, ArrowUpRight, ArrowDownRight,
+  Download, ArrowDownToLine, ArrowUpFromLine, Sparkles,
+  BarChart2, Calendar, ChevronRight, Search, Share, ShieldCheck, X
 } from 'lucide-react';
+import { VenueLogo } from '@/components/icons/asset-logo';
+import { FundingDeposit } from './FundingDeposit';
+
+type PerformanceRange = '1D' | '7D' | '1M' | 'All';
+
+type PortfolioPerformancePoint = {
+  label: string;
+  date: string;
+  realizedPnl: number;
+  unrealizedPnl: number;
+  totalValue: number;
+  volume: number;
+};
+
+const portfolioPerformanceSeries: PortfolioPerformancePoint[] = [
+  { label: 'Jan', date: 'Jan 31', realizedPnl: 25400, unrealizedPnl: 820, totalValue: 10420, volume: 42000 },
+  { label: 'Feb', date: 'Feb 28', realizedPnl: 163096.35, unrealizedPnl: 1210, totalValue: 11880, volume: 224000 },
+  { label: 'Mar', date: 'Mar 31', realizedPnl: 271800, unrealizedPnl: -380, totalValue: 11360, volume: 489500 },
+  { label: 'Apr', date: 'Apr 30', realizedPnl: 458400, unrealizedPnl: 240, totalValue: 13240, volume: 995400 },
+  { label: 'May', date: 'May 31', realizedPnl: 612900, unrealizedPnl: 1120, totalValue: 14180, volume: 1684000 },
+  { label: 'Jun', date: 'Jun 30', realizedPnl: 721250, unrealizedPnl: 940, totalValue: 13880, volume: 2210000 },
+  { label: 'Jul', date: 'Jul 31', realizedPnl: 804600, unrealizedPnl: 420, totalValue: 14610, volume: 2820000 },
+  { label: 'Aug', date: 'Aug 31', realizedPnl: 881191.68, unrealizedPnl: 579.8, totalValue: 14758.4, volume: 3456132.48 },
+];
+
+const formatCurrency = (value: number, compact = false) =>
+  new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: compact ? 0 : 2,
+    notation: compact ? 'compact' : 'standard',
+  }).format(value);
+
+const formatSignedCurrency = (value: number) => `${value >= 0 ? '+' : '-'}${formatCurrency(Math.abs(value))}`;
+
+const venueCashBalances = [
+  { id: 'polymarket', label: 'Polymarket', balance: 8450.25, status: 'Ready', activation: 'ready' },
+  { id: 'limitless', label: 'Limitless', balance: 1900.75, status: 'Ready', activation: 'ready' },
+  { id: 'predict', label: 'Predict.fun', balance: 1350, status: 'Ready', activation: 'ready' },
+  { id: 'opinion', label: 'Opinion', balance: 0, status: 'Setup needed', activation: 'required' },
+  { id: 'myriad', label: 'Myriad', balance: 0, status: 'Inactive', activation: 'required' },
+];
+
+const getRangeSeries = (range: PerformanceRange) => {
+  if (range === '1D') return portfolioPerformanceSeries.slice(-2);
+  if (range === '7D') return portfolioPerformanceSeries.slice(-4);
+  if (range === '1M') return portfolioPerformanceSeries.slice(-6);
+  return portfolioPerformanceSeries;
+};
+
+function PerformanceTooltip({ active, payload, label }: { active?: boolean; payload?: any[]; label?: string }) {
+  if (!active || !payload?.length) return null;
+
+  const point = payload[0]?.payload as PortfolioPerformancePoint | undefined;
+  if (!point) return null;
+
+  return (
+    <div className="w-[178px] rounded-lg border border-zinc-700/80 bg-[#18181b] p-3 shadow-2xl">
+      <div className="mb-2 text-xs font-semibold text-zinc-200">{label}</div>
+      <div className="space-y-1.5 rounded-md bg-black/40 px-2 py-1.5 text-[11px]">
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-zinc-500">Realized</span>
+          <span className="font-mono font-semibold text-[#22c55e]">{formatSignedCurrency(point.realizedPnl)}</span>
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-zinc-500">Unrealized</span>
+          <span className={`font-mono font-semibold ${point.unrealizedPnl >= 0 ? 'text-[#22c55e]' : 'text-red-400'}`}>
+            {formatSignedCurrency(point.unrealizedPnl)}
+          </span>
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-zinc-500">Value</span>
+          <span className="font-mono font-semibold text-zinc-200">{formatCurrency(point.totalValue)}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export const PortfolioMockupV2: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'positions' | 'orders' | 'history' | 'tips'>('positions');
+  const [fundingModal, setFundingModal] = useState<'deposit' | 'withdraw' | null>(null);
+  const [activationVenue, setActivationVenue] = useState<(typeof venueCashBalances)[number] | null>(null);
+  const [performanceRange, setPerformanceRange] = useState<PerformanceRange>('All');
+  const performanceSeries = useMemo(() => getRangeSeries(performanceRange), [performanceRange]);
+  const latestPerformance = performanceSeries[performanceSeries.length - 1] ?? portfolioPerformanceSeries[portfolioPerformanceSeries.length - 1];
+  const totalPnl = latestPerformance.realizedPnl + latestPerformance.unrealizedPnl;
+  const totalRoi = latestPerformance.totalValue > 0 ? (totalPnl / latestPerformance.totalValue) * 100 : 0;
+  const activationRequiredVenues = venueCashBalances.filter((venue) => venue.activation === 'required');
 
   return (
     <div className="min-h-screen bg-[#09090b] text-white p-6 font-sans antialiased space-y-6 animate-fade-in relative">
@@ -16,7 +113,7 @@ export const PortfolioMockupV2: React.FC = () => {
         
         {/* Left Panel - Portfolio */}
         <div className="rounded-xl border border-zinc-800 bg-[#121214] overflow-hidden flex flex-col">
-          <div className="p-5 space-y-6">
+          <div className="p-5 space-y-5">
             
             {/* Header */}
             <div className="flex items-center justify-between">
@@ -27,59 +124,87 @@ export const PortfolioMockupV2: React.FC = () => {
             </div>
 
             {/* Total Value */}
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <div className="text-sm font-semibold text-zinc-300 mb-1">Total Portfolio Value</div>
-                <div className="text-[32px] leading-none font-bold text-white">$14,758.40</div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-xl border border-zinc-800/80 bg-black/20 p-3">
+                <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.08em] text-zinc-500">Total Value</div>
+                <div className="text-[29px] leading-none font-bold tracking-tight text-white">$14,758.40</div>
               </div>
-              <div>
-                <div className="text-sm font-semibold text-zinc-300 mb-1">Active Positions</div>
-                <div className="text-[32px] leading-none font-bold text-white">$3,057.40</div>
+              <div className="rounded-xl border border-zinc-800/80 bg-black/20 p-3">
+                <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.08em] text-zinc-500">Positions</div>
+                <div className="text-[29px] leading-none font-bold tracking-tight text-white">$3,057.40</div>
               </div>
             </div>
 
-            <div className="h-px bg-zinc-800/80 w-full" />
+            {/* Venue Cash Breakdown */}
+            <div className="rounded-xl border border-zinc-800/80 bg-[#0d0d0f] p-3.5">
+              <div className="mb-3 flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-[11px] font-bold uppercase tracking-[0.08em] text-zinc-500">Venue Cash Balances</div>
+                  <div className="mt-1 text-lg font-bold text-white">$11,701.00</div>
+                </div>
+                <div className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.08em] text-emerald-300">
+                  3 ready
+                </div>
+              </div>
 
-            {/* Cash Breakdown */}
-            <div className="flex items-end gap-x-6 gap-y-4 flex-wrap">
-              <div className="relative">
-                <div className="text-[13px] font-semibold text-zinc-300 mb-1">Total Cash</div>
-                <div className="text-base font-bold text-white flex items-center gap-2">
-                  $11,701.00
-                </div>
-                <div className="absolute top-1/2 -right-4 -translate-y-1/2 text-zinc-500">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 3v12a2 2 0 0 0 2 2h10"/><path d="m14 13 4 4-4 4"/><path d="m14 5 4 4-4 4"/></svg>
-                </div>
+              <div className="grid grid-cols-1 gap-2">
+                {venueCashBalances.map((venue) => (
+                  <div
+                    key={venue.id}
+                    className="flex items-center justify-between gap-3 rounded-lg border border-zinc-800/70 bg-[#151518] px-3 py-2.5"
+                  >
+                    <div className="flex min-w-0 items-center gap-2.5">
+                      <VenueLogo id={venue.id} label={venue.label} className="h-6 w-6 rounded-md" />
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-semibold text-zinc-200">{venue.label}</div>
+                        <div className={`text-[10px] font-semibold ${venue.balance > 0 ? 'text-emerald-400' : 'text-zinc-500'}`}>
+                          {venue.status}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="text-right font-mono text-sm font-bold text-white">
+                      {formatCurrency(venue.balance)}
+                      {venue.activation === 'required' && (
+                        <button
+                          type="button"
+                          onClick={() => setActivationVenue(venue)}
+                          className="mt-1.5 flex min-h-8 items-center justify-center rounded-md border border-[#ccff00]/25 bg-[#ccff00]/10 px-2.5 text-[10px] font-bold uppercase tracking-[0.08em] text-[#ccff00] transition-colors hover:bg-[#ccff00]/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
+                        >
+                          Activate
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
               </div>
-              <div>
-                <div className="text-[13px] font-medium text-zinc-400 mb-1">Polygon<br/>Cash</div>
-                <div className="text-[15px] font-bold text-white">$8,450.25</div>
-              </div>
-              <div>
-                <div className="text-[13px] font-medium text-zinc-400 mb-1">Solana<br/>Cash</div>
-                <div className="text-[15px] font-bold text-white">$3,250.75</div>
-              </div>
-              <div>
-                <div className="text-[13px] font-medium text-zinc-400 mb-1">BSC<br/>Cash</div>
-                <div className="text-[15px] font-bold text-white">$0.00</div>
-              </div>
-              <div>
-                <div className="text-[13px] font-medium text-zinc-400 mb-1">Base<br/>Cash</div>
-                <div className="text-[15px] font-bold text-white">$0.00</div>
-              </div>
+              {activationRequiredVenues.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setActivationVenue(activationRequiredVenues[0])}
+                  className="mt-3 flex min-h-9 w-full items-center justify-center gap-2 rounded-lg border border-[#ccff00]/25 bg-[#ccff00]/10 px-3 text-xs font-bold text-[#ccff00] transition-colors hover:bg-[#ccff00]/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
+                >
+                  <ShieldCheck className="h-4 w-4" />
+                  Activate pending venues
+                </button>
+              )}
             </div>
           </div>
 
-          <div className="p-5 mt-auto space-y-4">
-            <div className="grid grid-cols-[1fr_1fr_1fr] gap-3">
-              <button className="flex items-center justify-center gap-2 py-2.5 rounded-lg bg-lotus-500/10 hover:bg-lotus-500/20 border border-lotus-500/30 text-lotus-400 text-sm font-semibold transition-colors">
+          <div className="p-5 pt-0 mt-auto">
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => setFundingModal('deposit')}
+                className="flex items-center justify-center gap-2 py-2.5 rounded-lg bg-lotus-500/10 hover:bg-lotus-500/20 border border-lotus-500/30 text-lotus-400 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lotus-500"
+              >
                 <ArrowDownToLine className="w-4 h-4" /> Deposit
               </button>
-              <button className="flex items-center justify-center gap-2 py-2.5 rounded-lg bg-zinc-800/50 hover:bg-zinc-800 border border-zinc-700/50 text-zinc-300 text-sm font-semibold transition-colors">
+              <button
+                type="button"
+                onClick={() => setFundingModal('withdraw')}
+                className="flex items-center justify-center gap-2 py-2.5 rounded-lg bg-zinc-800/50 hover:bg-zinc-800 border border-zinc-700/50 text-zinc-300 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lotus-500"
+              >
                 <ArrowUpFromLine className="w-4 h-4" /> Withdraw
-              </button>
-              <button className="flex items-center justify-center gap-2 py-2.5 rounded-lg bg-zinc-800/50 hover:bg-zinc-800 border border-zinc-700/50 text-zinc-300 text-sm font-semibold transition-colors">
-                <RefreshCw className="w-4 h-4" /> Bridge
               </button>
             </div>
           </div>
@@ -95,8 +220,13 @@ export const PortfolioMockupV2: React.FC = () => {
               Performance
             </div>
             <div className="flex gap-1 bg-zinc-800/50 rounded-lg p-1 border border-zinc-700/50">
-              {['1D', '7D', '1M', 'All'].map((v, i) => (
-                <button key={v} className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${i === 3 ? 'bg-zinc-700 text-white' : 'text-zinc-400 hover:text-zinc-200'}`}>
+              {(['1D', '7D', '1M', 'All'] as PerformanceRange[]).map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => setPerformanceRange(v)}
+                  className={`px-3 py-1 text-xs font-bold rounded-md transition-colors ${performanceRange === v ? 'bg-zinc-700 text-white' : 'text-zinc-400 hover:text-zinc-200'}`}
+                >
                   {v}
                 </button>
               ))}
@@ -107,19 +237,23 @@ export const PortfolioMockupV2: React.FC = () => {
           <div className="grid grid-cols-4 gap-4 mb-6 relative z-10">
             <div>
               <div className="text-sm font-semibold text-zinc-300 mb-1.5">Realized PNL</div>
-              <div className="text-lg font-bold text-[#22c55e]">+881,191.68</div>
+              <div className="text-lg font-bold text-[#22c55e]">{formatSignedCurrency(latestPerformance.realizedPnl)}</div>
             </div>
             <div>
               <div className="text-sm font-semibold text-zinc-300 mb-1.5">Unrealized PNL</div>
-              <div className="text-lg font-bold text-[#22c55e]">+$579.80</div>
+              <div className={`text-lg font-bold ${latestPerformance.unrealizedPnl >= 0 ? 'text-[#22c55e]' : 'text-red-400'}`}>
+                {formatSignedCurrency(latestPerformance.unrealizedPnl)}
+              </div>
             </div>
             <div>
               <div className="text-sm font-semibold text-zinc-300 mb-1.5">Total ROI</div>
-              <div className="text-lg font-bold text-[#22c55e]">+68.42%</div>
+              <div className={`text-lg font-bold ${totalRoi >= 0 ? 'text-[#22c55e]' : 'text-red-400'}`}>
+                {totalRoi >= 0 ? '+' : ''}{totalRoi.toFixed(2)}%
+              </div>
             </div>
             <div>
               <div className="text-sm font-semibold text-zinc-300 mb-1.5">Total Volume</div>
-              <div className="text-lg font-bold text-white">$3,456,132.48</div>
+              <div className="text-lg font-bold text-white">{formatCurrency(latestPerformance.volume)}</div>
             </div>
           </div>
           
@@ -140,44 +274,48 @@ export const PortfolioMockupV2: React.FC = () => {
           <div className="h-px bg-zinc-800/50 w-full mb-6 relative z-10" />
 
           {/* Chart Area */}
-          <div className="flex-1 relative min-h-[220px]">
-             {/* Chart Y Axis labels */}
-             <div className="absolute right-0 top-0 bottom-0 flex flex-col justify-between text-[10px] text-zinc-600 font-mono text-right z-10">
-                <span>$100...</span>
-                <span>$50...</span>
-                <span>$0</span>
-             </div>
-             {/* Chart Grid Lines */}
-             <div className="absolute inset-x-0 top-2 border-b border-dashed border-zinc-800/60 z-0 mr-8" />
-             <div className="absolute inset-x-0 top-1/2 border-b border-dashed border-zinc-800/60 z-0 mr-8" />
-             <div className="absolute inset-x-0 bottom-2 border-b border-dashed border-zinc-800/60 z-0 mr-8" />
-             
-             {/* Chart Graphic */}
-             <svg className="absolute inset-0 w-[calc(100%-2rem)] h-full z-10" viewBox="0 0 800 200" preserveAspectRatio="none">
-                 <defs>
-                     <linearGradient id="pnlGradient" x1="0" y1="0" x2="0" y2="1">
-                         <stop offset="0%" stopColor="#22c55e" stopOpacity="0.3" />
-                         <stop offset="100%" stopColor="#22c55e" stopOpacity="0" />
-                     </linearGradient>
-                 </defs>
-                 <path d="M0 160 Q 50 150, 100 130 T 250 120 T 400 90 T 550 70 T 700 50 T 800 40 L 800 200 L 0 200 Z" fill="url(#pnlGradient)" />
-                 <path d="M0 160 Q 50 150, 100 130 T 250 120 T 400 90 T 550 70 T 700 50 T 800 40" fill="none" stroke="#22c55e" strokeWidth="3" vectorEffect="non-scaling-stroke" strokeLinecap="round" strokeLinejoin="round" />
-             </svg>
-
-             {/* Hover indicator */}
-             <div className="absolute top-0 bottom-4 left-[20%] w-px border-l border-dashed border-zinc-500 z-20">
-                <div className="w-2.5 h-2.5 bg-[#22c55e] rounded-full absolute top-[62%] -left-[5px] shadow-[0_0_10px_#22c55e]"></div>
-                <div className="absolute top-[62%] left-4 bg-[#18181b] border border-zinc-700/80 rounded-lg p-3 w-[160px] shadow-xl">
-                   <div className="text-zinc-200 text-xs font-semibold mb-2">Feb 28</div>
-                   <div className="flex justify-between items-center bg-black/40 rounded px-2 py-1.5">
-                     <div className="flex items-center gap-1.5 align-middle">
-                       <span className="w-3 h-1 bg-[#22c55e] rounded-full"></span>
-                       <span className="text-[10px] font-bold text-zinc-400">PNL</span>
-                     </div>
-                     <span className="text-[11px] font-mono text-zinc-300">+$163096.35</span>
-                   </div>
-                </div>
-             </div>
+          <div className="relative min-h-[220px] flex-1">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={performanceSeries} margin={{ top: 10, right: 8, bottom: 8, left: 0 }}>
+                <defs>
+                  <linearGradient id="portfolioPnlGradient" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#22c55e" stopOpacity={0.3} />
+                    <stop offset="100%" stopColor="#22c55e" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid vertical={false} stroke="#27272a" strokeDasharray="4 4" opacity={0.6} />
+                <XAxis
+                  dataKey="label"
+                  axisLine={false}
+                  tickLine={false}
+                  tick={{ fill: '#71717a', fontSize: 11, fontWeight: 600 }}
+                  dy={8}
+                />
+                <YAxis
+                  dataKey="realizedPnl"
+                  orientation="right"
+                  axisLine={false}
+                  tickLine={false}
+                  tick={{ fill: '#52525b', fontSize: 10, fontFamily: 'monospace' }}
+                  tickFormatter={(value) => formatCurrency(Number(value), true)}
+                  width={54}
+                />
+                <ReferenceLine y={0} stroke="#3f3f46" strokeDasharray="4 4" />
+                <Tooltip
+                  cursor={{ stroke: '#71717a', strokeDasharray: '4 4' }}
+                  content={<PerformanceTooltip />}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="realizedPnl"
+                  stroke="#22c55e"
+                  strokeWidth={3}
+                  fill="url(#portfolioPnlGradient)"
+                  activeDot={{ r: 5, fill: '#22c55e', stroke: '#18181b', strokeWidth: 2 }}
+                  dot={false}
+                />
+              </AreaChart>
+            </ResponsiveContainer>
           </div>
         </div>
       </div>
@@ -319,7 +457,88 @@ export const PortfolioMockupV2: React.FC = () => {
         )}
       </div>
 
+      {fundingModal && createPortal(
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={fundingModal === 'deposit' ? 'Deposit funds' : 'Withdraw funds'}
+          className="fixed left-0 top-0 z-[2147483647] flex h-[100dvh] w-[100dvw] items-center justify-center overflow-hidden bg-black/60 px-4 py-6 backdrop-blur-md"
+        >
+          <button
+            type="button"
+            aria-label="Close funding modal"
+            onClick={() => setFundingModal(null)}
+            className="absolute inset-0 cursor-default"
+          />
+          <div className="relative z-10 w-full max-w-[400px]">
+            <FundingDeposit initialMode={fundingModal} modal onClose={() => setFundingModal(null)} />
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {activationVenue && createPortal(
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={`${activationVenue.label} activation`}
+          className="fixed inset-0 z-[2147483647] flex h-[100dvh] w-[100dvw] items-center justify-center overflow-hidden bg-black/45 px-4 py-6 backdrop-blur-[6px]"
+        >
+          <button
+            type="button"
+            aria-label="Close activation modal"
+            onClick={() => setActivationVenue(null)}
+            className="absolute inset-0 cursor-default"
+          />
+          <div className="relative z-10 w-full max-w-[360px] rounded-2xl border border-zinc-800 bg-[#18181b] p-5 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <VenueLogo id={activationVenue.id} label={activationVenue.label} className="h-9 w-9 rounded-lg" />
+                <div>
+                  <h2 className="text-base font-bold text-white">Activate {activationVenue.label}</h2>
+                  <p className="mt-0.5 text-xs text-zinc-500">Required before funds become venue-ready.</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                aria-label="Close activation modal"
+                onClick={() => setActivationVenue(null)}
+                className="flex h-9 w-9 items-center justify-center rounded-lg text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="mt-5 rounded-xl border border-zinc-800 bg-black/25 p-4">
+              <div className="flex items-start gap-3">
+                <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-[#ccff00]" />
+                <p className="text-sm leading-relaxed text-zinc-300">
+                  Activation is a user-signed venue approval. Lotus only treats funds as tradeable after backend readiness confirms the venue is active.
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-5 grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => setActivationVenue(null)}
+                className="min-h-10 rounded-lg border border-zinc-700 bg-zinc-900 text-sm font-semibold text-zinc-300 transition-colors hover:bg-zinc-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
+              >
+                Not now
+              </button>
+              <button
+                type="button"
+                onClick={() => setActivationVenue(null)}
+                className="min-h-10 rounded-lg border border-[#ccff00]/40 bg-[#ccff00] text-sm font-black text-black transition-colors hover:bg-[#d7ff33] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 focus-visible:ring-offset-2 focus-visible:ring-offset-[#18181b]"
+              >
+                Activate
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
     </div>
   );
 };
-

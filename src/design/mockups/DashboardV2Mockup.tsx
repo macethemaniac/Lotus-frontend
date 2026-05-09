@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { LotusLogo } from '@/components/icons/lotus-icons';
-import { InfraTradingTerminal } from '@/design/mockups/InfraTradingTerminal';
+import { VenueLogo } from '@/components/icons/asset-logo';
+import { InfraTradingTerminal, type TerminalMarketSelection } from '@/design/mockups/InfraTradingTerminal';
 import { PortfolioMockupV2 } from '@/design/mockups/PortfolioMockupV2';
 import { 
   Search, Bell, Home, BarChart2, ArrowRightLeft, 
@@ -8,7 +9,7 @@ import {
   ShieldCheck, AlertTriangle, Clock, ChevronRight,
   Flame, Globe, Cpu, MessageSquare, ChevronsLeft, ChevronsRight,
   Square, CheckSquare, Star, Sparkles, Trophy, Database, Filter, Sun, Moon, Vault, Volleyball, Landmark, Terminal,
-  LayoutGrid, List, Bookmark, Radio
+  LayoutGrid, List, Bookmark, Radio, CheckCircle2, Wallet
 } from 'lucide-react';
 
 const Badge = ({ children, variant = 'default', className = '' }: any) => {
@@ -40,6 +41,7 @@ export const DashboardV2Mockup = ({
   const [isFilterCollapsed, setIsFilterCollapsed] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [marketViewMode, setMarketViewMode] = useState<'grid' | 'list'>('grid');
+  const [selectedTerminalMarket, setSelectedTerminalMarket] = useState<TerminalMarketSelection | null>(null);
   const [expandedCategories, setExpandedCategories] = useState<Record<string, boolean>>({
     'Sports': true,
     'Politics': true,
@@ -55,12 +57,61 @@ export const DashboardV2Mockup = ({
   const pageTitle = activePage === 'markets' ? 'Markets' : 'Top Opportunities';
   const effectiveMarketViewMode = activePage === 'markets' ? 'list' : marketViewMode;
   const isMarketSurface = activePage === 'home' || activePage === 'markets';
+  const inferTerminalMarketType = (title: string): 'binary' | 'multi' => (
+    title.includes('Winner') || title.includes('Champion') || title.includes('Region') || title.includes('Season')
+      ? 'multi'
+      : 'binary'
+  );
+  const openMarketInTerminal = (market: Pick<TerminalMarketSelection, 'title' | 'category' | 'icon' | 'volume' | 'venueCount' | 'routeType'> & { marketType?: 'binary' | 'multi' }) => {
+    setSelectedTerminalMarket({
+      ...market,
+      marketType: market.marketType ?? inferTerminalMarketType(market.title),
+    });
+    onNavigate?.('terminal');
+  };
+
+  const notificationItems = [
+    {
+      id: 'fill-confirmed',
+      title: 'Fill confirmed',
+      message: 'Predict.fun order filled. Unified position and venue PnL are updating.',
+      meta: 'Execution',
+      time: 'Now',
+      Icon: CheckCircle2,
+      tone: 'text-emerald-500',
+      ring: 'bg-emerald-500/10 border-emerald-500/20',
+      unread: true,
+    },
+    {
+      id: 'limit-resting',
+      title: 'Limit order resting',
+      message: 'Your limit order is live and waiting for venue liquidity.',
+      meta: 'Open order',
+      time: '2m',
+      Icon: Clock,
+      tone: 'text-sky-400',
+      ring: 'bg-sky-500/10 border-sky-500/20',
+      unread: true,
+    },
+    {
+      id: 'fund-activation',
+      title: 'Polymarket activation required',
+      message: 'Activate venue-ready funds before Polymarket can route live orders.',
+      meta: 'Funding',
+      time: '5m',
+      Icon: Wallet,
+      tone: 'text-amber-400',
+      ring: 'bg-amber-500/10 border-amber-500/20',
+      unread: true,
+    },
+  ];
+  const unreadNotificationCount = notificationItems.filter(item => item.unread).length;
 
   return (
     <div className={`${isDarkMode ? 'dark' : ''} w-full h-full`}>
       <div className="flex h-screen w-full bg-[#F7F8FA] dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 font-sans overflow-hidden">
         {/* Sidebar */}
-      <aside className="w-12 bg-white dark:bg-zinc-900 border-r border-zinc-200 dark:border-zinc-800 flex flex-col items-center py-4 gap-6 z-10 shrink-0">
+      <aside className="w-12 bg-white dark:bg-zinc-900 border-r border-zinc-200 dark:border-zinc-800 flex flex-col items-center gap-6 z-50 shrink-0 pb-14 pt-4">
         <div className="w-7 h-7 flex items-center justify-center">
           <LotusLogo className="w-7 h-7 text-[#ccff00]" />
         </div>
@@ -94,11 +145,15 @@ export const DashboardV2Mockup = ({
             <div className="flex items-center gap-3">
               <div className="relative">
                 <button 
+                  type="button"
+                  aria-label="Open notifications"
                   onClick={() => setShowNotifications(!showNotifications)}
-                  className="relative p-1.5 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors rounded-full hover:bg-zinc-100 dark:hover:bg-zinc-800 group"
+                  className="relative p-1.5 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors rounded-full hover:bg-zinc-100 dark:hover:bg-zinc-800 group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
                 >
                   <Bell className="w-4 h-4" />
-                  <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full border-2 border-white dark:border-zinc-900"></span>
+                  {unreadNotificationCount > 0 && (
+                    <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full border-2 border-white dark:border-zinc-900"></span>
+                  )}
                   
                   {/* Tooltip */}
                   {!showNotifications && (
@@ -110,12 +165,43 @@ export const DashboardV2Mockup = ({
 
                 {/* Popover */}
                 {showNotifications && (
-                  <div className="absolute top-full right-0 mt-3 w-72 bg-white dark:bg-[#1a1a1c] border border-zinc-200 dark:border-zinc-800 rounded-xl shadow-xl overflow-hidden z-50 animate-in fade-in slide-in-from-top-2 duration-200 block">
-                    <div className="p-3.5 border-b border-zinc-200 dark:border-zinc-800/80">
-                      <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">Notifications</h3>
+                  <div className="absolute top-full right-0 mt-3 w-[21rem] bg-white dark:bg-[#1a1a1c] border border-zinc-200 dark:border-zinc-800 rounded-xl shadow-2xl overflow-hidden z-50 animate-in fade-in slide-in-from-top-2 duration-200 block">
+                    <div className="flex items-center justify-between p-3.5 border-b border-zinc-200 dark:border-zinc-800/80">
+                      <div>
+                        <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">Notifications</h3>
+                        <p className="text-[11px] text-zinc-500 dark:text-zinc-500">Execution, orders, and funding readiness</p>
+                      </div>
+                      <span className="rounded-full bg-[#ccff00]/15 px-2 py-0.5 text-[10px] font-bold text-[#7a9900] dark:text-[#ccff00]">
+                        {unreadNotificationCount} new
+                      </span>
                     </div>
-                    <div className="p-8 text-center bg-zinc-50 dark:bg-transparent">
-                      <p className="text-sm font-semibold text-zinc-500 dark:text-zinc-500">No notifications right now</p>
+                    <div className="max-h-[22rem] overflow-y-auto p-2 bg-zinc-50/80 dark:bg-transparent custom-scrollbar">
+                      {notificationItems.map(item => {
+                        const Icon = item.Icon;
+                        return (
+                          <button
+                            key={item.id}
+                            type="button"
+                            className="group/notice flex w-full items-start gap-3 rounded-lg border border-transparent p-2.5 text-left transition-colors hover:border-zinc-200 hover:bg-white dark:hover:border-zinc-700 dark:hover:bg-zinc-900/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
+                          >
+                            <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border ${item.ring}`}>
+                              <Icon className={`h-4 w-4 ${item.tone}`} />
+                            </span>
+                            <span className="min-w-0 flex-1">
+                              <span className="flex items-center justify-between gap-2">
+                                <span className="truncate text-xs font-bold text-zinc-900 dark:text-zinc-100">{item.title}</span>
+                                <span className="shrink-0 text-[10px] font-mono text-zinc-400">{item.time}</span>
+                              </span>
+                              <span className="mt-1 block text-[11px] leading-snug text-zinc-600 dark:text-zinc-400">
+                                {item.message}
+                              </span>
+                              <span className="mt-2 inline-flex rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-500">
+                                {item.meta}
+                              </span>
+                            </span>
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
                 )}
@@ -464,7 +550,7 @@ export const DashboardV2Mockup = ({
                 </h1>
                 
                 <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-6 max-w-xl leading-relaxed font-medium">
-                  Lotus canonical event aggregating underlying contracts across Polymarket and Kalshi. 
+                  Lotus canonical event aggregating underlying contracts across Polymarket and Limitless.
                   Smart routing enabled with private LP liquidity available for size &gt;$50k.
                 </p>
 
@@ -511,7 +597,7 @@ export const DashboardV2Mockup = ({
                     <div className="flex flex-col gap-2">
                       <div className="flex items-center justify-between text-xs">
                         <div className="flex items-center gap-1.5">
-                          <div className="w-4 h-4 rounded bg-blue-50 dark:bg-blue-900/30 border border-blue-100 dark:border-blue-800 flex items-center justify-center text-[8px] font-bold text-blue-600 dark:text-blue-400">P</div>
+                          <VenueLogo id="polymarket" label="Polymarket" className="h-4 w-4 rounded" />
                           <span className="font-medium text-zinc-700 dark:text-zinc-300">Polymarket</span>
                         </div>
                         <span className="font-mono font-bold text-zinc-900 dark:text-zinc-100">65%</span>
@@ -616,9 +702,10 @@ export const DashboardV2Mockup = ({
                   volume="$35.6M"
                   txnBuy={14205}
                   txnSell={8402}
-                  badges={['W', 'P', 'K']}
+                  badges={['polymarket', 'predict', 'limitless']}
                   change="4.5"
                   changeTrend="up"
+                  onOpenTerminal={openMarketInTerminal}
                   outcomes={[
                     { name: 'Cleveland Cavaliers', prob: '26' },
                     { name: 'Detroit Pistons', prob: '15' },
@@ -639,9 +726,10 @@ export const DashboardV2Mockup = ({
                   volume="$12.4M"
                   txnBuy={2301}
                   txnSell={1982}
-                  badges={['W', 'P', 'O', 'L']}
+                  badges={['polymarket', 'predict', 'opinion', 'limitless']}
                   change="2.1"
                   changeTrend="up"
+                  onOpenTerminal={openMarketInTerminal}
                   outcomes={[
                     { name: 'Boston Celtics', prob: '12' },
                     { name: 'San Antonio Spurs', prob: '11' },
@@ -662,9 +750,10 @@ export const DashboardV2Mockup = ({
                   volume="$11.7M"
                   txnBuy={890}
                   txnSell={430}
-                  badges={['W', 'P', 'O']}
+                  badges={['polymarket', 'predict', 'opinion']}
                   change="1.2"
                   changeTrend="up"
+                  onOpenTerminal={openMarketInTerminal}
                   outcomes={[
                     { name: 'France', prob: '16' },
                     { name: 'England', prob: '11' },
@@ -685,9 +774,10 @@ export const DashboardV2Mockup = ({
                   volume="$8.2M"
                   txnBuy={3512}
                   txnSell={2100}
-                  badges={['W', 'O', 'P']}
+                  badges={['polymarket', 'opinion', 'predict']}
                   change="3.5"
                   changeTrend="up"
+                  onOpenTerminal={openMarketInTerminal}
                   outcomes={[
                     { name: 'Top Esports', prob: '15' },
                     { name: "Anyone's Legend", prob: '14' },
@@ -708,9 +798,10 @@ export const DashboardV2Mockup = ({
                   volume="$6.0M"
                   txnBuy={42010}
                   txnSell={12040}
-                  badges={['W', 'O', 'K', 'L', 'P']}
+                  badges={['polymarket', 'opinion', 'predict', 'limitless', 'myriad']}
                   change="1.8"
                   changeTrend="up"
+                  onOpenTerminal={openMarketInTerminal}
                   outcomes={[
                     { name: 'Bank of Japan increases interest rates b...', prob: '2' },
                     { name: 'Bank of Japan increases interest rates b...', prob: '1' },
@@ -730,9 +821,10 @@ export const DashboardV2Mockup = ({
                   volume="$5.9M"
                   txnBuy={1205}
                   txnSell={840}
-                  badges={['W', 'P']}
+                  badges={['polymarket', 'predict']}
                   change="2.8"
                   changeTrend="up"
+                  onOpenTerminal={openMarketInTerminal}
                   outcomes={[
                     { name: 'team from LPL (China)', prob: '25' },
                     { name: 'team from LEC (Europe / EMEA)', prob: '10' },
@@ -742,7 +834,7 @@ export const DashboardV2Mockup = ({
                 />
               </div>
               ) : (
-                <LotusMarketList />
+                <LotusMarketList onOpenMarket={openMarketInTerminal} />
               )}
             </div>
 
@@ -828,7 +920,7 @@ export const DashboardV2Mockup = ({
           </>
           ) : activePage === 'terminal' ? (
             <div className="min-w-0 flex-1">
-              <InfraTradingTerminal embedded darkMode={isDarkMode} />
+              <InfraTradingTerminal embedded darkMode={isDarkMode} selectedMarket={selectedTerminalMarket} />
             </div>
           ) : (
             <div className="min-w-0 flex-1">
@@ -897,7 +989,7 @@ const marketListRows = [
     category: 'Sports',
     routeType: 'Pair',
     venueCount: 5,
-    venues: ['W', 'P', 'K'],
+    venues: ['polymarket', 'predict', 'limitless'],
     icon: '🏆',
     prob: 26,
     change: '+4.5¢',
@@ -914,7 +1006,7 @@ const marketListRows = [
     category: 'Sports',
     routeType: 'Tri',
     venueCount: 7,
-    venues: ['W', 'O', 'P', 'L'],
+    venues: ['polymarket', 'opinion', 'predict', 'limitless'],
     icon: '🏆',
     prob: 51,
     change: '+2.1¢',
@@ -931,7 +1023,7 @@ const marketListRows = [
     category: 'Sports',
     routeType: 'Single',
     venueCount: 4,
-    venues: ['W', 'P', 'O'],
+    venues: ['polymarket', 'predict', 'opinion'],
     icon: '⚽',
     prob: 16,
     change: '+1.2¢',
@@ -948,7 +1040,7 @@ const marketListRows = [
     category: 'Esports',
     routeType: 'Pair',
     venueCount: 3,
-    venues: ['W', 'O', 'P'],
+    venues: ['polymarket', 'opinion', 'predict'],
     icon: '🎮',
     prob: 55,
     change: '+3.5¢',
@@ -965,7 +1057,7 @@ const marketListRows = [
     category: 'Finance',
     routeType: 'Tri',
     venueCount: 8,
-    venues: ['W', 'O', 'P', 'K', 'L'],
+    venues: ['polymarket', 'opinion', 'predict', 'limitless', 'myriad'],
     icon: '🏦',
     prob: 97,
     change: '+1.8¢',
@@ -982,7 +1074,7 @@ const marketListRows = [
     category: 'Esports',
     routeType: 'Pair',
     venueCount: 6,
-    venues: ['W', 'P'],
+    venues: ['polymarket', 'predict'],
     icon: '🌍',
     prob: 70,
     change: '+2.8¢',
@@ -996,12 +1088,27 @@ const marketListRows = [
   },
 ];
 
-const venueBadgeStyles: Record<string, string> = {
-  W: 'bg-blue-600 text-white',
-  O: 'bg-orange-500 text-white',
-  P: 'bg-purple-600 text-white',
-  K: 'bg-emerald-500 text-black',
-  L: 'bg-indigo-500 text-white',
+const venueLabels: Record<string, string> = {
+  polymarket: 'Polymarket',
+  predict: 'Predict.fun',
+  limitless: 'Limitless',
+  opinion: 'Opinion',
+  myriad: 'Myriad',
+};
+
+const VenueChip = ({ id, size = 'sm' }: { id: string; size?: 'xs' | 'sm' }) => {
+  const label = venueLabels[id] ?? id;
+  const dimensions = size === 'xs' ? 'h-4 w-4 rounded' : 'h-6 w-6 rounded-md';
+
+  return (
+    <span
+      title={label}
+      aria-label={label}
+      className={`inline-flex shrink-0 items-center justify-center border border-zinc-700/70 bg-zinc-900/80 p-0.5 shadow-sm ${dimensions}`}
+    >
+      <VenueLogo id={id} label={label} className="h-full w-full rounded-[inherit] object-cover" />
+    </span>
+  );
 };
 
 const listMarketMeta = [
@@ -1035,7 +1142,11 @@ const Sparkline = ({ points, positive }: { points: number[]; positive: boolean }
   );
 };
 
-const LotusMarketList = () => (
+const LotusMarketList = ({
+  onOpenMarket,
+}: {
+  onOpenMarket?: (market: Pick<TerminalMarketSelection, 'title' | 'category' | 'icon' | 'volume' | 'venueCount' | 'routeType'>) => void;
+}) => (
   <div className="overflow-hidden rounded-2xl border border-zinc-800 bg-[#101012] shadow-sm">
     <div className="grid grid-cols-[minmax(360px,1.7fr)_112px_96px_84px_116px_92px_96px_150px] items-center gap-4 border-b border-zinc-800 bg-zinc-900/80 px-5 py-3 text-[11px] font-bold uppercase tracking-[0.08em] text-zinc-500">
       <div className="flex items-center gap-3"><Sparkles className="h-4 w-4 text-[#ccff00]" /> Market</div>
@@ -1054,19 +1165,25 @@ const LotusMarketList = () => (
         return (
           <div key={market.title} className="group grid grid-cols-[minmax(360px,1.7fr)_112px_96px_84px_116px_92px_96px_150px] items-center gap-4 px-5 py-3.5 transition-colors hover:bg-[#ccff00]/[0.035]">
             <div className="flex min-w-0 items-center gap-3">
-              <button className="flex h-7 w-5 shrink-0 items-center justify-center rounded-md text-zinc-500 transition hover:text-zinc-200" aria-label={`Expand ${market.title}`}>
+              <button type="button" className="flex h-7 w-5 shrink-0 items-center justify-center rounded-md text-zinc-500 transition hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70" aria-label={`Expand ${market.title}`}>
                 <ChevronDown className="h-3.5 w-3.5" />
               </button>
-              <button className="flex h-7 w-5 shrink-0 items-center justify-center rounded-md text-zinc-500 transition hover:text-[#ccff00]" aria-label={`Watch ${market.title}`}>
+              <button type="button" className="flex h-7 w-5 shrink-0 items-center justify-center rounded-md text-zinc-500 transition hover:text-[#ccff00] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70" aria-label={`Watch ${market.title}`}>
                 <Bookmark className="h-3.5 w-3.5" />
               </button>
-              <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-zinc-700 bg-zinc-800 text-xl">
-                {market.icon}
-                <span className="absolute -bottom-1 -left-1 flex h-5 w-5 items-center justify-center rounded-full bg-[#ccff00] text-[9px] font-black text-black">L</span>
-              </div>
-              <div className="min-w-0">
-                <div className="truncate text-sm font-semibold text-zinc-100">{market.title}</div>
-                <div className="mt-1 flex items-center gap-2 text-xs text-zinc-500">
+              <button
+                type="button"
+                onClick={() => onOpenMarket?.(market)}
+                className="flex min-w-0 flex-1 items-center gap-3 rounded-xl text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 focus-visible:ring-offset-2 focus-visible:ring-offset-[#101012]"
+                aria-label={`Open ${market.title} in terminal`}
+              >
+                <span className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-zinc-700 bg-zinc-800 text-xl">
+                  {market.icon}
+                  <span className="absolute -bottom-1 -left-1 flex h-5 w-5 items-center justify-center rounded-full bg-[#ccff00] text-[9px] font-black text-black">L</span>
+                </span>
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-semibold text-zinc-100 transition-colors group-hover:text-[#ccff00]">{market.title}</span>
+                  <span className="mt-1 flex items-center gap-2 text-xs text-zinc-500">
                   <span>{market.category}</span>
                   <span>•</span>
                   <span>{market.routeType} route</span>
@@ -1074,13 +1191,12 @@ const LotusMarketList = () => (
                   <span>{market.venueCount} venues</span>
                   <span className="flex items-center gap-1">
                     {market.venues.map((venue) => (
-                      <span key={venue} className={`flex h-4 w-4 items-center justify-center rounded text-[8px] font-black shadow-sm ${venueBadgeStyles[venue]}`}>
-                        {venue}
-                      </span>
+                      <VenueChip key={venue} id={venue} size="xs" />
                     ))}
                   </span>
-                </div>
-              </div>
+                  </span>
+                </span>
+              </button>
             </div>
             <Sparkline points={meta.sparkline} positive={positiveMove} />
             <div className="font-mono">
@@ -1154,9 +1270,7 @@ const MarketListTable = () => (
           </div>
           <div className="flex items-center gap-1.5">
             {market.venues.map((venue) => (
-              <span key={venue} className={`flex h-6 w-6 items-center justify-center rounded-md text-[11px] font-black shadow-sm ${venueBadgeStyles[venue]}`}>
-                {venue}
-              </span>
+              <VenueChip key={venue} id={venue} />
             ))}
           </div>
           <div>
@@ -1225,44 +1339,51 @@ const NavItem = ({
   </div>
 );
 
-const MarketCard = ({ title, category, venueCount, routeType, savings, spread, fallback, icon, prob, change, changeTrend, volume, txnBuy, txnSell, badges, outcomes }: any) => {
+const MarketCard = ({ title, category, venueCount, routeType, savings, spread, fallback, icon, prob, change, changeTrend, volume, txnBuy, txnSell, badges, outcomes, onOpenTerminal }: any) => {
   const allVenues = [
-    { id: 'W', color: 'bg-blue-600', textColor: 'text-white' },
-    { id: 'O', color: 'bg-orange-500', textColor: 'text-white' },
-    { id: 'P', color: 'bg-purple-600', textColor: 'text-white' },
-    { id: 'K', color: 'bg-emerald-500', textColor: 'text-black' },
-    { id: 'L', color: 'bg-indigo-500', textColor: 'text-white' }
+    { id: 'polymarket', label: 'Polymarket' },
+    { id: 'predict', label: 'Predict.fun' },
+    { id: 'limitless', label: 'Limitless' },
+    { id: 'opinion', label: 'Opinion' },
+    { id: 'myriad', label: 'Myriad' }
   ];
 
   return (
-    <div className="bg-white dark:bg-[#121214] border border-zinc-200 dark:border-zinc-800 rounded-2xl p-4 flex min-h-[260px] flex-col justify-between gap-3 shadow-sm hover:border-zinc-300 dark:hover:border-zinc-700 hover:shadow-md transition-all cursor-pointer group">
+    <div className="bg-white dark:bg-[#121214] border border-zinc-200 dark:border-zinc-800 rounded-2xl p-4 flex min-h-[260px] flex-col justify-between gap-3 shadow-sm hover:border-zinc-300 dark:hover:border-zinc-700 hover:shadow-md transition-all group">
       
       {/* Header */}
       <div className="flex justify-between items-start">
-        <div className="flex gap-3 items-start">
-          <div className="w-10 h-10 rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200/80 dark:border-zinc-700/80 flex items-center justify-center shrink-0 text-xl shadow-sm">
+        <button
+          type="button"
+          onClick={() => onOpenTerminal?.({ title, category, icon, volume, venueCount, routeType })}
+          className="flex min-w-0 flex-1 gap-3 items-start rounded-xl text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-[#121214]"
+          aria-label={`Open ${title} in terminal`}
+        >
+          <span className="w-10 h-10 rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200/80 dark:border-zinc-700/80 flex items-center justify-center shrink-0 text-xl shadow-sm">
             {icon}
-          </div>
-          <div className="flex-1 min-w-0">
-            <h4 className="text-sm font-bold text-zinc-900 dark:text-zinc-100 leading-tight mb-1 line-clamp-2 pr-2">{title}</h4>
-            <div className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 mb-2.5">
+          </span>
+          <span className="flex-1 min-w-0">
+            <span className="block text-sm font-bold text-zinc-900 dark:text-zinc-100 leading-tight mb-1 line-clamp-2 pr-2 transition-colors group-hover:text-[#5c7300] dark:group-hover:text-[#ccff00]">{title}</span>
+            <span className="block text-[11px] font-medium text-zinc-500 dark:text-zinc-400 mb-2.5">
               {category} · {venueCount} venues scanned
-            </div>
-            <div className="flex gap-1.5 mb-3">
+            </span>
+            <span className="flex gap-1.5 mb-3">
               {allVenues.map(v => {
                 const isActive = badges.includes(v.id);
                 return (
-                  <div 
+                  <span
                     key={v.id} 
-                    className={`w-5 h-5 rounded flex items-center justify-center text-[10px] font-bold ${isActive ? `${v.color} ${v.textColor} shadow-sm opacity-100` : 'bg-zinc-100 dark:bg-zinc-800/80 text-zinc-400 dark:text-zinc-600 opacity-50 grayscale'}`}
+                    title={v.label}
+                    aria-label={v.label}
+                    className={`flex h-5 w-5 items-center justify-center rounded border border-zinc-700/70 bg-zinc-900/80 p-0.5 shadow-sm transition ${isActive ? 'opacity-100' : 'opacity-25 grayscale'}`}
                   >
-                    {v.id}
-                  </div>
+                    <VenueLogo id={v.id} label={v.label} className="h-full w-full rounded-[inherit] object-cover" />
+                  </span>
                 );
               })}
-            </div>
-          </div>
-        </div>
+            </span>
+          </span>
+        </button>
         <div className="text-right shrink-0 ml-2">
           <div className="text-base font-mono font-bold text-zinc-900 dark:text-zinc-100 leading-none mb-1">{prob}¢</div>
           <div className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
