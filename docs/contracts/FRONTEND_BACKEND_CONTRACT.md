@@ -129,6 +129,7 @@ Frontend rules:
 - Do not call venue APIs.
 - Do not show completed or settled until backend status supports it.
 - `POST /execution/live-candidates` is user-authenticated live pricing evidence. The frontend can use it for visible market unified price displays and terminal quote preparation, but it must preserve backend blockers and cannot infer routeability from catalog metadata alone.
+- Terminal bottom tabs use backend-only contracts: outcomes and live candidates for market outcome pricing, positions/open-orders/history HTTP polling as realtime fallback, and resolution-risk canonical/venue market profiles for rules and compatibility.
 - Mark-to-market fields are backend-sourced from live quote evidence. If marks are unavailable, keep positions visible and show the backend unavailable state instead of fake PnL.
 - Portfolio time-series is currently a backend-generated current MTM snapshot (`seriesBasis: CURRENT_MARK_TO_MARKET_SNAPSHOT`, `historyAvailable: false`) until persisted historical portfolio snapshots exist.
 - Open orders include only non-dry-run signed-bundle executions with `SUBMITTED` or `PARTIAL` status. Limit-order creation/list/cancel is not part of this contract slice.

@@ -81,6 +81,39 @@ export type MarketOutcome = {
   venues: string[];
 };
 
+export type ResolutionRiskAssessment = {
+  label: string;
+  riskScore: string;
+  confidenceScore: string;
+  equivalenceClass: "SAFE_EQUIVALENT" | "CAUTION" | "HIGH_RISK" | "DO_NOT_POOL";
+  shortReasons: string[];
+  factorBreakdown: Record<string, unknown>;
+  recommendedAction: "Poolable" | "Pool with caution" | "Isolate execution" | "Do not pool";
+};
+
+export type ResolutionRiskProfile = {
+  id: string;
+  venue: string;
+  venueMarketId: string;
+  canonicalEventId: string;
+  oracleType?: string | null;
+  oracleName?: string | null;
+  resolutionAuthorityType?: string | null;
+  primaryResolutionText?: string | null;
+  supplementalRulesText?: string | null;
+  disputeWindowHours?: string | null;
+  settlementLagHours?: string | null;
+  marketType?: string | null;
+  outcomeSchema?: Record<string, unknown> | null;
+  hasAmbiguousTimeBoundary: boolean;
+  hasAmbiguousJurisdictionBoundary: boolean;
+  hasAmbiguousSourceReference: boolean;
+  historicalDivergenceRate?: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type MarketListInput = {
   category?: string;
   search?: string;
@@ -114,6 +147,18 @@ export function getMarket(marketId: string) {
 export function getMarketOutcomes(marketId: string) {
   return apiRequest<{ canonicalEventId: string; title: string; outcomes: MarketOutcome[] }>(
     `/markets/${encodeURIComponent(marketId)}/outcomes`
+  );
+}
+
+export function getCanonicalResolutionRisk(eventId: string) {
+  return apiRequest<{ canonicalEventId: string; assessmentCount: number; assessments: ResolutionRiskAssessment[] }>(
+    `/resolution-risk/canonical/${encodeURIComponent(eventId)}`
+  );
+}
+
+export function getVenueMarketResolutionRisk(venue: string, marketId: string) {
+  return apiRequest<{ profile: ResolutionRiskProfile; assessmentCount: number; assessments: ResolutionRiskAssessment[] }>(
+    `/resolution-risk/market/${encodeURIComponent(venue)}/${encodeURIComponent(marketId)}`
   );
 }
 

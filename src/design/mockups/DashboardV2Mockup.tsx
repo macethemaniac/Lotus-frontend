@@ -46,7 +46,9 @@ type DashboardMarketRow = Pick<TerminalMarketSelection, 'title' | 'category' | '
   id: string;
   marketId: string;
   eventId?: string;
+  canonicalEventId: string;
   venues: string[];
+  venueMarkets: MarketCatalogMarket['venueMarkets'];
   marketType: 'binary' | 'multi';
   marketClass: string;
   status: MarketCatalogMarket['status'];
@@ -278,6 +280,7 @@ const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardM
     id: marketId,
     marketId,
     eventId: market.eventId ?? market.canonicalEventId,
+    canonicalEventId: market.canonicalEventId,
     title: market.title,
     category: `${category} - ${marketClass}`,
     icon: categoryIconFallback[market.category.toLowerCase()] ?? 'L',
@@ -286,6 +289,7 @@ const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardM
     venueCount: market.venueCount,
     routeType,
     venues,
+    venueMarkets: market.venueMarkets,
     marketType: market.outcomeCount > 2 ? 'multi' : 'binary',
     marketClass,
     status: market.status,
@@ -1504,7 +1508,7 @@ export const DashboardV2Mockup = ({
           </>
           ) : activePage === 'terminal' ? (
             <div className="min-w-0 flex-1">
-              <InfraTradingTerminal embedded darkMode={isDarkMode} selectedMarket={selectedTerminalMarket} />
+              <InfraTradingTerminal embedded darkMode={isDarkMode} selectedMarket={selectedTerminalMarket} session={session} />
             </div>
           ) : (
             <div className="min-w-0 flex-1">

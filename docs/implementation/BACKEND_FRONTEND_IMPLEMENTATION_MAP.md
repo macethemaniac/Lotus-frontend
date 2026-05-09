@@ -532,13 +532,17 @@ Order book:
 Outcomes tab:
 
 - Data: `GET /markets/:marketId/outcomes`
+- Current wiring: terminal loads the selected canonical market's backend outcomes, then polls authenticated `POST /execution/live-candidates` about every 30 seconds for each visible outcome.
+- Displayed Yes price is the best backend candidate price with venue branding; displayed probability is the unified average across backend candidate venues.
 - Show all outcomes button expands the loaded outcome list.
-- Outcome Yes/No buttons prefill the trade panel.
+- Outcome Yes/No buttons prefill the trade panel side/outcome.
+- If live quotes fail, keep the outcome visible and show `Quote` plus the backend error/blocker text.
 
 Positions tab:
 
 - Data: `GET /execution/positions`
 - WebSocket: `execution:positions:<userId>:<marketHash>:<outcomeHash>`
+- Current wiring: terminal polls `GET /execution/positions` about every 15 seconds while authenticated and filters to the selected market client-side because the backend positions endpoint requires market/outcome together when filtering.
 - Show unified position and per-venue position where backend returns verified fill evidence.
 - Do not show unverified submitted orders as positions.
 
@@ -546,6 +550,7 @@ Open Orders tab:
 
 - Show current active execution if selected.
 - Data: `GET /execution/open-orders`
+- Current wiring: terminal polls open orders about every 15 seconds while authenticated and filters backend-returned executions to the selected market route.
 - Show only backend-returned non-dry-run executions in `SUBMITTED` or `PARTIAL` status.
 - Do not show limit orders here until the separate limit-order contract is implemented.
 
@@ -553,14 +558,15 @@ Trade History tab:
 
 - Show backend-confirmed execution history only.
 - Data: `GET /execution/history`
+- Current wiring: terminal polls execution history about every 15 seconds while authenticated and filters backend-returned executions to the selected market route.
 - Receipts: `GET /execution/:executionId/receipt`
 
 Rules and Risk tab:
 
 - Data:
   - `GET /resolution-risk/canonical/:eventId`
-  - `GET /resolution-risk/pair`
   - `GET /resolution-risk/market/:venue/:marketId`
+- Current wiring: terminal loads canonical assessment and venue market profiles for the selected market immediately on selection. Pair-level comparison remains available in backend contracts but is not called by the terminal UI in this slice.
 - Risk and compatibility belongs inside this tab, not beside the order book.
 
 ### Phase 8 - Terminal Trade Panel
