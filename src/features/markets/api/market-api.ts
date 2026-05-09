@@ -85,10 +85,10 @@ export type ResolutionRiskAssessment = {
   label: string;
   riskScore: string;
   confidenceScore: string;
-  equivalenceClass: "SAFE_EQUIVALENT" | "CAUTION" | "HIGH_RISK" | "DO_NOT_POOL";
+  equivalenceClass: "SAFE_EQUIVALENT" | "EQUIVALENT_WITH_LAG" | "CAUTION" | "HIGH_RISK" | "DO_NOT_POOL";
   shortReasons: string[];
   factorBreakdown: Record<string, unknown>;
-  recommendedAction: "Poolable" | "Pool with caution" | "Isolate execution" | "Do not pool";
+  recommendedAction: "Poolable" | "Pool with caution" | "Pool with caution (lag)" | "Isolate execution" | "Do not pool";
 };
 
 export type ResolutionRiskProfile = {

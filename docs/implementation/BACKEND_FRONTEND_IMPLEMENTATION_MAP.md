@@ -202,6 +202,7 @@ Frontend rule:
 - Do not invent risk text for unsupported events.
 - Venue rule text must come from backend-verified venue metadata for the exact selected venue market. Polymarket uses Gamma market metadata when available; Limitless uses the market detail metadata endpoint/public detail payload when available; other venues use only trusted ingested `venue_market_profiles` / `venue_resolution_profiles` rule fields.
 - `oracleName` / `oracleType` describe the venue-declared resolution source, not the venue itself. For example, compatible BTC date markets across Polymarket and Limitless should both use Binance as the visible source type and `BTC/USDT` as the source market when that is the venue-named resolution source.
+- The terminal prefers selected venue-market risk assessments over broader canonical assessments, so an unrelated or stale canonical pair cannot make the selected market look like `Do not pool`.
 - Resolution source URLs supplied in `metadata.officialVenueRules.sourceUrl` are safe HTTPS links and should be rendered as outbound links. Source text URLs are also rendered inline as links; UMA or other oracle-source names use the backend-provided source URL when present.
 - If the backend cannot verify official venue rule text or resolution source text, the Rules and Risk UI must show that the venue rule metadata is unavailable instead of displaying a title, synthetic curated label, or inferred copy as rules.
 

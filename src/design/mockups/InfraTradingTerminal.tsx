@@ -283,18 +283,56 @@ const sourceUrlForProfile = (profile: ResolutionRiskProfile): string | null => {
   return typeof sourceUrl === 'string' && /^https:\/\//i.test(sourceUrl) ? sourceUrl : null;
 };
 
+const knownResolutionProviders = [
+  'Binance',
+  'Coinbase',
+  'Kraken',
+  'OKX',
+  'Bybit',
+  'Bitstamp',
+  'Bitfinex',
+  'Gemini',
+  'TradingView',
+  'UMA',
+  'Kleros'
+];
+
+const sourceTextsForProfile = (profile: ResolutionRiskProfile): string[] =>
+  [profile.oracleName, profile.supplementalRulesText, profile.primaryResolutionText]
+    .map((value) => value?.trim())
+    .filter((value): value is string => Boolean(value));
+
+const extractResolutionProvider = (text: string): string | null => {
+  const knownProvider = knownResolutionProviders.find((provider) =>
+    new RegExp(`\\b${provider.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(text)
+  );
+  if (knownProvider) return knownProvider;
+
+  const namedSource = text.match(/\b(?:resolution source for this market is|source is|according to)\s+(?:the\s+)?([A-Za-z][A-Za-z0-9.&-]*)/i);
+  const candidate = namedSource?.[1]?.trim();
+  if (!candidate || /^(the|a|an|this|that)$/i.test(candidate)) return null;
+  return candidate;
+};
+
+const extractResolutionMarket = (text: string): string | null => {
+  const pair = text.match(/\b([A-Z]{2,10}[\/_][A-Z]{2,10}|[A-Z]{2,10}USD[A-Z]?)\b/);
+  return pair?.[1]?.replace('_', '/') ?? null;
+};
+
 const sourceProviderForProfile = (profile: ResolutionRiskProfile): string | null => {
-  const oracleName = profile.oracleName?.trim();
-  if (!oracleName) return null;
-  const [provider] = oracleName.split(/\s+/);
-  return provider || null;
+  for (const text of sourceTextsForProfile(profile)) {
+    const provider = extractResolutionProvider(text);
+    if (provider) return provider;
+  }
+  return null;
 };
 
 const sourceMarketForProfile = (profile: ResolutionRiskProfile): string | null => {
-  const provider = sourceProviderForProfile(profile);
-  const oracleName = profile.oracleName?.trim();
-  if (!provider || !oracleName || oracleName === provider) return null;
-  return oracleName.slice(provider.length).trim() || null;
+  for (const text of sourceTextsForProfile(profile)) {
+    const market = extractResolutionMarket(text);
+    if (market) return market;
+  }
+  return null;
 };
 
 const formatSourceMethod = (oracleType: string | null | undefined): string =>
@@ -892,17 +930,19 @@ export const InfraTradingTerminal = ({
         const [canonicalResult, ...profileResults] = await Promise.allSettled([canonicalPromise, ...profilePromises]);
         if (cancelled) return;
 
-        const assessments: ResolutionRiskAssessment[] = [];
+        const canonicalAssessments: ResolutionRiskAssessment[] = [];
+        const selectedMarketAssessments: ResolutionRiskAssessment[] = [];
         const profiles: ResolutionRiskProfile[] = [];
         if (canonicalResult.status === 'fulfilled' && canonicalResult.value) {
-          assessments.push(...canonicalResult.value.assessments);
+          canonicalAssessments.push(...canonicalResult.value.assessments);
         }
         for (const result of profileResults) {
           if (result.status === 'fulfilled') {
             profiles.push(result.value.profile);
-            assessments.push(...result.value.assessments);
+            selectedMarketAssessments.push(...result.value.assessments);
           }
         }
+        const assessments = selectedMarketAssessments.length > 0 ? selectedMarketAssessments : canonicalAssessments;
         setRiskState({ loading: false, error: null, assessments, profiles });
       } catch (error) {
         if (!cancelled) {
