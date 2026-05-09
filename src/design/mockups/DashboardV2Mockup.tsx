@@ -54,10 +54,12 @@ type DashboardMarketRow = Pick<TerminalMarketSelection, 'title' | 'category' | '
   imageUrl: string | null;
   iconUrl: string | null;
   priceLabel: string;
+  priceVenue: string | null;
   changeLabel: string;
   savings: string;
   spread: string;
   fallbackLabel: string;
+  volumeLabel: string;
   closesBy: string;
   quoteRequired: boolean;
   prob: number | null;
@@ -130,16 +132,24 @@ const formatProbabilityPrice = (price: number | null | undefined): string => {
   return `${cents >= 10 ? cents.toFixed(0) : cents.toFixed(1)}¢`;
 };
 
-const formatAvailableSize = (candidate: TradeRouteCandidate | null): string => {
-  if (!candidate) return 'Backend catalog';
-  const size = Number(candidate.availableSize);
-  if (!Number.isFinite(size) || size <= 0) return 'Top book';
-  if (size >= 1000) return `${(size / 1000).toFixed(size >= 10000 ? 0 : 1)}k top`;
-  return `${size.toFixed(size >= 10 ? 0 : 2)} top`;
+const formatProbabilityPercent = (price: number | null | undefined): string => {
+  if (typeof price !== 'number' || !Number.isFinite(price) || price <= 0) return 'Quote';
+  const percent = price <= 1 ? price * 100 : price;
+  if (percent < 1) return '<1%';
+  return `${percent >= 10 ? percent.toFixed(0) : percent.toFixed(1)}%`;
+};
+
+const formatCompactMetric = (value: string | number | null | undefined): string | null => {
+  const parsed = typeof value === 'number' ? value : typeof value === 'string' ? Number(value.replace(/[$,\s]/g, '')) : NaN;
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  if (parsed >= 1_000_000_000) return `${(parsed / 1_000_000_000).toFixed(parsed >= 10_000_000_000 ? 0 : 1)}B`;
+  if (parsed >= 1_000_000) return `${(parsed / 1_000_000).toFixed(parsed >= 10_000_000 ? 0 : 1)}M`;
+  if (parsed >= 1_000) return `${(parsed / 1_000).toFixed(parsed >= 10_000 ? 0 : 1)}K`;
+  return parsed.toFixed(parsed >= 10 ? 0 : 2);
 };
 
 const formatSpreadBps = (candidate: TradeRouteCandidate | null): string => {
-  if (!candidate || typeof candidate.spreadBps !== 'number' || !Number.isFinite(candidate.spreadBps)) return 'Top-of-book';
+  if (!candidate || typeof candidate.spreadBps !== 'number' || !Number.isFinite(candidate.spreadBps)) return 'Live';
   return `${(candidate.spreadBps / 100).toFixed(2)}%`;
 };
 
@@ -148,6 +158,24 @@ const chooseBestCandidate = (candidates: TradeRouteCandidate[]): TradeRouteCandi
     .filter((candidate) => Number.isFinite(candidate.price))
     .sort((left, right) => left.price - right.price)[0] ?? null
 );
+
+const candidateSize = (candidate: TradeRouteCandidate): number => {
+  const parsed = Number(candidate.availableSize);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+};
+
+const unifiedAveragePrice = (candidates: TradeRouteCandidate[]): number | null => {
+  const valid = candidates.filter((candidate) => Number.isFinite(candidate.price) && candidate.price > 0);
+  if (valid.length === 0) return null;
+  const totalSize = valid.reduce((sum, candidate) => sum + candidateSize(candidate), 0);
+  if (totalSize > 0) {
+    return valid.reduce((sum, candidate) => sum + candidate.price * candidateSize(candidate), 0) / totalSize;
+  }
+  return valid.reduce((sum, candidate) => sum + candidate.price, 0) / valid.length;
+};
+
+const sumCandidateSize = (quotes: DashboardOutcomeQuote[]): number =>
+  quotes.reduce((sum, quote) => sum + quote.candidates.reduce((candidateSum, candidate) => candidateSum + candidateSize(candidate), 0), 0);
 
 const getReadableBlocker = (blocked: LiveCandidatesResponse['blocked']): string | null => {
   const reason = blocked.find((item) => item.reason)?.reason;
@@ -160,6 +188,8 @@ const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardM
   const marketId = market.canonicalMarketIds[0] ?? market.canonicalEventId;
   const marketClass = formatTitleCase(market.marketClass || 'Market');
   const category = formatTitleCase(market.category || 'Market');
+  const catalogVolume = formatCompactMetric(market.volume24h ?? market.volume);
+  const catalogLiquidity = formatCompactMetric(market.liquidity);
   const outcomeByLabel = new Map<string, DashboardOutcomeRow>();
   for (const venueMarket of market.venueMarkets) {
     for (const outcome of venueMarket.outcomes) {
@@ -192,7 +222,8 @@ const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardM
     title: market.title,
     category: `${category} - ${marketClass}`,
     icon: categoryIconFallback[market.category.toLowerCase()] ?? 'L',
-    volume: 'Backend catalog',
+    volume: catalogVolume ?? catalogLiquidity ?? 'Backend catalog',
+    volumeLabel: catalogVolume ? 'Vol' : catalogLiquidity ? 'Liq' : 'Vol',
     venueCount: market.venueCount,
     routeType,
     venues,
@@ -205,6 +236,7 @@ const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardM
     imageUrl: getSafeMediaUrl(market.imageUrl),
     iconUrl: getSafeMediaUrl(market.iconUrl),
     priceLabel: 'Quote',
+    priceVenue: null,
     changeLabel: 'Quote required',
     savings: 'Quote required',
     spread: 'Quote required',
@@ -247,10 +279,11 @@ const toOutcomeQuote = (
   const candidates = response?.candidates ?? [];
   const blocked = response?.blocked ?? blockedFromError(error);
   const bestCandidate = chooseBestCandidate(candidates);
+  const averagePrice = unifiedAveragePrice(candidates);
   return {
     outcomeId,
-    price: bestCandidate?.price ?? null,
-    priceLabel: formatProbabilityPrice(bestCandidate?.price),
+    price: averagePrice,
+    priceLabel: formatProbabilityPercent(averagePrice),
     generatedAt: response?.generatedAt ?? null,
     bestCandidate,
     candidates,
@@ -273,26 +306,33 @@ const applyLiveQuoteToMarket = (market: DashboardMarketRow, quote: DashboardMark
   const liveQuotes = quotedOutcomes
     .map((outcome) => quote.outcomes[outcome.id] ?? quote.outcomes[normalizeOutcomeId(outcome.name)])
     .filter((item): item is DashboardOutcomeQuote => Boolean(item?.bestCandidate));
-  const firstLiveQuote = liveQuotes[0] ?? null;
-  if (!firstLiveQuote) {
+  const yesOutcome = market.outcomes.find((outcome) => normalizeOutcomeId(outcome.name) === 'YES');
+  const yesLiveQuote = yesOutcome ? quote.outcomes[yesOutcome.id] ?? quote.outcomes[normalizeOutcomeId(yesOutcome.name)] : null;
+  const displayQuote = yesLiveQuote?.bestCandidate ? yesLiveQuote : liveQuotes[0] ?? null;
+  if (!displayQuote) {
     const unavailable = quotedOutcomes.some((outcome) => outcome.liveStatus === 'unavailable');
     return {
       ...market,
       outcomes: quotedOutcomes,
+      priceVenue: null,
       changeLabel: unavailable ? 'Live unavailable' : market.changeLabel,
       fallbackLabel: unavailable ? 'Backend blocker' : market.fallbackLabel,
       quoteRequired: true,
     };
   }
+  const unifiedLiquidity = formatCompactMetric(sumCandidateSize(liveQuotes));
+  const hasCatalogMetric = market.volume !== 'Backend catalog';
   return {
     ...market,
     outcomes: quotedOutcomes,
-    priceLabel: firstLiveQuote.priceLabel,
-    changeLabel: 'Live top-of-book',
-    savings: 'Quote in terminal',
-    spread: formatSpreadBps(firstLiveQuote.bestCandidate),
-    fallbackLabel: firstLiveQuote.bestCandidate?.venue ?? market.fallbackLabel,
-    volume: formatAvailableSize(firstLiveQuote.bestCandidate),
+    priceLabel: formatProbabilityPrice(displayQuote.bestCandidate?.price),
+    priceVenue: displayQuote.bestCandidate?.venue ?? null,
+    changeLabel: displayQuote.bestCandidate?.venue ? 'Best Yes' : 'Live',
+    savings: 'Unified',
+    spread: formatSpreadBps(displayQuote.bestCandidate),
+    fallbackLabel: displayQuote.bestCandidate?.venue ?? market.fallbackLabel,
+    volume: hasCatalogMetric ? market.volume : unifiedLiquidity ?? market.volume,
+    volumeLabel: hasCatalogMetric ? market.volumeLabel : unifiedLiquidity ? 'Liq' : market.volumeLabel,
     quoteRequired: false,
   };
 };
@@ -1735,14 +1775,17 @@ const LotusMarketList = ({
           </div>
           <Sparkline points={[]} positive={false} />
           <div className="font-mono">
-            <div className="text-sm font-bold text-zinc-100">{market.priceLabel}</div>
+            <div className="flex items-center gap-1.5 text-sm font-bold text-zinc-100">
+              {market.priceVenue && <VenueChip id={normalizeVenueId(market.priceVenue)} size="xs" />}
+              <span>{market.priceLabel}</span>
+            </div>
             <div className="mt-1 text-[10px] font-semibold text-zinc-500">{market.changeLabel}</div>
           </div>
           <div className="font-mono text-xs font-bold text-zinc-500">Quote</div>
           <div>
             <div className="font-mono text-sm font-semibold text-zinc-100">{market.volume}</div>
             <div className="mt-1 font-mono text-[10px] text-zinc-500">
-              <span className="text-emerald-500">Quote required</span>
+              <span className="text-emerald-500">{market.volumeLabel}</span>
             </div>
           </div>
           <div className="font-mono text-xs font-bold text-zinc-400">{market.closesBy}</div>
@@ -1937,7 +1980,7 @@ const NavItem = ({
   </div>
 );
 
-const MarketCard = ({ id, marketId, eventId, title, category, venueCount, routeType, savings, spread, fallback, fallbackLabel, icon, imageUrl, iconUrl, priceLabel, changeLabel, prob, change, volume, txnBuy, txnSell, badges = [], outcomes, marketType, onOpenTerminal }: any) => {
+const MarketCard = ({ id, marketId, eventId, title, category, venueCount, routeType, savings, spread, fallback, fallbackLabel, icon, imageUrl, iconUrl, priceLabel, priceVenue, changeLabel, prob, change, volume, volumeLabel = 'Vol', txnBuy, txnSell, badges = [], outcomes, marketType, onOpenTerminal }: any) => {
   const allVenues = [
     { id: 'polymarket', label: 'Polymarket' },
     { id: 'predict', label: 'Predict.fun' },
@@ -1989,7 +2032,14 @@ const MarketCard = ({ id, marketId, eventId, title, category, venueCount, routeT
           </span>
         </button>
         <div className="text-right shrink-0 ml-2">
-          <div className="text-base font-mono font-bold text-zinc-900 dark:text-zinc-100 leading-none mb-1">{displayPrice}</div>
+          <div className="mb-1 flex items-center justify-end gap-1.5">
+            {priceVenue && (
+              <span className="flex h-4 w-4 items-center justify-center rounded border border-zinc-700/70 bg-zinc-900/80 p-0.5 shadow-sm" title={priceVenue}>
+                <VenueLogo id={normalizeVenueId(priceVenue)} label={priceVenue} className="h-full w-full rounded-[inherit] object-cover" />
+              </span>
+            )}
+            <span className="text-base font-mono font-bold text-zinc-900 dark:text-zinc-100 leading-none">{displayPrice}</span>
+          </div>
           <div className="text-[10px] font-bold text-zinc-500 dark:text-zinc-400">{displayChange}</div>
         </div>
         <div className="hidden">
@@ -2040,7 +2090,7 @@ const MarketCard = ({ id, marketId, eventId, title, category, venueCount, routeT
       {/* Footer / Buy Sell Txns */}
       <div className="pt-2 flex flex-col gap-2">
         <div className="flex items-center gap-3 text-[11px] font-medium text-zinc-500 dark:text-zinc-400 pb-1">
-          <span>Vol <span className="text-zinc-700 dark:text-zinc-300 font-mono">{volume}</span></span>
+          <span>{volumeLabel} <span className="text-zinc-700 dark:text-zinc-300 font-mono">{volume}</span></span>
         </div>
         <div className="flex items-center justify-between text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
           {totalCount > 0 ? (
@@ -2050,7 +2100,7 @@ const MarketCard = ({ id, marketId, eventId, title, category, venueCount, routeT
               <span className="text-red-600 dark:text-red-500/90">{sellCount.toLocaleString()} Sells</span>
             </>
           ) : (
-            <span className="text-zinc-500">{priceLabel === 'Quote' ? 'Live quote required for order flow' : 'Backend live top-of-book'}</span>
+            <span className="text-zinc-500">{priceLabel === 'Quote' ? 'Live quote required for order flow' : 'Unified venue average'}</span>
           )}
         </div>
         <div className="hidden">

@@ -5,7 +5,13 @@ export type MarketCatalogMedia = {
   iconUrl: string | null;
 };
 
-export type MarketCatalogVenueMarket = MarketCatalogMedia & {
+export type MarketCatalogMetrics = {
+  volume: string | null;
+  volume24h: string | null;
+  liquidity: string | null;
+};
+
+export type MarketCatalogVenueMarket = MarketCatalogMedia & MarketCatalogMetrics & {
   canonicalMarketId: string;
   canonicalMarketTitle: string;
   venue: string;
@@ -20,7 +26,7 @@ export type MarketCatalogVenueMarket = MarketCatalogMedia & {
   resolvesAt: string | null;
 };
 
-export type MarketCatalogMarket = MarketCatalogMedia & {
+export type MarketCatalogMarket = MarketCatalogMedia & MarketCatalogMetrics & {
   eventId?: string;
   eventTitle?: string;
   canonicalEventId: string;
@@ -45,7 +51,7 @@ export type MarketCatalogMarket = MarketCatalogMedia & {
   updatedAt: string;
 };
 
-export type MarketCatalogEvent = MarketCatalogMedia & {
+export type MarketCatalogEvent = MarketCatalogMedia & MarketCatalogMetrics & {
   eventId: string;
   title: string;
   normalizedTitle: string;

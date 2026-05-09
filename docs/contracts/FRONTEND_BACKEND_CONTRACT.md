@@ -46,8 +46,9 @@ Frontend rules:
 - Market and event media fields are optional: `imageUrl` and `iconUrl`.
 - Media URLs are sanitized by the backend from approved venue metadata. The frontend may render those HTTPS URLs with `referrerPolicy="no-referrer"` and local category or venue fallbacks.
 - The frontend must not call Polymarket, Myriad, Limitless, Predict.fun, or Opinion APIs directly for images or metadata.
-- Dashboard market discovery is wired to `GET /markets`; authenticated dashboard cards and the markets list may additionally call `POST /execution/live-candidates` for visible Yes/No outcomes to display backend-sourced live top-of-book prices, spread, available top size, and venue evidence.
-- Full depth order book rows are not exposed by a public frontend contract yet. Until a sanitized backend order book endpoint exists, the UI must label this data as live top-of-book or quote unavailable, not as a full order book.
+- Dashboard market discovery is wired to `GET /markets`; authenticated dashboard cards and the markets list may additionally call `POST /execution/live-candidates` for visible Yes/No outcomes to display backend-sourced unified average prices across candidate venues, best Yes venue price, spread, available quote liquidity, and venue evidence.
+- Market catalog responses may include optional aggregated `volume`, `volume24h`, and `liquidity` fields sourced from approved venue payloads. The frontend uses true catalog volume when present and falls back to live quote liquidity when volume is absent.
+- Full depth order book rows are not exposed by a public frontend contract yet. Until a sanitized backend order book endpoint exists, the UI must render unified prices/liquidity or quote unavailable, not a fabricated full order book.
 - Fields not returned by backend endpoints, including savings, order-flow counts, and historical movement, must render as quote-required/unavailable instead of fake values.
 - Local development note from May 9, 2026: if `GET /markets` returns HTTP 500 with `relation "frontend_market_approvals" does not exist`, apply the existing backend migration for `frontend_market_approvals` before testing dashboard data population.
 
@@ -126,7 +127,7 @@ Frontend rules:
 - Do not bypass blockers.
 - Do not call venue APIs.
 - Do not show completed or settled until backend status supports it.
-- `POST /execution/live-candidates` is user-authenticated live pricing evidence. The frontend can use it for visible market top-of-book displays and terminal quote preparation, but it must preserve backend blockers and cannot infer routeability from catalog metadata alone.
+- `POST /execution/live-candidates` is user-authenticated live pricing evidence. The frontend can use it for visible market unified price displays and terminal quote preparation, but it must preserve backend blockers and cannot infer routeability from catalog metadata alone.
 - Mark-to-market fields are backend-sourced from live quote evidence. If marks are unavailable, keep positions visible and show the backend unavailable state instead of fake PnL.
 - Portfolio time-series is currently a backend-generated current MTM snapshot (`seriesBasis: CURRENT_MARK_TO_MARKET_SNAPSHOT`, `historyAvailable: false`) until persisted historical portfolio snapshots exist.
 - Open orders include only non-dry-run signed-bundle executions with `SUBMITTED` or `PARTIAL` status. Limit-order creation/list/cancel is not part of this contract slice.
