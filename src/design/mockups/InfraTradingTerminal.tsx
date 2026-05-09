@@ -104,9 +104,18 @@ type TerminalOutcomeRow = {
   prob: string;
   yesPrice: string;
   noPrice: string;
+  primaryVenue: string | null;
+  venueQuotes: TerminalVenueQuote[];
   active: boolean;
   venues: string[];
   status: 'live' | 'unavailable' | 'pending' | 'auth_required';
+  blocker: string | null;
+};
+
+type TerminalVenueQuote = {
+  venue: string;
+  yesPrice: string;
+  noPrice: string;
   blocker: string | null;
 };
 
@@ -175,6 +184,20 @@ const averageCandidatePrice = (candidates: TradeRouteCandidate[]): number | null
   return valid.reduce((sum, candidate) => sum + candidate.price, 0) / valid.length;
 };
 
+const toVenueQuotes = (candidates: TradeRouteCandidate[], marketType: 'binary' | 'multi' | undefined): TerminalVenueQuote[] =>
+  [...candidates]
+    .filter((candidate) => Number.isFinite(candidate.price) && candidate.price > 0)
+    .sort((left, right) => left.price - right.price)
+    .map((candidate) => ({
+      venue: candidate.venue,
+      yesPrice: formatProbabilityPrice(candidate.price),
+      noPrice: marketType === 'binary' ? formatProbabilityPrice(1 - candidate.price) : 'Quote',
+      blocker: candidate.quoteBlockers?.[0] ?? null,
+    }));
+
+const placeholderVenueQuotes = (venues: string[], yesPrice = 'Quote', noPrice = 'Quote', blocker: string | null = null): TerminalVenueQuote[] =>
+  venues.map((venue) => ({ venue, yesPrice, noPrice, blocker }));
+
 const executionMarketId = (market: TerminalMarketSelection): string | null => market.marketId ?? market.id ?? null;
 
 const matchesTerminalMarket = (status: ExecutionStatus, marketId: string | null): boolean => {
@@ -219,6 +242,8 @@ const initialOutcomeRows = (market: TerminalMarketSelection): TerminalOutcomeRow
     prob: outcome.prob,
     yesPrice: outcome.prob,
     noPrice: 'Quote',
+    primaryVenue: market.venues?.[0] ?? null,
+    venueQuotes: placeholderVenueQuotes(market.venues ?? [], outcome.prob, 'Quote'),
     active: index === 0,
     venues: market.venues ?? [],
     status: 'pending',
@@ -493,6 +518,7 @@ export const InfraTradingTerminal = ({
   const [fastLane, setFastLane] = useState(false);
   const [showMarketSelector, setShowMarketSelector] = useState(false);
   const [showAllOutcomes, setShowAllOutcomes] = useState(false);
+  const [expandedOutcomeId, setExpandedOutcomeId] = useState<string | null>(null);
   const [selectedOutcomeId, setSelectedOutcomeId] = useState<string | null>(null);
   const [terminalOutcomes, setTerminalOutcomes] = useState<TerminalOutcomeRow[]>([]);
   const [outcomesLoading, setOutcomesLoading] = useState(false);
@@ -617,16 +643,19 @@ export const InfraTradingTerminal = ({
 
       const rows = await Promise.all(baseOutcomes.map(async (outcome: MarketOutcome, index): Promise<TerminalOutcomeRow> => {
         if (!token) {
+          const venues = outcome.venues.length ? outcome.venues : marketVenueList;
           return {
             id: outcome.id,
             name: outcome.label,
             vol: `${formatMoneyMetric(terminalMarket.volume) ?? terminalMarket.volume} Vol.`,
-            platforms: outcome.venues.length || terminalMarket.venueCount,
+            platforms: venues.length || terminalMarket.venueCount,
             prob: 'Quote',
             yesPrice: 'Quote',
             noPrice: 'Quote',
+            primaryVenue: venues[0] ?? null,
+            venueQuotes: placeholderVenueQuotes(venues, 'Quote', 'Quote', 'Login required for live route quote'),
             active: index === 0,
-            venues: outcome.venues.length ? outcome.venues : marketVenueList,
+            venues,
             status: 'auth_required',
             blocker: 'Login required for live route quote',
           };
@@ -642,35 +671,43 @@ export const InfraTradingTerminal = ({
           });
           const best = bestCandidate(candidateResponse.candidates);
           const average = averageCandidatePrice(candidateResponse.candidates);
+          const venueQuotes = toVenueQuotes(candidateResponse.candidates, terminalMarket.marketType);
           const venues = candidateResponse.candidates.length
             ? candidateResponse.candidates.map((candidate) => candidate.venue)
             : outcome.venues;
+          const primaryQuote = venueQuotes[0] ?? null;
           return {
             id: outcome.id,
             name: outcome.label,
             vol: `${formatMoneyMetric(terminalMarket.volume) ?? terminalMarket.volume} Vol.`,
             platforms: venues.length || terminalMarket.venueCount,
             prob: formatProbabilityPercent(average),
-            yesPrice: formatProbabilityPrice(best?.price ?? average),
-            noPrice: terminalMarket.marketType === 'binary' && average ? formatProbabilityPrice(1 - average) : 'Quote',
+            yesPrice: primaryQuote?.yesPrice ?? formatProbabilityPrice(best?.price ?? average),
+            noPrice: primaryQuote?.noPrice ?? (terminalMarket.marketType === 'binary' && best?.price ? formatProbabilityPrice(1 - best.price) : 'Quote'),
+            primaryVenue: primaryQuote?.venue ?? best?.venue ?? venues[0] ?? null,
+            venueQuotes: venueQuotes.length ? venueQuotes : placeholderVenueQuotes(venues, 'Quote', 'Quote', candidateResponse.blocked[0]?.reason ?? null),
             active: index === 0,
             venues,
             status: candidateResponse.candidates.length ? 'live' : 'unavailable',
             blocker: candidateResponse.blocked[0]?.reason ?? null,
           };
         } catch (error) {
+          const venues = outcome.venues.length ? outcome.venues : marketVenueList;
+          const blocker = error instanceof Error ? error.message : 'Live quote unavailable';
           return {
             id: outcome.id,
             name: outcome.label,
             vol: `${formatMoneyMetric(terminalMarket.volume) ?? terminalMarket.volume} Vol.`,
-            platforms: outcome.venues.length || terminalMarket.venueCount,
+            platforms: venues.length || terminalMarket.venueCount,
             prob: 'Quote',
             yesPrice: 'Quote',
             noPrice: 'Quote',
+            primaryVenue: venues[0] ?? null,
+            venueQuotes: placeholderVenueQuotes(venues, 'Quote', 'Quote', blocker),
             active: index === 0,
-            venues: outcome.venues.length ? outcome.venues : marketVenueList,
+            venues,
             status: 'unavailable',
-            blocker: error instanceof Error ? error.message : 'Live quote unavailable',
+            blocker,
           };
         }
       }));
@@ -689,6 +726,7 @@ export const InfraTradingTerminal = ({
   React.useEffect(() => {
     setShowAllOutcomes(false);
     setSelectedOutcomeId(null);
+    setExpandedOutcomeId(null);
   }, [terminalMarketId]);
 
   React.useEffect(() => {
@@ -1092,9 +1130,11 @@ export const InfraTradingTerminal = ({
                          {visibleOutcomeRows.length === 0 && emptyCopy('No outcomes loaded', 'The backend has not returned outcomes for this market yet.')}
                          {visibleOutcomeRows.map((m) => {
                            const venues = m.venues.length ? m.venues : marketVenueList;
+                           const primaryVenue = m.primaryVenue ?? venues[0] ?? 'lotus';
+                           const alternateVenueQuotes = m.venueQuotes.filter((quote) => quote.venue !== primaryVenue);
                            return (
+                            <div key={m.id} className="rounded-xl">
                             <div
-                              key={m.id}
                               onClick={() => setSelectedOutcomeId(m.id)}
                               className={`px-5 py-2.5 rounded-xl flex items-center justify-between transition-colors cursor-pointer ${(selectedOutcomeId ? selectedOutcomeId === m.id : m.active) ? 'border border-emerald-500/30 bg-emerald-500/5 shadow-[0_0_15px_rgba(16,185,129,0.05)]' : 'border border-transparent hover:border-zinc-800 hover:bg-zinc-900/30 bg-transparent'}`}
                             >
@@ -1130,7 +1170,7 @@ export const InfraTradingTerminal = ({
                                             }}
                                             className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#1A3A34] text-[#4ade80] text-xs font-bold hover:bg-[#204941] transition-colors"
                                           >
-                                               <VenueLogo id={normalizeVenueId(venues[0] ?? 'lotus')} label={formatVenueLabel(venues[0] ?? 'Lotus')} className="h-3.5 w-3.5 rounded-full" /> Yes {m.yesPrice}
+                                               <VenueLogo id={normalizeVenueId(primaryVenue)} label={formatVenueLabel(primaryVenue)} className="h-3.5 w-3.5 rounded-full" /> Yes {m.yesPrice}
                                           </button>
                                           <button
                                             type="button"
@@ -1141,18 +1181,68 @@ export const InfraTradingTerminal = ({
                                             }}
                                             className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#3F1D24] text-[#f87171] text-xs font-bold hover:bg-[#52252f] transition-colors"
                                           >
-                                               <VenueLogo id={normalizeVenueId(venues[1] ?? venues[0] ?? 'lotus')} label={formatVenueLabel(venues[1] ?? venues[0] ?? 'Lotus')} className="h-3.5 w-3.5 rounded-full" /> No {m.noPrice}
+                                               <VenueLogo id={normalizeVenueId(primaryVenue)} label={formatVenueLabel(primaryVenue)} className="h-3.5 w-3.5 rounded-full" /> No {m.noPrice}
                                           </button>
                                           <button
                                             type="button"
+                                            onClick={(event) => {
+                                              event.stopPropagation();
+                                              setExpandedOutcomeId((current) => current === m.id ? null : m.id);
+                                            }}
                                             aria-label={`Open ${m.name} outcome details`}
                                             className="ml-1 flex h-8 w-8 items-center justify-center rounded-lg text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
+                                            aria-expanded={expandedOutcomeId === m.id}
                                           >
-                                            <ChevronDown className="w-4 h-4" />
+                                            <ChevronDown className={`w-4 h-4 transition-transform ${expandedOutcomeId === m.id ? 'rotate-180' : ''}`} />
                                           </button>
                                      </div>
                                  </div>
                              </div>
+                             {expandedOutcomeId === m.id && (
+                               <div className="mx-5 mb-2 rounded-xl border border-zinc-800 bg-zinc-950/60 p-3">
+                                 <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500">Other venue prices</div>
+                                 {alternateVenueQuotes.length > 0 ? (
+                                   <div className="flex flex-col gap-2">
+                                     {alternateVenueQuotes.map((quote) => (
+                                       <div key={`${m.id}-${quote.venue}-quote`} className="flex items-center justify-between rounded-lg border border-zinc-800 bg-[#0c0c0e] px-3 py-2">
+                                         <div className="flex items-center gap-2 text-xs font-bold text-zinc-200">
+                                           <VenueLogo id={normalizeVenueId(quote.venue)} label={formatVenueLabel(quote.venue)} className="h-4 w-4 rounded-full" />
+                                           {formatVenueLabel(quote.venue)}
+                                           {quote.blocker && <span className="text-[10px] font-medium text-amber-300">{quote.blocker}</span>}
+                                         </div>
+                                         <div className="flex items-center gap-2">
+                                           <button
+                                             type="button"
+                                             onClick={(event) => {
+                                               event.stopPropagation();
+                                               setSelectedOutcomeId(m.id);
+                                               setSide('buy');
+                                             }}
+                                             className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#1A3A34] text-[#4ade80] text-xs font-bold hover:bg-[#204941] transition-colors"
+                                           >
+                                             <VenueLogo id={normalizeVenueId(quote.venue)} label={formatVenueLabel(quote.venue)} className="h-3.5 w-3.5 rounded-full" /> Yes {quote.yesPrice}
+                                           </button>
+                                           <button
+                                             type="button"
+                                             onClick={(event) => {
+                                               event.stopPropagation();
+                                               setSelectedOutcomeId(m.id);
+                                               setSide('sell');
+                                             }}
+                                             className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#3F1D24] text-[#f87171] text-xs font-bold hover:bg-[#52252f] transition-colors"
+                                           >
+                                             <VenueLogo id={normalizeVenueId(quote.venue)} label={formatVenueLabel(quote.venue)} className="h-3.5 w-3.5 rounded-full" /> No {quote.noPrice}
+                                           </button>
+                                         </div>
+                                       </div>
+                                     ))}
+                                   </div>
+                                 ) : (
+                                   <div className="text-xs font-medium text-zinc-500">No additional venue prices returned for this outcome.</div>
+                                 )}
+                               </div>
+                             )}
+                            </div>
                            );
                          })}
                         {terminalOutcomes.length > 5 && (

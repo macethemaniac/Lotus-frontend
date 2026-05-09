@@ -534,6 +534,7 @@ Outcomes tab:
 - Data: `GET /markets/:marketId/outcomes`
 - Current wiring: terminal loads the selected canonical market's backend outcomes, then polls authenticated `POST /execution/live-candidates` about every 30 seconds for each visible outcome.
 - Displayed Yes price is the best backend candidate price with venue branding; displayed probability is the unified average across backend candidate venues.
+- Outcome rows show a matched venue pair first: `Yes` and `No` for the same best venue. The row dropdown exposes other venues as their own matched Yes/No pairs so the UI reads as venue comparison, not mixed-venue arbitrage.
 - Show all outcomes button expands the loaded outcome list.
 - Outcome Yes/No buttons prefill the trade panel side/outcome.
 - If live quotes fail, keep the outcome visible and show `Quote` plus the backend error/blocker text.
