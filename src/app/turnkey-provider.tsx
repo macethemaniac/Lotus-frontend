@@ -29,6 +29,7 @@ export function LotusTurnkeyProvider({
         autoRefreshSession: true,
         oauthConfig: {
           oauthRedirectUri: env.turnkeyOauthRedirectUri || window.location.origin,
+          openOauthInPage: true,
         },
       },
       autoRefreshManagedState: true,
@@ -41,11 +42,8 @@ export function LotusTurnkeyProvider({
           methodOrder: ["socials", "email"],
           oauthOrder: ["google", "x"],
           methods: {
-            googleOauthEnabled: true,
-            xOauthEnabled: true,
             passkeyAuthEnabled: false,
             walletAuthEnabled: false,
-            emailOtpAuthEnabled: true,
             smsOtpAuthEnabled: false,
             appleOauthEnabled: false,
             discordOauthEnabled: false,
