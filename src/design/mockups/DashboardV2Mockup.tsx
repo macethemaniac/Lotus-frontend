@@ -61,6 +61,13 @@ type DashboardMarketRow = Pick<TerminalMarketSelection, 'title' | 'category' | '
   fallbackLabel: string;
   volumeLabel: string;
   closesBy: string;
+  change24hLabel: string;
+  change24hDirection: 'positive' | 'negative' | 'neutral' | 'pending';
+  venueDetails: Record<string, {
+    closesBy: string;
+    change24hLabel: string;
+    change24hDirection: 'positive' | 'negative' | 'neutral' | 'pending';
+  }>;
   quoteRequired: boolean;
   prob: number | null;
   change: string | null;
@@ -123,6 +130,9 @@ const formatMarketDate = (value: string | null | undefined): string => {
   return parsed.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 };
 
+const formatVenueCloseDate = (expiresAt: string | null | undefined, resolvesAt: string | null | undefined): string =>
+  formatMarketDate(expiresAt ?? resolvesAt);
+
 const normalizeVenueId = (venue: string): string => venue.toLowerCase().replace(/[\s._-]+/g, '_');
 
 const normalizeOutcomeId = (value: string): string => value.trim().toUpperCase().replace(/\s+/g, '_');
@@ -158,6 +168,24 @@ const formatMoneyMetric = (value: string | number | null | undefined): string | 
 const parseMetricNumber = (value: string | number | null | undefined): number | null => {
   const parsed = typeof value === 'number' ? value : typeof value === 'string' ? Number(value.replace(/[$,\s]/g, '')) : NaN;
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+};
+
+const formatChange24h = (market: Pick<MarketCatalogMarket['venueMarkets'][number], 'change24h' | 'changePercent24h'>): {
+  label: string;
+  direction: 'positive' | 'negative' | 'neutral' | 'pending';
+} => {
+  const percent = parseMetricNumber(market.changePercent24h);
+  const absolute = parseMetricNumber(market.change24h);
+  const raw = market.changePercent24h ?? market.change24h;
+  if (raw === null || raw === undefined) return { label: 'Quote', direction: 'pending' };
+  const numeric = Number(String(raw).replace(/[$,%\s]/g, ''));
+  if (!Number.isFinite(numeric)) return { label: 'Quote', direction: 'pending' };
+  const direction = numeric > 0 ? 'positive' : numeric < 0 ? 'negative' : 'neutral';
+  if (percent !== null || market.changePercent24h !== null) {
+    return { label: `${numeric > 0 ? '+' : ''}${numeric.toFixed(Math.abs(numeric) >= 10 ? 0 : 2)}%`, direction };
+  }
+  const value = absolute ?? Math.abs(numeric);
+  return { label: `${numeric > 0 ? '+' : numeric < 0 ? '-' : ''}${formatProbabilityPrice(value)}`, direction };
 };
 
 const formatSpreadBps = (candidate: TradeRouteCandidate | null): string => {
@@ -211,6 +239,16 @@ const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardM
   const sellCount = parseMetricNumber(market.sellCount);
   const buyVolume = parseMetricNumber(market.buyVolume);
   const sellVolume = parseMetricNumber(market.sellVolume);
+  const venueDetails = Object.fromEntries(
+    market.venueMarkets.map((venueMarket) => {
+      const change24h = formatChange24h(venueMarket);
+      return [normalizeVenueId(venueMarket.venue), {
+        closesBy: formatVenueCloseDate(venueMarket.expiresAt, venueMarket.resolvesAt),
+        change24hLabel: change24h.label,
+        change24hDirection: change24h.direction,
+      }];
+    })
+  );
   const outcomeByLabel = new Map<string, DashboardOutcomeRow>();
   for (const venueMarket of market.venueMarkets) {
     for (const outcome of venueMarket.outcomes) {
@@ -263,6 +301,9 @@ const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardM
     spread: 'Quote required',
     fallbackLabel: routeType === 'Single' ? 'Single venue' : 'Route preview',
     closesBy: formatMarketDate(market.expiresAt ?? market.resolvesAt),
+    change24hLabel: 'Quote',
+    change24hDirection: 'pending',
+    venueDetails,
     quoteRequired: true,
     prob: null,
     change: null,
@@ -342,6 +383,9 @@ const applyLiveQuoteToMarket = (market: DashboardMarketRow, quote: DashboardMark
       quoteRequired: true,
     };
   }
+  const bestVenueDetails = displayQuote.bestCandidate?.venue
+    ? market.venueDetails[normalizeVenueId(displayQuote.bestCandidate.venue)]
+    : undefined;
   const unifiedLiquidity = formatMoneyMetric(sumCandidateNotional([
     ...Object.values(quote.outcomes),
     ...Object.values(quote.sellOutcomes ?? {}),
@@ -356,6 +400,9 @@ const applyLiveQuoteToMarket = (market: DashboardMarketRow, quote: DashboardMark
     savings: 'Unified',
     spread: formatSpreadBps(displayQuote.bestCandidate),
     fallbackLabel: displayQuote.bestCandidate?.venue ?? market.fallbackLabel,
+    closesBy: bestVenueDetails?.closesBy ?? market.closesBy,
+    change24hLabel: bestVenueDetails?.change24hLabel ?? market.change24hLabel,
+    change24hDirection: bestVenueDetails?.change24hDirection ?? market.change24hDirection,
     volume: hasCatalogMetric ? market.volume : unifiedLiquidity ?? market.volume,
     volumeLabel: hasCatalogMetric ? market.volumeLabel : unifiedLiquidity ? 'Liq' : market.volumeLabel,
     quoteRequired: false,
@@ -1758,7 +1805,13 @@ const LotusMarketList = ({
   loading: boolean;
   error: string | null;
   onOpenMarket?: (market: Pick<TerminalMarketSelection, 'title' | 'category' | 'icon' | 'volume' | 'venueCount' | 'routeType'> & Partial<TerminalMarketSelection>) => void;
-}) => (
+}) => {
+  const changeClass = (direction: DashboardMarketRow['change24hDirection']) => {
+    if (direction === 'positive') return 'text-emerald-400';
+    if (direction === 'negative') return 'text-red-400';
+    return 'text-zinc-500';
+  };
+  return (
   <div className="overflow-hidden rounded-2xl border border-zinc-800 bg-[#101012] shadow-sm">
     <div className="grid grid-cols-[minmax(360px,1.7fr)_112px_96px_84px_116px_92px_96px_150px] items-center gap-4 border-b border-zinc-800 bg-zinc-900/80 px-5 py-3 text-[11px] font-bold uppercase tracking-[0.08em] text-zinc-500">
       <div className="flex items-center gap-3"><Sparkles className="h-4 w-4 text-[#ccff00]" /> Market</div>
@@ -1825,7 +1878,7 @@ const LotusMarketList = ({
             </div>
             <div className="mt-1 text-[10px] font-semibold text-zinc-500">{market.changeLabel}</div>
           </div>
-          <div className="font-mono text-xs font-bold text-zinc-500">Quote</div>
+          <div className={`font-mono text-xs font-bold ${changeClass(market.change24hDirection)}`}>{market.change24hLabel}</div>
           <div>
             <div className="font-mono text-sm font-semibold text-zinc-100">{market.volume}</div>
             <div className="mt-1 font-mono text-[10px] text-zinc-500">
@@ -1913,6 +1966,7 @@ const LotusMarketList = ({
     </div>
   </div>
 );
+};
 
 const MarketListTable = () => (
   <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-[#101012]">

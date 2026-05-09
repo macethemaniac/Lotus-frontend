@@ -27,6 +27,8 @@ export type MarketCatalogVenueMarket = MarketCatalogMedia & MarketCatalogMetrics
   outcomes: Array<{ id: string; label: string }>;
   network: string | null;
   chain: string | null;
+  change24h: string | null;
+  changePercent24h: string | null;
   expiresAt: string | null;
   resolvesAt: string | null;
 };

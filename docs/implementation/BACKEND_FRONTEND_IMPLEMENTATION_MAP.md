@@ -451,6 +451,7 @@ Implementation status:
 - Authenticated dashboard grid/list calls `POST /execution/live-candidates` for visible Yes/No outcomes and displays backend-sourced unified average outcome prices, best Yes venue price, venue brand, spread, and available live quote liquidity when available.
 - Market catalog responses expose optional aggregated `volume`, `volume24h`, `liquidity`, `buyVolume`, `sellVolume`, `tradeCount`, `buyCount`, and `sellCount` fields from approved venue payloads. Dashboard uses true unified volume/liquidity when present and falls back to live quote liquidity when catalog liquidity is absent.
 - Buy/sell sentiment renders as green buy count, red sell count, and a proportional green/red bar only when backend buy/sell count or buy/sell volume fields are present. It must not be fabricated from UI state.
+- In list view, `Closes By` and `24h` follow the best-price venue. Venue-provided `change24h`/`changePercent24h` renders green when positive and red when negative; missing 24h data remains pending.
 - If live candidates fail or return blockers, the market remains visible with live unavailable/quote-required copy.
 - Savings, order-flow counts, seven-day movement, and full order book depth are still not fabricated; they stay quote-required/unavailable until backend contracts provide them.
 - Durable notifications now come from `GET /notifications`; notification read state uses `POST /notifications/:id/read`.
