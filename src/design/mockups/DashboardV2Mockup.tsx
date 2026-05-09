@@ -66,6 +66,7 @@ type DashboardMarketRow = Pick<TerminalMarketSelection, 'title' | 'category' | '
   change: string | null;
   txnBuy: number;
   txnSell: number;
+  txnLabel: 'Txns' | 'Vol' | 'Pending';
   badges: string[];
 };
 
@@ -83,6 +84,7 @@ type DashboardOutcomeQuote = {
 type DashboardMarketQuote = {
   marketId: string;
   outcomes: Record<string, DashboardOutcomeQuote>;
+  sellOutcomes?: Record<string, DashboardOutcomeQuote>;
 };
 
 const categoryIconFallback: Record<string, string> = {
@@ -148,6 +150,16 @@ const formatCompactMetric = (value: string | number | null | undefined): string 
   return parsed.toFixed(parsed >= 10 ? 0 : 2);
 };
 
+const formatMoneyMetric = (value: string | number | null | undefined): string | null => {
+  const formatted = formatCompactMetric(value);
+  return formatted ? `$${formatted}` : null;
+};
+
+const parseMetricNumber = (value: string | number | null | undefined): number | null => {
+  const parsed = typeof value === 'number' ? value : typeof value === 'string' ? Number(value.replace(/[$,\s]/g, '')) : NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+};
+
 const formatSpreadBps = (candidate: TradeRouteCandidate | null): string => {
   if (!candidate || typeof candidate.spreadBps !== 'number' || !Number.isFinite(candidate.spreadBps)) return 'Live';
   return `${(candidate.spreadBps / 100).toFixed(2)}%`;
@@ -177,6 +189,11 @@ const unifiedAveragePrice = (candidates: TradeRouteCandidate[]): number | null =
 const sumCandidateSize = (quotes: DashboardOutcomeQuote[]): number =>
   quotes.reduce((sum, quote) => sum + quote.candidates.reduce((candidateSum, candidate) => candidateSum + candidateSize(candidate), 0), 0);
 
+const sumCandidateNotional = (quotes: DashboardOutcomeQuote[]): number =>
+  quotes.reduce((sum, quote) => (
+    sum + quote.candidates.reduce((candidateSum, candidate) => candidateSum + candidateSize(candidate) * candidate.price, 0)
+  ), 0);
+
 const getReadableBlocker = (blocked: LiveCandidatesResponse['blocked']): string | null => {
   const reason = blocked.find((item) => item.reason)?.reason;
   return reason ? reason.replace(/[_-]+/g, ' ').toLowerCase() : null;
@@ -188,8 +205,12 @@ const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardM
   const marketId = market.canonicalMarketIds[0] ?? market.canonicalEventId;
   const marketClass = formatTitleCase(market.marketClass || 'Market');
   const category = formatTitleCase(market.category || 'Market');
-  const catalogVolume = formatCompactMetric(market.volume24h ?? market.volume);
-  const catalogLiquidity = formatCompactMetric(market.liquidity);
+  const catalogVolume = formatMoneyMetric(market.volume24h ?? market.volume);
+  const catalogLiquidity = formatMoneyMetric(market.liquidity);
+  const buyCount = parseMetricNumber(market.buyCount);
+  const sellCount = parseMetricNumber(market.sellCount);
+  const buyVolume = parseMetricNumber(market.buyVolume);
+  const sellVolume = parseMetricNumber(market.sellVolume);
   const outcomeByLabel = new Map<string, DashboardOutcomeRow>();
   for (const venueMarket of market.venueMarkets) {
     for (const outcome of venueMarket.outcomes) {
@@ -245,8 +266,9 @@ const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardM
     quoteRequired: true,
     prob: null,
     change: null,
-    txnBuy: 0,
-    txnSell: 0,
+    txnBuy: buyCount ?? buyVolume ?? 0,
+    txnSell: sellCount ?? sellVolume ?? 0,
+    txnLabel: buyCount !== null || sellCount !== null ? 'Txns' : buyVolume !== null || sellVolume !== null ? 'Vol' : 'Pending',
     badges: venues,
   };
 };
@@ -320,7 +342,10 @@ const applyLiveQuoteToMarket = (market: DashboardMarketRow, quote: DashboardMark
       quoteRequired: true,
     };
   }
-  const unifiedLiquidity = formatCompactMetric(sumCandidateSize(liveQuotes));
+  const unifiedLiquidity = formatMoneyMetric(sumCandidateNotional([
+    ...Object.values(quote.outcomes),
+    ...Object.values(quote.sellOutcomes ?? {}),
+  ]));
   const hasCatalogMetric = market.volume !== 'Backend catalog';
   return {
     ...market,
@@ -489,7 +514,8 @@ export const DashboardV2Mockup = ({
 
     const loadQuotes = async () => {
       const entries = await Promise.all(marketsToQuote.map(async ({ market, outcomes }) => {
-        const outcomeEntries = await Promise.all(outcomes.map(async (outcome) => {
+        const [outcomeEntries, sellOutcomeEntries] = await Promise.all([
+          Promise.all(outcomes.map(async (outcome) => {
           try {
             const response = await getLiveCandidates(session.userJwt, {
               side: 'buy',
@@ -501,8 +527,26 @@ export const DashboardV2Mockup = ({
           } catch (error) {
             return [outcome.id, toOutcomeQuote(outcome.id, null, error)] as const;
           }
-        }));
-        return [market.id, { marketId: market.marketId, outcomes: Object.fromEntries(outcomeEntries) }] as const;
+          })),
+          Promise.all(outcomes.map(async (outcome) => {
+            try {
+              const response = await getLiveCandidates(session.userJwt, {
+                side: 'sell',
+                marketId: market.marketId,
+                outcomeId: outcome.id,
+                amount: '1',
+              });
+              return [outcome.id, toOutcomeQuote(outcome.id, response)] as const;
+            } catch (error) {
+              return [outcome.id, toOutcomeQuote(outcome.id, null, error)] as const;
+            }
+          })),
+        ]);
+        return [market.id, {
+          marketId: market.marketId,
+          outcomes: Object.fromEntries(outcomeEntries),
+          sellOutcomes: Object.fromEntries(sellOutcomeEntries),
+        }] as const;
       }));
 
       if (cancelled) return;
@@ -1980,7 +2024,7 @@ const NavItem = ({
   </div>
 );
 
-const MarketCard = ({ id, marketId, eventId, title, category, venueCount, routeType, savings, spread, fallback, fallbackLabel, icon, imageUrl, iconUrl, priceLabel, priceVenue, changeLabel, prob, change, volume, volumeLabel = 'Vol', txnBuy, txnSell, badges = [], outcomes, marketType, onOpenTerminal }: any) => {
+const MarketCard = ({ id, marketId, eventId, title, category, venueCount, routeType, savings, spread, fallback, fallbackLabel, icon, imageUrl, iconUrl, priceLabel, priceVenue, changeLabel, prob, change, volume, volumeLabel = 'Vol', txnBuy, txnSell, txnLabel = 'Pending', badges = [], outcomes, marketType, onOpenTerminal }: any) => {
   const allVenues = [
     { id: 'polymarket', label: 'Polymarket' },
     { id: 'predict', label: 'Predict.fun' },
@@ -2095,12 +2139,16 @@ const MarketCard = ({ id, marketId, eventId, title, category, venueCount, routeT
         <div className="flex items-center justify-between text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
           {totalCount > 0 ? (
             <>
-              <span className="text-emerald-600 dark:text-emerald-500/90">{buyCount.toLocaleString()} Buys</span>
+              <span className="text-emerald-600 dark:text-emerald-500/90">
+                {txnLabel === 'Vol' ? formatMoneyMetric(buyCount) : buyCount.toLocaleString()} Buys
+              </span>
               <span>-</span>
-              <span className="text-red-600 dark:text-red-500/90">{sellCount.toLocaleString()} Sells</span>
+              <span className="text-red-600 dark:text-red-500/90">
+                {txnLabel === 'Vol' ? formatMoneyMetric(sellCount) : sellCount.toLocaleString()} Sells
+              </span>
             </>
           ) : (
-            <span className="text-zinc-500">{priceLabel === 'Quote' ? 'Live quote required for order flow' : 'Unified venue average'}</span>
+            <span className="text-zinc-500">{priceLabel === 'Quote' ? 'Live quote required for order flow' : 'Buy/sell transactions pending'}</span>
           )}
         </div>
         <div className="hidden">

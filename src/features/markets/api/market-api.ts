@@ -9,6 +9,11 @@ export type MarketCatalogMetrics = {
   volume: string | null;
   volume24h: string | null;
   liquidity: string | null;
+  buyVolume: string | null;
+  sellVolume: string | null;
+  tradeCount: string | null;
+  buyCount: string | null;
+  sellCount: string | null;
 };
 
 export type MarketCatalogVenueMarket = MarketCatalogMedia & MarketCatalogMetrics & {
