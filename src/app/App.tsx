@@ -13,6 +13,7 @@ import {
 import type { AuthSession } from "@/features/auth/types";
 import { exchangeTurnkeySessionForLotusJwt } from "@/features/auth/api/turnkey-auth";
 import { LotusTurnkeyProvider } from "@/app/turnkey-provider";
+import { ApiClientError } from "@/lib/api/http-client";
 import {
   clearStoredSession,
   createSessionFromJwt,
@@ -33,6 +34,22 @@ function formatTurnkeyError(error: unknown): string {
   return [error.message, code ? `code: ${code}` : null, cause ? `cause: ${cause}` : null]
     .filter(Boolean)
     .join(" | ");
+}
+
+function formatLotusSessionExchangeError(error: unknown): string {
+  if (error instanceof ApiClientError) {
+    return [
+      "Turnkey login succeeded, but Lotus could not issue a session.",
+      error.code ? `Backend code: ${error.code}.` : `HTTP ${error.status}.`,
+      "Try again or check backend auth.",
+    ].join(" ");
+  }
+
+  if (error instanceof Error) {
+    return `Turnkey login succeeded, but Lotus could not issue a session. ${error.message}`;
+  }
+
+  return "Turnkey login succeeded, but Lotus could not issue a session. Try again or check backend auth.";
 }
 
 function shortId(value: string, prefix = 6, suffix = 4): string {
@@ -266,8 +283,8 @@ export function App() {
           source: "lotus_jwt",
         });
       })
-      .catch(() => {
-        setAuthError("Turnkey login succeeded, but Lotus could not issue a session. Try again or check backend auth.");
+      .catch((error) => {
+        setAuthError(formatLotusSessionExchangeError(error));
       })
       .finally(() => setAuthLoading(false));
   };
