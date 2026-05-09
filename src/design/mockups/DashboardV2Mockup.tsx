@@ -6,6 +6,7 @@ import { PortfolioMockupV2 } from '@/design/mockups/PortfolioMockupV2';
 import type { AuthSession } from '@/features/auth/types';
 import { listMarkets, type MarketCatalogMarket } from '@/features/markets/api/market-api';
 import { getNotifications, markNotificationRead, type UserNotification } from '@/features/notifications/api/notification-api';
+import { getLiveCandidates, type LiveCandidatesResponse, type TradeRouteCandidate } from '@/features/trading/api/execution-api';
 import { ApiClientError } from '@/lib/api/http-client';
 import { 
   Search, Bell, Home, BarChart2, ArrowRightLeft, 
@@ -34,6 +35,13 @@ const Badge = ({ children, variant = 'default', className = '' }: any) => {
 
 export type LotusAppPage = 'home' | 'markets' | 'terminal' | 'portfolio';
 
+type DashboardOutcomeRow = {
+  id: string;
+  name: string;
+  prob: string;
+  liveStatus?: 'live' | 'unavailable' | 'not_requested';
+};
+
 type DashboardMarketRow = Pick<TerminalMarketSelection, 'title' | 'category' | 'icon' | 'volume' | 'venueCount' | 'routeType'> & {
   id: string;
   marketId: string;
@@ -42,7 +50,7 @@ type DashboardMarketRow = Pick<TerminalMarketSelection, 'title' | 'category' | '
   marketType: 'binary' | 'multi';
   marketClass: string;
   status: MarketCatalogMarket['status'];
-  outcomes: Array<{ name: string; prob: string }>;
+  outcomes: DashboardOutcomeRow[];
   imageUrl: string | null;
   iconUrl: string | null;
   priceLabel: string;
@@ -57,6 +65,22 @@ type DashboardMarketRow = Pick<TerminalMarketSelection, 'title' | 'category' | '
   txnBuy: number;
   txnSell: number;
   badges: string[];
+};
+
+type DashboardOutcomeQuote = {
+  outcomeId: string;
+  price: number | null;
+  priceLabel: string;
+  generatedAt: string | null;
+  bestCandidate: TradeRouteCandidate | null;
+  candidates: TradeRouteCandidate[];
+  blocked: LiveCandidatesResponse['blocked'];
+  blocker: string | null;
+};
+
+type DashboardMarketQuote = {
+  marketId: string;
+  outcomes: Record<string, DashboardOutcomeQuote>;
 };
 
 const categoryIconFallback: Record<string, string> = {
@@ -97,19 +121,69 @@ const formatMarketDate = (value: string | null | undefined): string => {
 
 const normalizeVenueId = (venue: string): string => venue.toLowerCase().replace(/[\s._-]+/g, '_');
 
+const normalizeOutcomeId = (value: string): string => value.trim().toUpperCase().replace(/\s+/g, '_');
+
+const formatProbabilityPrice = (price: number | null | undefined): string => {
+  if (typeof price !== 'number' || !Number.isFinite(price) || price <= 0) return 'Quote';
+  const cents = price <= 1 ? price * 100 : price;
+  if (cents < 1) return '<1¢';
+  return `${cents >= 10 ? cents.toFixed(0) : cents.toFixed(1)}¢`;
+};
+
+const formatAvailableSize = (candidate: TradeRouteCandidate | null): string => {
+  if (!candidate) return 'Backend catalog';
+  const size = Number(candidate.availableSize);
+  if (!Number.isFinite(size) || size <= 0) return 'Top book';
+  if (size >= 1000) return `${(size / 1000).toFixed(size >= 10000 ? 0 : 1)}k top`;
+  return `${size.toFixed(size >= 10 ? 0 : 2)} top`;
+};
+
+const formatSpreadBps = (candidate: TradeRouteCandidate | null): string => {
+  if (!candidate || typeof candidate.spreadBps !== 'number' || !Number.isFinite(candidate.spreadBps)) return 'Top-of-book';
+  return `${(candidate.spreadBps / 100).toFixed(2)}%`;
+};
+
+const chooseBestCandidate = (candidates: TradeRouteCandidate[]): TradeRouteCandidate | null => (
+  [...candidates]
+    .filter((candidate) => Number.isFinite(candidate.price))
+    .sort((left, right) => left.price - right.price)[0] ?? null
+);
+
+const getReadableBlocker = (blocked: LiveCandidatesResponse['blocked']): string | null => {
+  const reason = blocked.find((item) => item.reason)?.reason;
+  return reason ? reason.replace(/[_-]+/g, ' ').toLowerCase() : null;
+};
+
 const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardMarketRow => {
   const venues = Array.from(new Set((market.venues.length ? market.venues : market.venueMarkets.map((item) => item.venue)).map(normalizeVenueId)));
   const routeType = routeTypeLabel(market);
   const marketId = market.canonicalMarketIds[0] ?? market.canonicalEventId;
   const marketClass = formatTitleCase(market.marketClass || 'Market');
   const category = formatTitleCase(market.category || 'Market');
-  const outcomeLabels = Array.from(
-    new Set(
-      market.venueMarkets
-        .flatMap((venueMarket) => venueMarket.outcomes.map((outcome) => outcome.label))
-        .filter(Boolean)
-    )
-  ).slice(0, 4);
+  const outcomeByLabel = new Map<string, DashboardOutcomeRow>();
+  for (const venueMarket of market.venueMarkets) {
+    for (const outcome of venueMarket.outcomes) {
+      const label = outcome.label?.trim();
+      if (!label || outcomeByLabel.has(label.toLowerCase())) continue;
+      outcomeByLabel.set(label.toLowerCase(), {
+        id: outcome.id || normalizeOutcomeId(label),
+        name: label,
+        prob: 'Quote',
+        liveStatus: 'not_requested',
+      });
+    }
+  }
+  const outcomeRows = Array.from(outcomeByLabel.values())
+    .sort((left, right) => {
+      const order = ['YES', 'NO'];
+      const leftIndex = order.indexOf(normalizeOutcomeId(left.name));
+      const rightIndex = order.indexOf(normalizeOutcomeId(right.name));
+      if (leftIndex === -1 && rightIndex === -1) return 0;
+      if (leftIndex === -1) return 1;
+      if (rightIndex === -1) return -1;
+      return leftIndex - rightIndex;
+    })
+    .slice(0, 4);
 
   return {
     id: marketId,
@@ -125,9 +199,9 @@ const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardM
     marketType: market.outcomeCount > 2 ? 'multi' : 'binary',
     marketClass,
     status: market.status,
-    outcomes: outcomeLabels.length > 0
-      ? outcomeLabels.map((label) => ({ name: label, prob: 'Quote' }))
-      : [{ name: 'Outcomes load in terminal', prob: 'Quote' }],
+    outcomes: outcomeRows.length > 0
+      ? outcomeRows
+      : [{ id: 'OUTCOMES', name: 'Outcomes load in terminal', prob: 'Quote', liveStatus: 'not_requested' }],
     imageUrl: getSafeMediaUrl(market.imageUrl),
     iconUrl: getSafeMediaUrl(market.iconUrl),
     priceLabel: 'Quote',
@@ -142,6 +216,84 @@ const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardM
     txnBuy: 0,
     txnSell: 0,
     badges: venues,
+  };
+};
+
+const blockedFromError = (error: unknown): LiveCandidatesResponse['blocked'] => {
+  if (!(error instanceof ApiClientError) || !error.payload || typeof error.payload !== 'object') return [];
+  const blocked = (error.payload as { blocked?: unknown }).blocked;
+  if (!Array.isArray(blocked)) return [];
+  return blocked
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null;
+      const record = item as Record<string, unknown>;
+      const venue = typeof record.venue === 'string' ? record.venue : 'UNKNOWN';
+      const reason = typeof record.reason === 'string' ? record.reason : 'QUOTE_UNAVAILABLE';
+      return {
+        venue,
+        reason,
+        ...(typeof record.venueMarketId === 'string' ? { venueMarketId: record.venueMarketId } : {}),
+        ...(typeof record.venueOutcomeId === 'string' ? { venueOutcomeId: record.venueOutcomeId } : {}),
+      };
+    })
+    .filter((item): item is LiveCandidatesResponse['blocked'][number] => item !== null);
+};
+
+const toOutcomeQuote = (
+  outcomeId: string,
+  response: LiveCandidatesResponse | null,
+  error?: unknown
+): DashboardOutcomeQuote => {
+  const candidates = response?.candidates ?? [];
+  const blocked = response?.blocked ?? blockedFromError(error);
+  const bestCandidate = chooseBestCandidate(candidates);
+  return {
+    outcomeId,
+    price: bestCandidate?.price ?? null,
+    priceLabel: formatProbabilityPrice(bestCandidate?.price),
+    generatedAt: response?.generatedAt ?? null,
+    bestCandidate,
+    candidates,
+    blocked,
+    blocker: getReadableBlocker(blocked),
+  };
+};
+
+const applyLiveQuoteToMarket = (market: DashboardMarketRow, quote: DashboardMarketQuote | undefined): DashboardMarketRow => {
+  if (!quote) return market;
+  const quotedOutcomes = market.outcomes.map((outcome) => {
+    const liveQuote = quote.outcomes[outcome.id] ?? quote.outcomes[normalizeOutcomeId(outcome.name)];
+    if (!liveQuote) return outcome;
+    return {
+      ...outcome,
+      prob: liveQuote.price !== null ? liveQuote.priceLabel : 'Unavailable',
+      liveStatus: liveQuote.price !== null ? 'live' as const : 'unavailable' as const,
+    };
+  });
+  const liveQuotes = quotedOutcomes
+    .map((outcome) => quote.outcomes[outcome.id] ?? quote.outcomes[normalizeOutcomeId(outcome.name)])
+    .filter((item): item is DashboardOutcomeQuote => Boolean(item?.bestCandidate));
+  const firstLiveQuote = liveQuotes[0] ?? null;
+  if (!firstLiveQuote) {
+    const unavailable = quotedOutcomes.some((outcome) => outcome.liveStatus === 'unavailable');
+    return {
+      ...market,
+      outcomes: quotedOutcomes,
+      changeLabel: unavailable ? 'Live unavailable' : market.changeLabel,
+      fallbackLabel: unavailable ? 'Backend blocker' : market.fallbackLabel,
+      quoteRequired: true,
+    };
+  }
+  return {
+    ...market,
+    outcomes: quotedOutcomes,
+    priceLabel: firstLiveQuote.priceLabel,
+    changeLabel: 'Live top-of-book',
+    savings: 'Quote in terminal',
+    spread: formatSpreadBps(firstLiveQuote.bestCandidate),
+    fallbackLabel: firstLiveQuote.bestCandidate?.venue ?? market.fallbackLabel,
+    volume: formatAvailableSize(firstLiveQuote.bestCandidate),
+    quoteRequired: false,
   };
 };
 
@@ -196,6 +348,7 @@ export const DashboardV2Mockup = ({
   const [marketsLoading, setMarketsLoading] = useState(false);
   const [marketsError, setMarketsError] = useState<string | null>(null);
   const [marketRows, setMarketRows] = useState<DashboardMarketRow[]>([]);
+  const [marketQuotes, setMarketQuotes] = useState<Record<string, DashboardMarketQuote>>({});
   const [marketCount, setMarketCount] = useState(0);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [notificationsError, setNotificationsError] = useState<string | null>(null);
@@ -215,22 +368,24 @@ export const DashboardV2Mockup = ({
   const pageTitle = activePage === 'markets' ? 'Markets' : 'Top Opportunities';
   const effectiveMarketViewMode = activePage === 'markets' ? 'list' : marketViewMode;
   const isMarketSurface = activePage === 'home' || activePage === 'markets';
-  const displayedMarkets = activePage === 'home' ? marketRows.slice(0, 6) : marketRows;
+  const baseDisplayedMarkets = activePage === 'home' ? marketRows.slice(0, 6) : marketRows;
+  const displayedMarkets = baseDisplayedMarkets.map((market) => applyLiveQuoteToMarket(market, marketQuotes[market.id]));
   const marketSummary = useMemo(() => {
-    const crossVenue = marketRows.filter((market) => market.routeType !== 'Single').length;
-    const routePreviewRequired = marketRows.filter((market) => market.quoteRequired).length;
+    const quotedRows = marketRows.map((market) => applyLiveQuoteToMarket(market, marketQuotes[market.id]));
+    const crossVenue = quotedRows.filter((market) => market.routeType !== 'Single').length;
+    const routePreviewRequired = quotedRows.filter((market) => market.quoteRequired).length;
     return {
       routeable: marketCount || marketRows.length,
       crossVenue,
       routePreviewRequired,
     };
-  }, [marketCount, marketRows]);
+  }, [marketCount, marketRows, marketQuotes]);
   const inferTerminalMarketType = (title: string): 'binary' | 'multi' => (
     title.includes('Winner') || title.includes('Champion') || title.includes('Region') || title.includes('Season')
       ? 'multi'
       : 'binary'
   );
-  const openMarketInTerminal = (market: Pick<TerminalMarketSelection, 'title' | 'category' | 'icon' | 'volume' | 'venueCount' | 'routeType'> & { marketType?: 'binary' | 'multi' }) => {
+  const openMarketInTerminal = (market: Pick<TerminalMarketSelection, 'title' | 'category' | 'icon' | 'volume' | 'venueCount' | 'routeType'> & Partial<TerminalMarketSelection>) => {
     setSelectedTerminalMarket({
       ...market,
       marketType: market.marketType ?? inferTerminalMarketType(market.title),
@@ -269,6 +424,62 @@ export const DashboardV2Mockup = ({
       window.clearTimeout(timer);
     };
   }, [activePage, isMarketSurface, searchQuery]);
+
+  useEffect(() => {
+    if (!isMarketSurface || !session?.userJwt || marketRows.length === 0) {
+      setMarketQuotes({});
+      return;
+    }
+
+    let cancelled = false;
+    const marketsToQuote = marketRows
+      .slice(0, activePage === 'markets' ? 12 : 6)
+      .map((market) => ({
+        market,
+        outcomes: market.outcomes
+          .filter((outcome) => ['YES', 'NO'].includes(normalizeOutcomeId(outcome.name)))
+          .slice(0, 2),
+      }))
+      .filter((item) => item.outcomes.length > 0);
+
+    if (marketsToQuote.length === 0) {
+      setMarketQuotes({});
+      return;
+    }
+
+    const loadQuotes = async () => {
+      const entries = await Promise.all(marketsToQuote.map(async ({ market, outcomes }) => {
+        const outcomeEntries = await Promise.all(outcomes.map(async (outcome) => {
+          try {
+            const response = await getLiveCandidates(session.userJwt, {
+              side: 'buy',
+              marketId: market.marketId,
+              outcomeId: outcome.id,
+              amount: '1',
+            });
+            return [outcome.id, toOutcomeQuote(outcome.id, response)] as const;
+          } catch (error) {
+            return [outcome.id, toOutcomeQuote(outcome.id, null, error)] as const;
+          }
+        }));
+        return [market.id, { marketId: market.marketId, outcomes: Object.fromEntries(outcomeEntries) }] as const;
+      }));
+
+      if (cancelled) return;
+      setMarketQuotes((current) => ({
+        ...current,
+        ...Object.fromEntries(entries),
+      }));
+    };
+
+    loadQuotes();
+    const interval = window.setInterval(loadQuotes, 45_000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [activePage, isMarketSurface, marketRows, session?.userJwt]);
 
   useEffect(() => {
     if (!session?.userJwt) return;
@@ -1462,7 +1673,7 @@ const LotusMarketList = ({
   markets: DashboardMarketRow[];
   loading: boolean;
   error: string | null;
-  onOpenMarket?: (market: Pick<TerminalMarketSelection, 'title' | 'category' | 'icon' | 'volume' | 'venueCount' | 'routeType'>) => void;
+  onOpenMarket?: (market: Pick<TerminalMarketSelection, 'title' | 'category' | 'icon' | 'volume' | 'venueCount' | 'routeType'> & Partial<TerminalMarketSelection>) => void;
 }) => (
   <div className="overflow-hidden rounded-2xl border border-zinc-800 bg-[#101012] shadow-sm">
     <div className="grid grid-cols-[minmax(360px,1.7fr)_112px_96px_84px_116px_92px_96px_150px] items-center gap-4 border-b border-zinc-800 bg-zinc-900/80 px-5 py-3 text-[11px] font-bold uppercase tracking-[0.08em] text-zinc-500">
@@ -1726,7 +1937,7 @@ const NavItem = ({
   </div>
 );
 
-const MarketCard = ({ title, category, venueCount, routeType, savings, spread, fallback, fallbackLabel, icon, imageUrl, iconUrl, priceLabel, changeLabel, prob, change, volume, txnBuy, txnSell, badges = [], outcomes, marketType, onOpenTerminal }: any) => {
+const MarketCard = ({ id, marketId, eventId, title, category, venueCount, routeType, savings, spread, fallback, fallbackLabel, icon, imageUrl, iconUrl, priceLabel, changeLabel, prob, change, volume, txnBuy, txnSell, badges = [], outcomes, marketType, onOpenTerminal }: any) => {
   const allVenues = [
     { id: 'polymarket', label: 'Polymarket' },
     { id: 'predict', label: 'Predict.fun' },
@@ -1741,6 +1952,7 @@ const MarketCard = ({ title, category, venueCount, routeType, savings, spread, f
   const sellCount = typeof txnSell === 'number' ? txnSell : 0;
   const totalCount = buyCount + sellCount;
   const fallbackText = fallbackLabel ?? (fallback ? 'Yes' : 'No');
+  const terminalPayload = { id, marketId, eventId, title, category, icon, volume, venueCount, routeType, marketType, outcomes, imageUrl, iconUrl };
 
   return (
     <div className="bg-white dark:bg-[#121214] border border-zinc-200 dark:border-zinc-800 rounded-2xl p-4 flex min-h-[260px] flex-col justify-between gap-3 shadow-sm hover:border-zinc-300 dark:hover:border-zinc-700 hover:shadow-md transition-all group">
@@ -1749,7 +1961,7 @@ const MarketCard = ({ title, category, venueCount, routeType, savings, spread, f
       <div className="flex justify-between items-start">
         <button
           type="button"
-          onClick={() => onOpenTerminal?.({ title, category, icon, volume, venueCount, routeType, marketType })}
+          onClick={() => onOpenTerminal?.(terminalPayload)}
           className="flex min-w-0 flex-1 gap-3 items-start rounded-xl text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-[#121214]"
           aria-label={`Open ${title} in terminal`}
         >
@@ -1811,8 +2023,8 @@ const MarketCard = ({ title, category, venueCount, routeType, savings, spread, f
               <div className="flex items-center gap-3 shrink-0">
                 <span className="font-mono font-bold text-zinc-900 dark:text-zinc-100 w-12 text-right text-xs">{outcome.prob}{/^\d+(\.\d+)?$/.test(String(outcome.prob)) ? '%' : ''}</span>
                 <div className="flex gap-1.5">
-                  <button type="button" onClick={() => onOpenTerminal?.({ title, category, icon, volume, venueCount, routeType, marketType })} className="w-9 py-1 bg-emerald-500 hover:bg-emerald-600 text-white text-[10px] transition-colors rounded font-bold shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70">Yes</button>
-                  <button type="button" onClick={() => onOpenTerminal?.({ title, category, icon, volume, venueCount, routeType, marketType })} className="w-9 py-1 bg-red-500 hover:bg-red-600 text-white text-[10px] transition-colors rounded font-bold shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70">No</button>
+                  <button type="button" onClick={() => onOpenTerminal?.(terminalPayload)} className="w-9 py-1 bg-emerald-500 hover:bg-emerald-600 text-white text-[10px] transition-colors rounded font-bold shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70">Yes</button>
+                  <button type="button" onClick={() => onOpenTerminal?.(terminalPayload)} className="w-9 py-1 bg-red-500 hover:bg-red-600 text-white text-[10px] transition-colors rounded font-bold shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70">No</button>
                 </div>
               </div>
             </div>
@@ -1838,7 +2050,7 @@ const MarketCard = ({ title, category, venueCount, routeType, savings, spread, f
               <span className="text-red-600 dark:text-red-500/90">{sellCount.toLocaleString()} Sells</span>
             </>
           ) : (
-            <span className="text-zinc-500">Live quote required for order flow</span>
+            <span className="text-zinc-500">{priceLabel === 'Quote' ? 'Live quote required for order flow' : 'Backend live top-of-book'}</span>
           )}
         </div>
         <div className="hidden">

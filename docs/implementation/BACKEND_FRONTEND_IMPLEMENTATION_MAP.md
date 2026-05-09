@@ -242,14 +242,16 @@ These are not blockers for planning, but they must be resolved before a producti
 1. Dashboard route-quality fields
 
 - Designs show best routes, spreads, savings, venue count, and fallback.
-- Confirmed market endpoints may not return all of those quote-derived fields.
-- Safe beta behavior: show backend-provided market metadata first, then request live candidates/quote when the user opens or previews a route.
+- Confirmed market endpoints do not return executable prices by themselves.
+- Current beta behavior: show backend-provided market metadata first, then authenticated dashboard cards/list rows request `POST /execution/live-candidates` for visible Yes/No outcomes and display only backend live top-of-book price, spread, top size, and venue evidence.
+- Savings and order-flow counts remain quote-required/unavailable until backend returns those fields from a quote or analytics contract.
 
 1. Full order book depth in terminal
 
 - Terminal design shows order book rows by venue.
-- `POST /execution/live-candidates` can prove executable route candidates, but we must confirm whether it returns enough full-depth levels for the visual order book.
+- `POST /execution/live-candidates` proves executable route candidates and top-of-book/weighted quote evidence, but it does not expose sanitized full depth rows to the frontend.
 - Safe beta behavior: render only backend quote evidence that exists. Do not fabricate order book rows.
+- Backend blocker: add a public, sanitized order book contract before the terminal can render full bid/ask depth like venue-native trading screens.
 
 1. Portfolio aggregate PnL and time-series chart
 
@@ -446,9 +448,11 @@ Implementation status:
 - Dashboard grid/list now calls `GET /markets` through the typed market API client and preserves the approved dashboard design.
 - Search is server-backed through the documented `search` query parameter.
 - Backend-provided `imageUrl`/`iconUrl` render with local fallback; the frontend does not call venue APIs directly.
-- Dashboard prices, spreads, savings, order-flow counts, and seven-day movement show quote-required/unavailable states until `POST /execution/live-candidates` or another quote endpoint is wired into the terminal path.
+- Authenticated dashboard grid/list calls `POST /execution/live-candidates` for visible Yes/No outcomes and displays backend-sourced live top-of-book prices, spread, top size, and best venue when available.
+- If live candidates fail or return blockers, the market remains visible with live unavailable/quote-required copy.
+- Savings, order-flow counts, seven-day movement, and full order book depth are still not fabricated; they stay quote-required/unavailable until backend contracts provide them.
 - Durable notifications now come from `GET /notifications`; notification read state uses `POST /notifications/:id/read`.
-- Local blocker observed on May 9, 2026: the local backend database is missing `frontend_market_approvals`, so `GET /markets` returns HTTP 500 until the existing `2026_05_03_create_frontend_market_approvals.sql` migration is applied to that database.
+- Local data note from May 9, 2026: `frontend_market_approvals` migration has been applied locally and curated markets seeded. If a new database returns HTTP 500 for `GET /markets`, apply the existing `2026_05_03_create_frontend_market_approvals.sql` migration and seed curated market approvals.
 
 ### Phase 5 - Markets Page
 
@@ -481,6 +485,7 @@ Market media:
 - Backend may return sanitized optional `imageUrl` and `iconUrl`.
 - Frontend renders those URLs with `no-referrer` and falls back to category/venue icons on missing or failed media.
 - Frontend must not call venue APIs for images.
+- Local curated seed rows may still have null media until backend ingestion/approval payloads include venue media URLs. The frontend should not substitute external venue fetches to fill that gap.
 
 Spread column:
 
@@ -517,6 +522,7 @@ Order book:
 
 - Use backend quote/orderbook evidence only.
 - If full depth is unavailable, show route evidence and top-of-book only.
+- Current blocker: backend live candidate snapshots do not expose sanitized full depth levels through a frontend-safe route. Terminal order book UI must wait for that contract.
 
 ### Phase 7 - Terminal Outcomes, Positions, And Risk Tabs
 

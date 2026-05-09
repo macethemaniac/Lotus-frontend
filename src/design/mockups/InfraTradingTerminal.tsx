@@ -9,6 +9,9 @@ import { VenueLogo } from '@/components/icons/asset-logo';
 import { LotusLogo } from '@/components/icons/lotus-icons';
 
 export type TerminalMarketSelection = {
+  id?: string;
+  marketId?: string;
+  eventId?: string;
   title: string;
   category: string;
   icon: string;
@@ -16,6 +19,9 @@ export type TerminalMarketSelection = {
   venueCount: number;
   routeType: string;
   marketType?: 'binary' | 'multi';
+  outcomes?: Array<{ id: string; name: string; prob: string }>;
+  imageUrl?: string | null;
+  iconUrl?: string | null;
 };
 
 const canonicalEventMarkets = [
