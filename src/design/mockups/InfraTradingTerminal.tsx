@@ -341,6 +341,26 @@ const formatSourceMethod = (oracleType: string | null | undefined): string =>
     .replace(/_/g, ' ')
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 
+const safeExecutionAccountError = (error: unknown): string => {
+  if (!error || typeof error !== 'object') {
+    return 'Execution records are temporarily unavailable. Please try again shortly.';
+  }
+  const candidate = error as { code?: unknown; status?: unknown; message?: unknown };
+  const code = typeof candidate.code === 'string' ? candidate.code : null;
+  const status = typeof candidate.status === 'number' ? candidate.status : null;
+  const message = typeof candidate.message === 'string' ? candidate.message : '';
+  if (
+    code === 'EXECUTION_ACCOUNT_DATA_UNAVAILABLE' ||
+    status === 500 ||
+    status === 503 ||
+    /relation .* does not exist/i.test(message) ||
+    /database|postgres|sql|query/i.test(message)
+  ) {
+    return 'Execution records are temporarily unavailable. Please try again shortly.';
+  }
+  return message || 'Execution records are temporarily unavailable. Please try again shortly.';
+};
+
 const describeOutcomeSchema = (schema: Record<string, unknown> | null | undefined): string => {
   if (!schema) return 'Outcome schema not specified';
   const yes = typeof schema.yesLabel === 'string' ? schema.yesLabel : 'Yes';
@@ -895,7 +915,7 @@ export const InfraTradingTerminal = ({
         setTradeHistory(historyResponse.items.filter((item) => matchesTerminalMarket(item, terminalMarketId)));
       }
     } catch (error) {
-      setAccountError(error instanceof Error ? error.message : 'Unable to load execution records');
+      setAccountError(safeExecutionAccountError(error));
     } finally {
       setAccountLoading(false);
     }
