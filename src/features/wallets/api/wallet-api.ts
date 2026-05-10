@@ -17,6 +17,8 @@ export type UserWallet = {
 export type UserVenueAccount = {
   venue: string;
   walletAddress: string;
+  venueAccountId?: string | null;
+  venueAccountAddress?: string | null;
   venueAccountType: string;
   status: string;
   readinessBlockers: string[];
@@ -26,8 +28,10 @@ export type UserVenueAccount = {
 };
 
 export type SetupBatchResponse = {
-  accounts?: UserVenueAccount[];
-  setupRequests?: unknown[];
+  accounts: UserVenueAccount[];
+  venueAccounts?: Array<{ venue: string; setupMode?: string; venueAccount: UserVenueAccount }>;
+  setupRequests: unknown[];
+  signatureRequests?: unknown[];
   blockers?: string[];
 };
 
@@ -40,9 +44,15 @@ export function ensureDefaultWallets(token: string) {
 }
 
 export function listVenueAccounts(token: string) {
-  return apiRequest<{ accounts: UserVenueAccount[] }>("/user/venue-accounts", { token });
+  return apiRequest<{ accounts?: UserVenueAccount[]; venueAccounts?: UserVenueAccount[] }>("/user/venue-accounts", { token })
+    .then((response) => ({ accounts: response.accounts ?? response.venueAccounts ?? [] }));
 }
 
 export function prepareVenueSetupBatch(token: string) {
-  return apiRequest<SetupBatchResponse>("/user/venue-accounts/setup-batch", { method: "POST", token });
+  return apiRequest<SetupBatchResponse>("/user/venue-accounts/setup-batch", { method: "POST", token })
+    .then((response) => ({
+      ...response,
+      accounts: response.accounts ?? response.venueAccounts?.map((item) => item.venueAccount) ?? [],
+      setupRequests: response.setupRequests ?? response.signatureRequests ?? [],
+    }));
 }

@@ -487,9 +487,9 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
              <div className="flex items-center gap-3">
                <Calendar className="w-5 h-5 text-zinc-500" />
                <div>
-                 <div className="text-sm font-bold text-white">MTM Snapshot</div>
+                 <div className="text-sm font-bold text-white">PnL Calendar</div>
                  <div className="text-[11px] text-zinc-500">
-                   {data.timeseries?.historyAvailable ? 'Backend portfolio time-series' : 'Current backend snapshot only'}
+                   {data.timeseries?.historyAvailable ? 'Backend portfolio PnL history' : 'Waiting for persisted PnL snapshots'}
                  </div>
                </div>
              </div>
@@ -778,7 +778,7 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
             className="absolute inset-0 cursor-default"
           />
           <div className="relative z-10 w-full max-w-[400px]">
-            <FundingDeposit initialMode={fundingModal} modal onClose={() => setFundingModal(null)} />
+            <FundingDeposit initialMode={fundingModal} modal onClose={() => setFundingModal(null)} session={session} />
           </div>
         </div>,
         document.body

@@ -3,6 +3,12 @@ import { env } from "@/config/env";
 
 export type TurnkeyLoginResult = {
   userJwt: string;
+  accountSetup?: {
+    status: "READY" | "ACTION_REQUIRED" | "UNAVAILABLE";
+    walletCount: number;
+    venueAccountCount: number;
+    blockers: string[];
+  };
 };
 
 export async function exchangeTurnkeySessionForLotusJwt(input: {

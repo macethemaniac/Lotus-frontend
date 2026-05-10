@@ -1,15 +1,36 @@
-import React, { useState } from 'react';
-import { ArrowLeft, Copy, Info, ChevronDown, QrCode, X } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import QRCode from 'qrcode';
+import { ArrowLeft, Check, Copy, Info, ChevronDown, Loader2, X } from 'lucide-react';
 import { ChainLogo, CryptoLogo, VenueLogo } from '@/components/icons/asset-logo';
+import type { AuthSession } from '@/features/auth/types';
+import {
+    createFundingIntent,
+    getVenueBalances,
+    getVenueCapabilities,
+    quoteFundingIntent,
+    type FundingIntentResponse,
+    type VenueBalance,
+    type VenueCapability
+} from '@/features/funding/api/funding-api';
+import {
+    ensureDefaultWallets,
+    listVenueAccounts,
+    prepareVenueSetupBatch,
+    type UserVenueAccount,
+    type UserWallet
+} from '@/features/wallets/api/wallet-api';
+import { shortAddress } from '@/lib/formatting/format';
 
 export const FundingDeposit = ({
     initialMode = 'deposit',
     modal = false,
     onClose,
+    session,
 }: {
     initialMode?: 'deposit' | 'withdraw';
     modal?: boolean;
     onClose?: () => void;
+    session?: AuthSession | null;
 }) => {
     const [mode, setMode] = useState<'deposit' | 'withdraw'>(initialMode);
     const [asset, setAsset] = useState('USDC');
@@ -20,11 +41,23 @@ export const FundingDeposit = ({
     const [amount, setAmount] = useState('');
     
     // Deposit state
-    const [allocationMode, setAllocationMode] = useState<'auto' | 'manual'>('auto');
+    const [allocationMode, setAllocationMode] = useState<'auto' | 'single' | 'split'>('auto');
+    const [selectedVenue, setSelectedVenue] = useState('polymarket');
     const [showInfo, setShowInfo] = useState(false);
     const [allocations, setAllocations] = useState<{ [key: string]: string }>({
         polymarket: '0', limitless: '0', predict: '0', myriad: '0', opinion: '0'
     });
+    const [wallets, setWallets] = useState<UserWallet[]>([]);
+    const [venueAccounts, setVenueAccounts] = useState<UserVenueAccount[]>([]);
+    const [venueBalances, setVenueBalances] = useState<VenueBalance[]>([]);
+    const [capabilities, setCapabilities] = useState<VenueCapability[]>([]);
+    const [setupLoading, setSetupLoading] = useState(false);
+    const [routeLoading, setRouteLoading] = useState(false);
+    const [fundingError, setFundingError] = useState<string | null>(null);
+    const [fundingMessage, setFundingMessage] = useState<string | null>(null);
+    const [quotePreview, setQuotePreview] = useState<FundingIntentResponse | null>(null);
+    const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+    const [copiedAddress, setCopiedAddress] = useState(false);
 
     // Withdraw state
     const [withdrawMode, setWithdrawMode] = useState<'single' | 'multiple'>('single');
@@ -67,15 +100,108 @@ export const FundingDeposit = ({
         { id: 'myriad', name: 'Myriad', rail: 'Venue-ready balance', balance: '0.00' },
         { id: 'opinion', name: 'Opinion', rail: 'Venue-ready balance', balance: '0.00' }
     ];
+    const venueIdToBackend: Record<string, string> = {
+        polymarket: 'POLYMARKET',
+        limitless: 'LIMITLESS',
+        predict: 'PREDICT_FUN',
+        myriad: 'MYRIAD',
+        opinion: 'OPINION',
+    };
 
     const selectedAsset = assets.find(item => item.id === asset) ?? assets[0];
     const selectedNetwork = sourceNetworks.find(item => item.id === network) ?? sourceNetworks[0];
     const selectedReceiveAsset = assets.find(item => item.id === receiveAsset) ?? assets[0];
     const selectedReceiveNetwork = receiveNetworks.find(item => item.id === receiveNetwork) ?? receiveNetworks[0];
     const isMenuOpen = (menu: typeof openMenu) => openMenu === menu;
+    const normalizedNetwork = network.toUpperCase();
+    const sourceWallet = useMemo(() => {
+        const chainFamily = normalizedNetwork === 'SOLANA' ? 'SOLANA' : 'EVM';
+        return wallets.find(wallet =>
+            wallet.status === 'ACTIVE' &&
+            wallet.purpose === 'DEFAULT_FUNDING' &&
+            wallet.chainFamily.toUpperCase() === chainFamily
+        ) ?? null;
+    }, [normalizedNetwork, wallets]);
+    const sourceWalletAddress = sourceWallet?.address ?? null;
+    const activeVenueAccounts = useMemo(() =>
+        venueAccounts.filter(account => account.status === 'ACTIVE'),
+        [venueAccounts]
+    );
+    const supportedFundingVenues = useMemo(() => {
+        const byVenue = new Map(capabilities.map(capability => [String(capability.venue ?? '').toUpperCase(), capability]));
+        return venues.filter(venue => {
+            const capability = byVenue.get(venueIdToBackend[venue.id]);
+            return capability?.fundingSupported !== false && capability?.supported !== false && capability?.status !== 'DISABLED';
+        });
+    }, [capabilities, venues]);
+    const displayedVenues = supportedFundingVenues.length > 0 ? supportedFundingVenues : venues;
+    const quoteReady = Boolean(session?.userJwt && sourceWallet && amount && Number(amount) > 0);
 
-    const copyAddress = () => {
-        // mock copy
+    useEffect(() => {
+        let cancelled = false;
+        if (!session?.userJwt) {
+            setWallets([]);
+            setVenueAccounts([]);
+            setVenueBalances([]);
+            setCapabilities([]);
+            return;
+        }
+        setSetupLoading(true);
+        setFundingError(null);
+        Promise.all([
+            ensureDefaultWallets(session.userJwt),
+            prepareVenueSetupBatch(session.userJwt),
+            listVenueAccounts(session.userJwt),
+            getVenueBalances(session.userJwt),
+            getVenueCapabilities(session.userJwt),
+        ])
+            .then(([walletResponse, _setupResponse, accountResponse, balanceResponse, capabilityResponse]) => {
+                if (cancelled) return;
+                setWallets(walletResponse.wallets ?? []);
+                setVenueAccounts(accountResponse.accounts ?? []);
+                setVenueBalances(balanceResponse.balances ?? balanceResponse.venues ?? []);
+                const rawCapabilities = capabilityResponse.capabilities;
+                setCapabilities(Array.isArray(rawCapabilities) ? rawCapabilities : Object.values(rawCapabilities ?? {}));
+                setFundingMessage('Lotus account setup checked. Wallets and venue accounts are reused when present.');
+            })
+            .catch((error) => {
+                if (cancelled) return;
+                setFundingError(error instanceof Error ? error.message : 'Unable to load wallet setup.');
+            })
+            .finally(() => {
+                if (!cancelled) setSetupLoading(false);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [session?.userJwt]);
+
+    useEffect(() => {
+        let cancelled = false;
+        setQrDataUrl(null);
+        if (!sourceWalletAddress) return;
+        QRCode.toDataURL(sourceWalletAddress, {
+            errorCorrectionLevel: 'M',
+            margin: 1,
+            width: modal ? 148 : 216,
+            color: { dark: '#000000', light: '#ffffff' },
+        })
+            .then((dataUrl) => {
+                if (!cancelled) setQrDataUrl(dataUrl);
+            })
+            .catch(() => {
+                if (!cancelled) setQrDataUrl(null);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [modal, sourceWalletAddress]);
+
+    const copyAddress = async () => {
+        if (!sourceWalletAddress) return;
+        await navigator.clipboard.writeText(sourceWalletAddress);
+        setCopiedAddress(true);
+        window.setTimeout(() => setCopiedAddress(false), 1500);
     };
 
     const handleAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -105,10 +231,66 @@ export const FundingDeposit = ({
     const compactFieldPadding = modal ? 'p-2.5' : 'p-3';
     const compactInputPadding = modal ? 'p-2.5' : 'p-3';
     const compactQrWrap = modal ? 'w-32 h-32 mb-2 rounded-xl' : 'w-48 h-48 mb-3 rounded-2xl';
-    const compactQrIcon = modal ? 'w-20 h-20' : 'w-32 h-32';
+    const venueReadyTotal = venueBalances.reduce((sum, balance) => sum + Number(balance.readyAmount ?? balance.availableAmount ?? 0), 0);
+    const primaryButtonLabel = setupLoading
+        ? 'Checking Lotus wallets'
+        : !sourceWallet
+            ? 'Waiting for Lotus wallet'
+            : routeLoading
+                ? 'Previewing funding route'
+                : 'Preview funding route';
+
+    const buildFundingTargets = () => {
+        if (allocationMode === 'single') {
+            return [{ targetVenue: venueIdToBackend[selectedVenue], targetAmount: amount }];
+        }
+        if (allocationMode === 'split') {
+            return displayedVenues
+                .map((venue) => ({ targetVenue: venueIdToBackend[venue.id], targetAmount: allocations[venue.id] ?? '0' }))
+                .filter((target) => Number(target.targetAmount) > 0);
+        }
+        const equalPercent = Number((100 / displayedVenues.length).toFixed(6));
+        return displayedVenues.map((venue, index) => ({
+            targetVenue: venueIdToBackend[venue.id],
+            targetPercentage: index === displayedVenues.length - 1
+                ? Number((100 - equalPercent * (displayedVenues.length - 1)).toFixed(6))
+                : equalPercent,
+        }));
+    };
+
+    const previewFundingRoute = async () => {
+        if (!session?.userJwt || !sourceWallet || !quoteReady) return;
+        const targets = buildFundingTargets();
+        if (targets.length === 0) {
+            setFundingError('Pick at least one venue allocation before previewing a route.');
+            return;
+        }
+        setRouteLoading(true);
+        setFundingError(null);
+        setFundingMessage(null);
+        setQuotePreview(null);
+        try {
+            const intent = await createFundingIntent(session.userJwt, {
+                sourceChain: normalizedNetwork,
+                sourceToken: asset,
+                sourceAmount: amount,
+                sourceWalletId: sourceWallet.walletId,
+                sourceWalletAddress: sourceWallet.address,
+                idempotencyKey: `funding-${sourceWallet.walletId}-${Date.now()}`,
+                targets,
+            });
+            const quoted = await quoteFundingIntent(session.userJwt, intent.intent.fundingIntentId);
+            setQuotePreview(quoted);
+            setFundingMessage(quoted.userSafeMessage || 'Funding route preview is ready. User signature is required before funds move.');
+        } catch (error) {
+            setFundingError(error instanceof Error ? error.message : 'Funding route preview failed.');
+        } finally {
+            setRouteLoading(false);
+        }
+    };
 
     return (
-        <div className={modal ? 'flex w-full flex-col items-center' : 'min-h-[calc(100vh-4rem)] flex flex-col items-center pt-8 pb-32'}>
+        <div className={modal ? 'flex w-full min-w-0 flex-col items-center overflow-x-hidden' : 'min-h-[calc(100vh-4rem)] flex min-w-0 flex-col items-center overflow-x-hidden pt-8 pb-32'}>
             
             <div className={`bg-zinc-900/50 p-1 ${modal ? 'mb-3' : 'mb-6'} rounded-lg flex gap-1 border border-zinc-800`}>
                 <button 
@@ -121,7 +303,7 @@ export const FundingDeposit = ({
                 >Withdraw</button>
             </div>
 
-            <div className={`w-full ${modal ? 'max-w-[380px] rounded-[20px]' : 'max-w-[420px] rounded-[24px]'} bg-[#1a1a1c] border border-zinc-800/80 shadow-2xl overflow-hidden relative`}>
+            <div className={`w-full ${modal ? 'max-h-[calc(100dvh-7rem)] max-w-[460px] rounded-[20px]' : 'max-w-[460px] rounded-[24px]'} bg-[#1a1a1c] border border-zinc-800/80 shadow-2xl overflow-y-auto overflow-x-hidden custom-scrollbar relative`}>
                 {mode === 'deposit' ? (
                     <div className={compactPanel}>
                         <div className={`flex justify-between items-center ${compactSection}`}>
@@ -129,11 +311,11 @@ export const FundingDeposit = ({
                             <button type="button" onClick={onClose} className="text-zinc-500 hover:text-zinc-300"><X className="w-5 h-5"/></button>
                         </div>
                         
-                        <div className={`flex items-center gap-3 ${compactSection} cursor-pointer group`}>
+                        <div className={`flex items-center gap-3 ${compactSection} group`}>
                             <div className="bg-zinc-800/50 p-1.5 rounded-full group-hover:bg-zinc-800 transition-colors">
                                 <ArrowLeft className="w-4 h-4 text-zinc-400" />
                             </div>
-                            <span className={`text-white font-bold ${modal ? 'text-sm' : 'text-[15px]'}`}>Transfer Manually</span>
+                            <span className={`text-white font-bold ${modal ? 'text-sm' : 'text-[15px]'}`}>Fund venues from Lotus wallet</span>
                         </div>
 
                         <div className={`grid grid-cols-2 gap-3 ${compactSection}`}>
@@ -215,14 +397,20 @@ export const FundingDeposit = ({
                         <div className={`${modal ? 'mb-3' : 'mb-5'} rounded-xl border border-[#00ff88]/10 bg-[#00ff88]/5 px-3 py-2 text-[11px] leading-relaxed text-zinc-400`}>
                             Funding uses LiFi from your selected source chain into venue-ready capital. Keep native gas on the source chain; Lotus only treats funds as tradeable after backend readiness says ready.
                         </div>
+                        {(fundingError || fundingMessage || setupLoading) && (
+                            <div className={`${modal ? 'mb-3' : 'mb-5'} rounded-xl border ${fundingError ? 'border-amber-500/25 bg-amber-500/10 text-amber-200' : 'border-zinc-800 bg-zinc-950/40 text-zinc-400'} px-3 py-2 text-[11px] font-semibold leading-relaxed`}>
+                                {setupLoading ? 'Checking Turnkey wallets and venue account bindings...' : fundingError ?? fundingMessage}
+                            </div>
+                        )}
 
                         {/* Lotus Addition: Anticipated Amount & Allocation */}
                         <div className={`${compactSection} ${modal ? 'p-3' : 'p-4'} bg-zinc-900/30 rounded-xl border border-zinc-800/50`}>
                             <label className={`text-zinc-400 text-xs font-bold ${modal ? 'mb-2' : 'mb-3'} flex justify-between items-center`}>
                                 <span>Venue pre-allocation</span>
                                 <div className="flex gap-2">
-                                    <span onClick={() => setAllocationMode('auto')} className={`cursor-pointer px-2 py-0.5 rounded ${allocationMode === 'auto' ? 'bg-[#00ff88]/10 text-[#00ff88]' : 'text-zinc-500'}`}>Auto</span>
-                                    <span onClick={() => setAllocationMode('manual')} className={`cursor-pointer px-2 py-0.5 rounded ${allocationMode === 'manual' ? 'bg-zinc-800 text-zinc-300' : 'text-zinc-500'}`}>Manual</span>
+                                    <button type="button" onClick={() => setAllocationMode('auto')} className={`px-2 py-0.5 rounded focus-visible:ring-2 focus-visible:ring-[#c6ff00]/40 ${allocationMode === 'auto' ? 'bg-[#00ff88]/10 text-[#00ff88]' : 'text-zinc-500'}`}>Auto</button>
+                                    <button type="button" onClick={() => setAllocationMode('single')} className={`px-2 py-0.5 rounded focus-visible:ring-2 focus-visible:ring-[#c6ff00]/40 ${allocationMode === 'single' ? 'bg-zinc-800 text-zinc-300' : 'text-zinc-500'}`}>Single venue</button>
+                                    <button type="button" onClick={() => setAllocationMode('split')} className={`px-2 py-0.5 rounded focus-visible:ring-2 focus-visible:ring-[#c6ff00]/40 ${allocationMode === 'split' ? 'bg-zinc-800 text-zinc-300' : 'text-zinc-500'}`}>Split</button>
                                 </div>
                             </label>
                             
@@ -232,11 +420,33 @@ export const FundingDeposit = ({
 
                             {allocationMode === 'auto' ? (
                                 <div className="text-[11px] text-zinc-500 leading-relaxed">
-                                    Auto lets the backend split supported USDC, USDT, or SOL funding into Polymarket, Limitless, Predict.fun, Myriad, and Opinion readiness where available.
+                                    Auto prepares an even backend-validated target set across supported venues for this staging pass. Backend capability and route quotes still decide whether each leg is executable.
+                                </div>
+                            ) : allocationMode === 'single' ? (
+                                <div className="grid grid-cols-2 gap-2">
+                                    {displayedVenues.map(v => {
+                                        const account = venueAccounts.find(item => item.venue === venueIdToBackend[v.id]);
+                                        return (
+                                            <button
+                                                key={v.id}
+                                                type="button"
+                                                onClick={() => setSelectedVenue(v.id)}
+                                                className={`p-2 rounded-lg border text-xs text-left transition-colors focus-visible:ring-2 focus-visible:ring-[#c6ff00]/40 ${selectedVenue === v.id ? 'bg-[#00ff88]/10 border-[#00ff88]/50 text-white' : 'border-zinc-800/80 text-zinc-400 hover:bg-[#27272a]/50'}`}
+                                            >
+                                                <span className="mb-1 flex items-center gap-2 font-bold">
+                                                    <VenueLogo id={v.id} label={v.name} className="h-4 w-4" />
+                                                    <span className="min-w-0">
+                                                        <span className="block truncate">{v.name}</span>
+                                                        <span className="block truncate text-[10px] font-medium text-zinc-500">{account?.status ?? 'setup checked'}</span>
+                                                    </span>
+                                                </span>
+                                            </button>
+                                        );
+                                    })}
                                 </div>
                             ) : (
                                 <div className="space-y-2">
-                                    {venues.map(v => (
+                                    {displayedVenues.map(v => (
                                         <div key={v.id} className="flex justify-between items-center text-xs">
                                             <span className="flex min-w-0 items-center gap-2 text-zinc-400">
                                                 <VenueLogo id={v.id} label={v.name} className="h-4 w-4" />
@@ -266,11 +476,17 @@ export const FundingDeposit = ({
                         <div className={`flex flex-col items-center ${compactSection}`}>
                             <div className={`p-1 bg-gradient-to-br from-blue-400 via-white to-orange-400 ${compactQrWrap} shadow-[0_0_20px_rgba(255,255,255,0.1)]`}>
                                 <div className="w-full h-full bg-white rounded-xl flex items-center justify-center">
-                                    <QrCode className={`${compactQrIcon} text-black`} strokeWidth={1} />
+                                    {qrDataUrl ? (
+                                        <img src={qrDataUrl} alt={`${network} Lotus wallet QR`} className="h-full w-full rounded-xl object-contain" />
+                                    ) : (
+                                        <div className="px-3 text-center text-[11px] font-bold text-zinc-900">
+                                            {setupLoading ? 'Preparing wallet' : 'No wallet address'}
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                             <div className="text-zinc-400 text-xs flex items-center gap-1.5 font-medium">
-                                Minimum <span className="text-white font-bold">$10 USD</span> <Info className="w-3.5 h-3.5" />
+                                Add funds to your <span className="text-white font-bold">{network}</span> Lotus wallet <Info className="w-3.5 h-3.5" />
                             </div>
                         </div>
 
@@ -285,10 +501,12 @@ export const FundingDeposit = ({
                                     Info <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showInfo ? 'rotate-180' : ''}`} />
                                 </span>
                             </div>
-                            <div className={`flex items-center justify-between bg-[#27272a]/30 border border-zinc-800 rounded-xl ${modal ? 'p-2.5' : 'p-3.5'} hover:border-zinc-700 transition-colors`}>
-                                <span className="text-zinc-300 font-mono text-sm tracking-wide">6YwxaaV...RxdzXrpn</span>
-                                <button onClick={copyAddress} className="text-zinc-500 hover:text-white transition-colors">
-                                    <Copy className="w-4 h-4" />
+                            <div className={`flex items-center justify-between gap-3 bg-[#27272a]/30 border border-zinc-800 rounded-xl ${modal ? 'p-2.5' : 'p-3.5'} hover:border-zinc-700 transition-colors`}>
+                                <span className="min-w-0 truncate text-zinc-300 font-mono text-sm tracking-wide">
+                                    {sourceWalletAddress ? shortAddress(sourceWalletAddress) : 'Wallet setup pending'}
+                                </span>
+                                <button type="button" onClick={copyAddress} disabled={!sourceWalletAddress} className="text-zinc-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-40 transition-colors focus-visible:ring-2 focus-visible:ring-[#c6ff00]/40 rounded-md p-1">
+                                    {copiedAddress ? <Check className="w-4 h-4 text-[#00ff88]" /> : <Copy className="w-4 h-4" />}
                                 </button>
                             </div>
                         </div>
@@ -298,14 +516,47 @@ export const FundingDeposit = ({
                             <div className="bg-[#1e1e20] border border-zinc-800 rounded-xl p-4 space-y-2 mb-4 animate-in slide-in-from-top-2 fade-in duration-200">
                                 <div className="flex justify-between text-[13px]">
                                     <span className="text-zinc-400">Processing time:</span>
-                                    <span className="text-white font-bold">&lt; 30 Seconds</span>
+                                    <span className="text-white font-bold">Backend quote required</span>
                                 </div>
                                 <div className="flex justify-between text-[13px]">
-                                    <span className="text-zinc-400">Price impact and slippage:</span>
-                                    <span className="text-white font-bold">0.10%-1%</span>
+                                    <span className="text-zinc-400">Venue-ready balance:</span>
+                                    <span className="text-white font-bold">${venueReadyTotal.toFixed(2)}</span>
+                                </div>
+                                <div className="text-[12px] leading-relaxed text-zinc-500">
+                                    Funding routes require a user signature from the selected Lotus wallet. Lotus does not treat funds as tradeable until backend venue readiness confirms them.
                                 </div>
                             </div>
                         )}
+
+                        {quotePreview && (
+                            <div className={`${compactSection} rounded-xl border border-[#00ff88]/20 bg-[#00ff88]/5 p-3`}>
+                                <div className="mb-2 flex items-center justify-between">
+                                    <span className="text-xs font-bold uppercase tracking-wider text-[#00ff88]">Route preview</span>
+                                    <span className="text-[10px] font-bold text-zinc-500">{quotePreview.intent.status}</span>
+                                </div>
+                                <div className="space-y-2">
+                                    {quotePreview.routeLegs.map((leg) => (
+                                        <div key={leg.routeLegId} className="rounded-lg border border-zinc-800 bg-zinc-950/40 px-3 py-2 text-xs">
+                                            <div className="flex items-center justify-between gap-3">
+                                                <span className="font-bold text-white">{leg.targetVenue}</span>
+                                                <span className="font-mono text-zinc-300">{leg.destinationAmountEstimate} {leg.destinationToken}</span>
+                                            </div>
+                                            <div className="mt-1 text-[11px] text-zinc-500">{leg.routeQuote?.userSafeSummary ?? leg.routeProvider}</div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        <button
+                            type="button"
+                            onClick={previewFundingRoute}
+                            disabled={!quoteReady || routeLoading || setupLoading}
+                            className={`mb-4 flex w-full items-center justify-center gap-2 rounded-xl bg-[#c6ff00] px-4 ${modal ? 'py-2.5' : 'py-3.5'} text-sm font-bold text-black transition-colors hover:bg-[#b8f000] disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-500 focus-visible:ring-2 focus-visible:ring-[#c6ff00]/40`}
+                        >
+                            {(routeLoading || setupLoading) && <Loader2 className="h-4 w-4 animate-spin" />}
+                            {primaryButtonLabel}
+                        </button>
 
                         <div className="flex justify-end gap-3 text-xs font-semibold">
                             <span className="text-[#b181ff] cursor-pointer hover:underline">FAQ</span>

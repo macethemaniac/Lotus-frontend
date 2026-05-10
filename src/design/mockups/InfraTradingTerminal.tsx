@@ -3178,7 +3178,7 @@ export const InfraTradingTerminal = ({
           className="absolute inset-0 cursor-default"
         />
         <div className="relative z-10 w-full max-w-[400px]">
-          <FundingDeposit initialMode="deposit" modal onClose={() => setFundingModalOpen(false)} />
+          <FundingDeposit initialMode="deposit" modal onClose={() => setFundingModalOpen(false)} session={session} />
         </div>
       </div>,
       document.body

@@ -38,6 +38,52 @@ export type FundingHistoryRow = {
   updatedAt?: string;
 };
 
+export type FundingTargetRequest = {
+  targetVenue: string;
+  targetAmount?: string;
+  targetPercentage?: number;
+};
+
+export type FundingRouteLeg = {
+  routeLegId: string;
+  targetVenue: string;
+  sourceChain: string;
+  sourceToken: string;
+  sourceAmount: string;
+  destinationChain: string;
+  destinationToken: string;
+  destinationAmountEstimate: string;
+  routeProvider: string;
+  routeQuote?: {
+    estimatedFees?: string;
+    estimatedTimeSeconds?: number | null;
+    userSafeSummary?: string;
+    transactionRequest?: unknown;
+  };
+  status: string;
+  errorReason?: string | null;
+};
+
+export type FundingIntentResponse = {
+  intent: {
+    fundingIntentId: string;
+    sourceChain: string;
+    sourceToken: string;
+    sourceAmount: string;
+    sourceWalletAddress: string;
+    sourceWalletId?: string | null;
+    status: string;
+    totalEstimatedFees: string;
+    totalEstimatedTimeSeconds: number | null;
+    createdAt: string;
+    updatedAt: string;
+  };
+  targets: unknown[];
+  routeLegs: FundingRouteLeg[];
+  reconciliations: unknown[];
+  userSafeMessage: string;
+};
+
 export type FundingReceipt = {
   fundingIntentId: string;
   currentStatus: string;
@@ -86,6 +132,29 @@ export function getVenueActivations(token: string) {
 
 export function getFundingHistory(token: string) {
   return apiRequest<{ rows?: FundingHistoryRow[]; history?: FundingHistoryRow[] }>("/funding/history?pageSize=10", { token });
+}
+
+export function createFundingIntent(token: string, input: {
+  sourceChain: string;
+  sourceToken: string;
+  sourceAmount: string;
+  sourceWalletAddress?: string;
+  sourceWalletId?: string;
+  idempotencyKey: string;
+  targets: FundingTargetRequest[];
+}) {
+  return apiRequest<FundingIntentResponse>("/funding/intents", {
+    method: "POST",
+    token,
+    body: input,
+  });
+}
+
+export function quoteFundingIntent(token: string, fundingIntentId: string) {
+  return apiRequest<FundingIntentResponse>(`/funding/intents/${encodeURIComponent(fundingIntentId)}/quote`, {
+    method: "POST",
+    token,
+  });
 }
 
 export function getFundingReceipt(token: string, fundingIntentId: string) {
