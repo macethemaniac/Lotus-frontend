@@ -973,7 +973,7 @@ const LiveCanonicalChart = ({
             {series.map((item) => (
               <Line
                 key={item.id}
-                type="linear"
+                type="monotone"
                 dataKey={item.id}
                 name={item.label}
                 stroke={item.color}
