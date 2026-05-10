@@ -81,6 +81,69 @@ export type MarketOutcome = {
   venues: string[];
 };
 
+export type MarketOrderbookLevel = {
+  venue: string;
+  venueMarketId: string;
+  venueOutcomeId: string | null;
+  price: string;
+  size: string;
+  cumulativeSize: string;
+  cumulativeNotional: string;
+};
+
+export type MarketOrderbookVenue = {
+  venue: string;
+  venueMarketId: string;
+  venueOutcomeId: string | null;
+  source: "STREAM" | "REST";
+  quoteQuality: string;
+  sourceTimestamp: string | null;
+  receivedAt: string;
+  bestBid: string | null;
+  bestAsk: string | null;
+  midpoint: string | null;
+  spread: string | null;
+  bidDepth: string;
+  askDepth: string;
+  blockers: string[];
+  bids: MarketOrderbookLevel[];
+  asks: MarketOrderbookLevel[];
+};
+
+export type MarketOrderbookResponse = {
+  marketId: string;
+  outcomeId: string | null;
+  generatedAt: string;
+  depth: number;
+  venues: MarketOrderbookVenue[];
+  bids: MarketOrderbookLevel[];
+  asks: MarketOrderbookLevel[];
+  bestBid: string | null;
+  bestAsk: string | null;
+  midpoint: string | null;
+  spread: string | null;
+  status: "live" | "partial" | "unavailable";
+  blockers: Array<{ venue: string; reason: string; venueMarketId?: string; venueOutcomeId?: string }>;
+};
+
+export type MarketChartTimeframe = "1H" | "6H" | "1D" | "1W" | "1M" | "ALL";
+
+export type MarketChartResponse = {
+  marketId: string;
+  outcomeId: string | null;
+  timeframe: MarketChartTimeframe;
+  generatedAt: string;
+  historyStatus: "live" | "accumulating" | "unavailable";
+  series: Array<{ id: string; label: string; color: string }>;
+  points: Array<{
+    timestamp: string;
+    label: string;
+    unified: string | null;
+    venues: Record<string, string | null>;
+  }>;
+  blockers: MarketOrderbookResponse["blockers"];
+};
+
 export type ResolutionRiskAssessment = {
   label: string;
   riskScore: string;
@@ -147,6 +210,33 @@ export function getMarket(marketId: string) {
 export function getMarketOutcomes(marketId: string) {
   return apiRequest<{ canonicalEventId: string; title: string; outcomes: MarketOutcome[] }>(
     `/markets/${encodeURIComponent(marketId)}/outcomes`
+  );
+}
+
+export function getMarketOrderbook(
+  marketId: string,
+  input: { outcomeId?: string | null; depth?: number; venue?: string | null } = {}
+) {
+  const params = new URLSearchParams();
+  if (input.outcomeId) params.set("outcomeId", input.outcomeId);
+  if (input.depth) params.set("depth", String(input.depth));
+  if (input.venue) params.set("venue", input.venue);
+  const query = params.toString();
+  return apiRequest<MarketOrderbookResponse>(
+    `/markets/${encodeURIComponent(marketId)}/orderbook${query ? `?${query}` : ""}`
+  );
+}
+
+export function getMarketChart(
+  marketId: string,
+  input: { outcomeId?: string | null; timeframe?: MarketChartTimeframe } = {}
+) {
+  const params = new URLSearchParams();
+  if (input.outcomeId) params.set("outcomeId", input.outcomeId);
+  if (input.timeframe) params.set("timeframe", input.timeframe);
+  const query = params.toString();
+  return apiRequest<MarketChartResponse>(
+    `/markets/${encodeURIComponent(marketId)}/chart${query ? `?${query}` : ""}`
   );
 }
 

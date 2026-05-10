@@ -10,9 +10,14 @@ import { LotusLogo } from '@/components/icons/lotus-icons';
 import type { AuthSession } from '@/features/auth/types';
 import {
   getCanonicalResolutionRisk,
+  getMarketChart,
+  getMarketOrderbook,
   getMarketOutcomes,
   getVenueMarketResolutionRisk,
+  type MarketChartResponse,
+  type MarketChartTimeframe,
   type MarketCatalogVenueMarket,
+  type MarketOrderbookResponse,
   type MarketOutcome,
   type ResolutionRiskAssessment,
   type ResolutionRiskProfile,
@@ -169,6 +174,20 @@ const formatCompactMetric = (value: string | number | null | undefined): string 
 const formatMoneyMetric = (value: string | number | null | undefined): string | null => {
   const metric = formatCompactMetric(value);
   return metric ? `$${metric}` : null;
+};
+
+const formatBookPrice = (value: string | null | undefined): string => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 'Quote';
+  const cents = parsed <= 1 ? parsed * 100 : parsed;
+  return `${cents >= 10 ? cents.toFixed(1) : cents.toFixed(2)}c`;
+};
+
+const formatBookSize = (value: string | null | undefined): string => formatCompactMetric(value) ?? '-';
+
+const formatBookNotional = (value: string | null | undefined): string => {
+  const metric = formatCompactMetric(value);
+  return metric ? `$${metric}` : '-';
 };
 
 const bestCandidate = (candidates: TradeRouteCandidate[]): TradeRouteCandidate | null =>
@@ -645,6 +664,183 @@ const CanonicalChart = ({ marketType }: { marketType: 'binary' | 'multi' }) => {
   );
 };
 
+const chartPointValue = (value: string | null | undefined): number | null => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed * 100 : null;
+};
+
+const toChartRows = (chart: MarketChartResponse | null): Array<Record<string, string | number | null>> =>
+  chart?.points.map((point) => ({
+    label: point.label,
+    unified: chartPointValue(point.unified),
+    ...Object.fromEntries(Object.entries(point.venues).map(([venue, value]) => [venue, chartPointValue(value)]))
+  })) ?? [];
+
+const LiveCanonicalChart = ({
+  marketId,
+  outcomeId,
+  marketType,
+}: {
+  marketId: string | null;
+  outcomeId: string | null;
+  marketType: 'binary' | 'multi';
+}) => {
+  const [activeTab, setActiveTab] = useState<MarketChartTimeframe>('1H');
+  const [chart, setChart] = useState<MarketChartResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const tabs: MarketChartTimeframe[] = ['1H', '6H', '1D', '1W', '1M', 'ALL'];
+  const rows = useMemo(() => toChartRows(chart), [chart]);
+  const series = chart?.series ?? [];
+
+  React.useEffect(() => {
+    let cancelled = false;
+    const loadChart = async () => {
+      if (!marketId) {
+        setChart(null);
+        setError(null);
+        return;
+      }
+      setLoading(true);
+      setError(null);
+      try {
+        const response = await getMarketChart(marketId, { outcomeId, timeframe: activeTab });
+        if (!cancelled) setChart(response);
+      } catch (err) {
+        if (!cancelled) {
+          setChart(null);
+          setError(err instanceof Error ? err.message : 'Live chart unavailable');
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    void loadChart();
+    const interval = window.setInterval(() => {
+      void loadChart();
+    }, 10_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [activeTab, marketId, outcomeId]);
+
+  const CustomTooltip = ({ active, payload, label }: any) => {
+    if (!active || !payload?.length) return null;
+    return (
+      <div className="bg-[#18181b]/95 border border-zinc-800 rounded-lg p-3 shadow-2xl z-50 min-w-[200px]">
+        <div className="text-zinc-400 text-[11px] mb-3 font-sans">{label}</div>
+        <div className="flex flex-col gap-2">
+          {[...payload].filter((entry: any) => typeof entry.value === 'number').sort((a: any, b: any) => b.value - a.value).map((entry: any) => (
+            <div key={entry.dataKey} className="flex items-center gap-1.5 text-[13px] font-medium">
+              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: entry.color }} />
+              <span className="font-bold text-white">{Number(entry.value).toFixed(Number(entry.value) >= 10 ? 1 : 2)}{marketType === 'multi' ? 'c' : '%'}</span>
+              <span className="text-white ml-0.5">{entry.name}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="relative w-full h-full flex flex-col pt-2 pb-2 bg-[#0c0c0c] rounded-xl overflow-hidden">
+      <div className="flex items-center gap-2 px-4 pt-2">
+        <Activity className="w-4 h-4 text-white" />
+        <span className="text-white font-bold text-sm">Probability</span>
+      </div>
+      <div className="w-full bg-zinc-800 h-px mt-2" />
+      <div className="w-24 bg-white h-0.5" />
+      <div className="flex items-center justify-between px-4 mt-3">
+        <div className="flex items-center rounded-md bg-transparent space-x-1">
+          {tabs.map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              onClick={() => setActiveTab(tab)}
+              className={`px-3 py-1 text-sm font-bold transition-colors ${
+                activeTab === tab
+                  ? 'text-white border border-white bg-transparent rounded shadow-sm'
+                  : 'text-zinc-400 hover:text-white'
+              }`}
+            >
+              {tab}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="flex items-center gap-4 px-4 mt-4 text-[13px] min-h-[20px]">
+        {series.slice(0, 5).map((item) => {
+          const latest = [...(chart?.points ?? [])].reverse().find((point) => item.id === 'unified' ? point.unified : point.venues[item.id]);
+          const rawValue = item.id === 'unified' ? latest?.unified : latest?.venues[item.id];
+          const value = chartPointValue(rawValue);
+          return (
+            <div key={item.id} className="flex items-center gap-1.5">
+              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: item.color }} />
+              <span className="text-white font-bold">
+                {item.label} {value === null ? 'pending' : `${value.toFixed(value >= 10 ? 1 : 2)}${marketType === 'multi' ? 'c' : '%'}`}
+              </span>
+            </div>
+          );
+        })}
+        {chart?.historyStatus === 'accumulating' && (
+          <div className="text-zinc-500 font-bold ml-2">Live history accumulating</div>
+        )}
+      </div>
+      <div className="h-[300px] min-h-[300px] w-full mt-6 pr-4 relative">
+        {loading && rows.length === 0 && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center text-xs font-bold uppercase tracking-[0.18em] text-zinc-500">
+            Loading live chart
+          </div>
+        )}
+        {error && rows.length === 0 && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center px-6 text-center text-xs font-semibold text-amber-300">
+            {error}
+          </div>
+        )}
+        {!loading && !error && rows.length === 0 && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center px-6 text-center text-xs font-semibold text-zinc-500">
+            Live chart data will appear after Lotus receives backend orderbook points for this market.
+          </div>
+        )}
+        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={260}>
+          <LineChart data={rows} margin={{ top: 20, right: 30, left: 10, bottom: 5 }}>
+            <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fill: '#71717A', fontSize: 11 }} dy={10} />
+            <YAxis
+              orientation="right"
+              axisLine={false}
+              tickLine={false}
+              tick={{ fill: '#71717A', fontSize: 11 }}
+              dx={10}
+              tickFormatter={(val) => marketType === 'multi' ? `${val}c` : `${val}%`}
+              ticks={[0, 25, 50, 75, 100]}
+              domain={[0, 100]}
+            />
+            {[0, 25, 50, 75, 100].map((val) => (
+              <ReferenceLine key={val} y={val} stroke="#27272A" strokeDasharray="3 3" opacity={0.6} />
+            ))}
+            <Tooltip content={<CustomTooltip />} cursor={{ stroke: '#52525B', strokeWidth: 1, strokeDasharray: '3 3' }} />
+            {series.map((item) => (
+              <Line
+                key={item.id}
+                type="linear"
+                dataKey={item.id}
+                name={item.label}
+                stroke={item.color}
+                strokeWidth={item.id === 'unified' ? 2.5 : 1.5}
+                dot={false}
+                strokeDasharray={item.id === 'unified' ? undefined : '4 2'}
+                activeDot={{ r: item.id === 'unified' ? 5 : 4, stroke: '#18181b', strokeWidth: 2 }}
+                connectNulls
+              />
+            ))}
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+};
+
 export const InfraTradingTerminal = ({
   embedded = false,
   darkMode = true,
@@ -677,6 +873,10 @@ export const InfraTradingTerminal = ({
   const [accountLoading, setAccountLoading] = useState(false);
   const [accountError, setAccountError] = useState<string | null>(null);
   const [riskState, setRiskState] = useState<TerminalRiskState>({ loading: false, error: null, assessments: [], profiles: [] });
+  const [orderbook, setOrderbook] = useState<MarketOrderbookResponse | null>(null);
+  const [orderbookLoading, setOrderbookLoading] = useState(false);
+  const [orderbookError, setOrderbookError] = useState<string | null>(null);
+  const [orderbookVenue, setOrderbookVenue] = useState<string>('ALL');
   React.useEffect(() => {
     if (selectedMarket?.marketType) {
       setMarketType(selectedMarket.marketType);
@@ -773,6 +973,10 @@ export const InfraTradingTerminal = ({
     : 'h-[620px] 2xl:h-[720px]';
   const venueBadgeClass = 'h-7 w-7 rounded-full border-[2.5px] border-[#121214] bg-zinc-900 shadow-sm';
   const tinyVenueClass = 'h-3.5 w-3.5 rounded-full border border-zinc-800 bg-zinc-950';
+  const orderbookVenueOptions = useMemo(
+    () => [...new Set([...(orderbook?.venues.map((venue) => venue.venue) ?? []), ...marketVenueList.map((venue) => venue.toUpperCase())])].sort(),
+    [marketVenueList, orderbook?.venues]
+  );
 
   const refreshOutcomes = useCallback(async () => {
     const fallbackRows = initialOutcomeRows(terminalMarket);
@@ -885,6 +1089,42 @@ export const InfraTradingTerminal = ({
     }, 30_000);
     return () => window.clearInterval(interval);
   }, [refreshOutcomes]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    const refreshOrderbook = async () => {
+      if (!terminalMarketId) {
+        setOrderbook(null);
+        setOrderbookError(null);
+        return;
+      }
+      setOrderbookLoading(true);
+      setOrderbookError(null);
+      try {
+        const response = await getMarketOrderbook(terminalMarketId, {
+          outcomeId: selectedOutcomeId,
+          depth: 20,
+          venue: orderbookVenue === 'ALL' ? null : orderbookVenue
+        });
+        if (!cancelled) setOrderbook(response);
+      } catch (error) {
+        if (!cancelled) {
+          setOrderbook(null);
+          setOrderbookError(error instanceof Error ? error.message : 'Live orderbook unavailable');
+        }
+      } finally {
+        if (!cancelled) setOrderbookLoading(false);
+      }
+    };
+    void refreshOrderbook();
+    const interval = window.setInterval(() => {
+      void refreshOrderbook();
+    }, 10_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [orderbookVenue, selectedOutcomeId, terminalMarketId]);
 
   const refreshAccountData = useCallback(async () => {
     if (!token) {
@@ -1159,7 +1399,7 @@ export const InfraTradingTerminal = ({
             
             {/* Main Chart Section */}
             <div className="flex-1 flex flex-col relative border-r border-zinc-800 p-4 min-w-0">
-               <CanonicalChart marketType={marketType} />
+               <LiveCanonicalChart marketId={terminalMarketId} outcomeId={selectedOutcomeId} marketType={marketType} />
             </div>
 
             {/* Order Book Panel (Right side of middle container) */}
@@ -1173,16 +1413,16 @@ export const InfraTradingTerminal = ({
                            <div className="absolute left-1/2 -translate-x-1/2 top-full mt-2 hidden group-hover:flex flex-col w-[260px] bg-zinc-900 border border-zinc-700/50 rounded-lg p-3 shadow-xl z-50 pointer-events-none">
                                <div className="text-zinc-200 text-[11px] font-sans pb-2 border-b border-zinc-800 mb-2">
                                    <div className="flex justify-between items-center">
-                                       <span className="font-semibold text-white">Spread: 0.00¢</span>
+                                       <span className="font-semibold text-white">Spread: {formatBookPrice(orderbook?.spread)}</span>
                                        <span className="text-[10px] text-zinc-500">(Combined effective spread)</span>
                                    </div>
                                </div>
                                <div className="flex justify-between text-[11px] font-sans mb-1 text-zinc-300">
-                                   <span>Best Bid: <span className="text-emerald-400 font-mono font-bold">25.5¢</span></span>
-                                   <span>Best Ask: <span className="text-pink-400 font-mono font-bold">25.5¢</span></span>
+                                   <span>Best Bid: <span className="text-emerald-400 font-mono font-bold">{formatBookPrice(orderbook?.bestBid)}</span></span>
+                                   <span>Best Ask: <span className="text-pink-400 font-mono font-bold">{formatBookPrice(orderbook?.bestAsk)}</span></span>
                                </div>
                                <div className="text-[11px] font-sans text-zinc-400">
-                                   Total Depth at Spread: <span className="font-mono text-zinc-300 font-bold">$12.4M</span>
+                                   Status: <span className="font-mono text-zinc-300 font-bold">{orderbook?.status ?? 'pending'}</span>
                                </div>
                                
                                {/* Triangle pointer */}
@@ -1190,10 +1430,15 @@ export const InfraTradingTerminal = ({
                            </div>
                        </div>
                    </div>
-                   <select className="bg-zinc-950 border border-zinc-700/50 rounded-md px-2 py-1.5 text-xs text-white outline-none cursor-pointer">
-                       <option>All Venues</option>
-                       <option>Polymarket</option>
-                       <option>Limitless</option>
+                   <select
+                     value={orderbookVenue}
+                     onChange={(event) => setOrderbookVenue(event.target.value)}
+                     className="bg-zinc-950 border border-zinc-700/50 rounded-md px-2 py-1.5 text-xs text-white outline-none cursor-pointer"
+                   >
+                       <option value="ALL">All Venues</option>
+                       {orderbookVenueOptions.map((venue) => (
+                         <option key={venue} value={venue}>{formatVenueLabel(venue)}</option>
+                       ))}
                    </select>
                </div>
                <div className="flex justify-between px-4 py-2 bg-zinc-950/20 text-zinc-500 font-sans text-[10px] font-bold tracking-wider uppercase border-b border-zinc-800">
@@ -1204,8 +1449,30 @@ export const InfraTradingTerminal = ({
                </div>
                
                <div className="flex-1 overflow-y-auto custom-scrollbar py-1">
+                   {orderbookLoading && !orderbook && (
+                     <div className="px-4 py-6 text-center text-[11px] font-bold uppercase tracking-[0.18em] text-zinc-500">Loading live book</div>
+                   )}
+                   {orderbookError && (
+                     <div className="mx-3 my-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] font-semibold text-amber-200">{orderbookError}</div>
+                   )}
+                   {!orderbookLoading && !orderbookError && orderbook && orderbook.asks.length === 0 && orderbook.bids.length === 0 && (
+                     <div className="px-4 py-6 text-center text-[11px] font-semibold text-zinc-500">
+                       No live depth returned for this outcome yet.
+                     </div>
+                   )}
+                   {orderbook?.asks.slice().reverse().map((level, i) => (
+                     <div key={`ask-${level.venue}-${level.price}-${i}`} className={`flex justify-between px-4 py-0.5 hover:bg-zinc-800/50 ${i === 0 ? 'mb-1' : ''} ${i < 3 ? 'bg-[#E52B50]/5' : ''}`}>
+                       <span className="w-12 text-pink-500 font-bold">{formatBookPrice(level.price)}</span>
+                       <span className="w-16 flex items-center gap-1.5 text-zinc-500 uppercase text-[9px] font-bold tracking-wider">
+                         <VenueLogo id={normalizeVenueId(level.venue)} label={formatVenueLabel(level.venue)} className={tinyVenueClass} />
+                         {formatVenueLabel(level.venue)}
+                       </span>
+                       <span className="w-20 text-right text-zinc-200">{formatBookSize(level.size)}</span>
+                       <span className="w-24 text-right text-white font-bold">{formatBookNotional(level.cumulativeNotional)}</span>
+                     </div>
+                   ))}
                    {/* Asks (Sells) */}
-                   {[...Array(10)].map((_, i) => {
+                   {false && [...Array(10)].map((_, i) => {
                        const isConsumedAsks = i >= 8; // Highlight last 2 asks (closest to spread)
                        const venue = i % 2 === 0 ? 'Predict' : 'Poly';
                        return (
@@ -1223,11 +1490,22 @@ export const InfraTradingTerminal = ({
                    
                    <div className="flex justify-between px-4 py-1 bg-zinc-950 text-[10px] text-zinc-500 border-y border-zinc-800 font-sans tracking-wide">
                        <span className="font-bold">Spread</span>
-                       <span className="font-mono">0.00c</span>
+                       <span className="font-mono">{formatBookPrice(orderbook?.spread)}</span>
                    </div>
 
+                   {orderbook?.bids.map((level, i) => (
+                     <div key={`bid-${level.venue}-${level.price}-${i}`} className={`flex justify-between px-4 py-0.5 hover:bg-zinc-800/50 ${i === 0 ? 'mt-1' : ''} ${i < 3 ? 'bg-[#ccff00]/5' : ''}`}>
+                       <span className="w-12 text-emerald-400 font-bold">{formatBookPrice(level.price)}</span>
+                       <span className="w-16 flex items-center gap-1.5 text-zinc-500 uppercase text-[9px] font-bold tracking-wider">
+                         <VenueLogo id={normalizeVenueId(level.venue)} label={formatVenueLabel(level.venue)} className={tinyVenueClass} />
+                         {formatVenueLabel(level.venue)}
+                       </span>
+                       <span className="w-20 text-right text-zinc-200">{formatBookSize(level.size)}</span>
+                       <span className="w-24 text-right text-white font-bold">{formatBookNotional(level.cumulativeNotional)}</span>
+                     </div>
+                   ))}
                    {/* Bids (Buys) */}
-                   {[...Array(10)].map((_, i) => {
+                   {false && [...Array(10)].map((_, i) => {
                        const isConsumedBids = i <= 2; // Highlight first 3 bids (closest to spread)
                        const venue = i % 2 !== 0 ? 'Limitless' : 'Poly';
                        return (

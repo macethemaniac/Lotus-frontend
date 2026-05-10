@@ -254,9 +254,9 @@ These are not blockers for planning, but they must be resolved before a producti
 1. Full order book depth in terminal
 
 - Terminal design shows order book rows by venue.
-- `POST /execution/live-candidates` proves executable route candidates and unified live quote evidence, but it does not expose sanitized full depth rows to the frontend.
-- Safe beta behavior: render only backend quote evidence that exists. Do not fabricate order book rows.
-- Backend blocker: add a public, sanitized order book contract before the terminal can render full bid/ask depth like venue-native trading screens.
+- `GET /markets/:marketId/orderbook?outcomeId&venue&depth` is implemented as the frontend-safe orderbook contract.
+- It uses Lotus backend venue quote readers for Polymarket, Limitless, Opinion, Predict.fun, and Myriad where mappings are quote-ready. It does not use Predexon and the frontend does not call venues directly.
+- Terminal order book renders returned bid/ask levels only, with venue labels, size, cumulative notional, spread, and safe blocker/unavailable states. Do not fabricate rows.
 
 1. Portfolio aggregate PnL and time-series chart
 
@@ -523,14 +523,14 @@ User behavior:
 Chart:
 
 - Use approved design.
-- Do not fake historical data if backend does not expose it.
-- If historical contract is missing, keep chart design but mark it data-pending in implementation notes.
+- `GET /markets/:marketId/chart?outcomeId&timeframe=1H|6H|1D|1W|1M|ALL` is implemented for Lotus-owned live midpoint observations accumulated from backend orderbook reads.
+- Do not fake historical data and do not use Predexon. Older timeframes show `historyStatus: "accumulating"` until the backend has observed enough live points.
 
 Order book:
 
 - Use backend quote/orderbook evidence only.
-- If full depth is unavailable, show route evidence and unified live prices only.
-- Current blocker: backend live candidate snapshots do not expose sanitized full depth levels through a frontend-safe route. Terminal order book UI must wait for that contract.
+- Full depth is available only where the venue reader returns real levels. If a venue returns top-of-book or indicative depth only, the UI renders exactly that lower-fidelity evidence with blockers/status.
+- Current blocker removed for mapped quote-ready venues; unsupported/misconfigured venues remain explicit unavailable states.
 
 ### Phase 7 - Terminal Outcomes, Positions, And Risk Tabs
 
@@ -887,7 +887,7 @@ Do not push runtime changes to `main` by default.
 1. Should `app.uselotus.xyz` remain staging for now, or should we create a separate staging domain before the next deploy?
 2. Should email login be hidden until a confirmed Turnkey email flow is ready, or should it stay visible but disabled?
 3. Should Watchlist be local-only for private beta, or should we block it until backend persistence exists?
-4. Portfolio PnL is backend mark-to-market from current quotes for verified positions; historical charting remains current-snapshot only until persisted history exists.
+4. Portfolio PnL is backend mark-to-market from current quotes for verified positions; historical portfolio charting remains current-snapshot only until persisted history exists. Market terminal charting now has a non-Predexon live accumulation contract.
 5. Should Opinion and Myriad stay visible as "setup needed" / "not configured", or be hidden until their live user flow is ready?
 6. Should Limit order controls stay visible but disabled, or be hidden until the backend limit-order contract exists?
 7. Are in-session notifications enough for private beta, or do we need a persistent notifications backend before launch?
@@ -899,5 +899,5 @@ Do not push runtime changes to `main` by default.
 - Every missing contract is marked as a blocker or safe fallback.
 - No frontend direct venue calls are planned.
 - No admin/internal route is planned for public UI.
-- No fake PnL, fake orderbook, fake savings, or fake readiness is allowed.
+- No fake PnL, fake orderbook, fake savings, fake historical chart backfill, or fake readiness is allowed.
 - The approved Lotus design remains the visual source of truth.
