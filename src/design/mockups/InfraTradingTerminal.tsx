@@ -1,4 +1,5 @@
 import React, { useCallback, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   AlertTriangle, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, History, Lock, ShieldAlert, ShieldCheck, Info,
   Clock, BarChart2, Layers, Share2, Bookmark, Search, Maximize2, Activity, Zap, Ghost,
@@ -7,7 +8,9 @@ import {
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceDot } from 'recharts';
 import { VenueLogo } from '@/components/icons/asset-logo';
 import { LotusLogo } from '@/components/icons/lotus-icons';
+import { FundingDeposit } from '@/design/mockups/FundingDeposit';
 import type { AuthSession } from '@/features/auth/types';
+import { getVenueBalances, type VenueBalance } from '@/features/funding/api/funding-api';
 import {
   getCanonicalResolutionRisk,
   getMarketChart,
@@ -28,6 +31,7 @@ import {
   getLiveCandidates,
   getOpenOrders,
   getPositions,
+  submitSignedBundle,
   submitExecutionQuote,
   type ExecutionPosition,
   type ExecutionStatus,
@@ -267,6 +271,12 @@ const ticketPriceForSide = (outcome: TerminalOutcomeRow | null, side: TicketOutc
 const formatUsdc = (value: number | null | undefined): string => {
   if (typeof value !== 'number' || !Number.isFinite(value)) return '0 USDC';
   return `${value.toLocaleString(undefined, { maximumFractionDigits: value >= 100 ? 0 : 2 })} USDC`;
+};
+
+const venueReadyBalanceAmount = (balance: VenueBalance): number => {
+  const asset = (balance.asset ?? balance.token ?? 'USDC').toUpperCase();
+  if (asset !== 'USDC') return 0;
+  return parsePositiveNumber(balance.readyAmount ?? balance.availableAmount) ?? 0;
 };
 
 const formatSignedShares = (value: number | null | undefined): string => {
@@ -1119,6 +1129,10 @@ export const InfraTradingTerminal = ({
   const [tradeHistory, setTradeHistory] = useState<ExecutionStatus[]>([]);
   const [accountLoading, setAccountLoading] = useState(false);
   const [accountError, setAccountError] = useState<string | null>(null);
+  const [fundingBalances, setFundingBalances] = useState<VenueBalance[]>([]);
+  const [fundingLoading, setFundingLoading] = useState(false);
+  const [fundingError, setFundingError] = useState<string | null>(null);
+  const [fundingModalOpen, setFundingModalOpen] = useState(false);
   const [riskState, setRiskState] = useState<TerminalRiskState>({ loading: false, error: null, assessments: [], profiles: [] });
   const [orderbook, setOrderbook] = useState<MarketOrderbookResponse | null>(null);
   const [orderbookLoading, setOrderbookLoading] = useState(false);
@@ -1199,6 +1213,14 @@ export const InfraTradingTerminal = ({
     () => [...new Set(marketVenueList.map(toBackendVenueId).filter(Boolean))],
     [marketVenueList]
   );
+  const venueReadyBalance = useMemo(() => {
+    const venueSet = new Set(backendVenueList);
+    return fundingBalances.reduce((sum, balance) => {
+      const balanceVenue = toBackendVenueId(balance.venue);
+      if (venueSet.size > 0 && !venueSet.has(balanceVenue)) return sum;
+      return sum + venueReadyBalanceAmount(balance);
+    }, 0);
+  }, [backendVenueList, fundingBalances]);
   const visibleOutcomeRows = showAllOutcomes ? terminalOutcomes : terminalOutcomes.slice(0, 5);
   const selectedOutcome = terminalOutcomes.find((outcome) => outcome.id === selectedOutcomeId) ?? terminalOutcomes[0] ?? null;
   const selectedTicketOutcomeId = outcomeIdForTicketSide(terminalOutcomes, ticketOutcomeSide, selectedOutcomeId);
@@ -1366,6 +1388,25 @@ export const InfraTradingTerminal = ({
       setTicketError('Select a backend market outcome first.');
       return;
     }
+    const requestedUsdc = parsePositiveNumber(ticketAmount);
+    if (side === 'buy') {
+      if (fundingLoading) {
+        setTicketError('Checking backend venue-ready balance before quote.');
+        return;
+      }
+      if (fundingError) {
+        setTicketError(`Funding readiness unavailable: ${fundingError}`);
+        return;
+      }
+      if (venueReadyBalance <= 0) {
+        setTicketError('Deposit venue-ready USDC before requesting a live quote.');
+        return;
+      }
+      if (requestedUsdc && venueReadyBalance < requestedUsdc) {
+        setTicketError(`Deposit more venue-ready USDC before quoting this amount. Available: ${formatUsdc(venueReadyBalance)}.`);
+        return;
+      }
+    }
     const requestedShares = side === 'buy'
       ? estimateShares(ticketAmount, ticketPriceForSide(selectedTicketOutcome, ticketOutcomeSide))
       : parsePositiveNumber(ticketAmount);
@@ -1378,6 +1419,7 @@ export const InfraTradingTerminal = ({
     setTicketError(null);
     setTicketStatusMessage(null);
     setTicketQuote(null);
+    setTicketExecutionId(null);
     try {
       const liveCandidates = await getLiveCandidates(token, {
         side,
@@ -1407,7 +1449,7 @@ export const InfraTradingTerminal = ({
     } finally {
       setTicketLoading(false);
     }
-  }, [backendVenueList, selectedTicketOutcome, selectedTicketOutcomeId, side, terminalMarketId, ticketAmount, ticketOutcomeSide, token]);
+  }, [backendVenueList, fundingError, fundingLoading, selectedTicketOutcome, selectedTicketOutcomeId, side, terminalMarketId, ticketAmount, ticketOutcomeSide, token, venueReadyBalance]);
 
   const submitMarketOrder = useCallback(async () => {
     if (!token || !ticketQuote) {
@@ -1417,14 +1459,73 @@ export const InfraTradingTerminal = ({
     setTicketError(null);
     try {
       const response = await submitExecutionQuote(token, ticketQuote.quoteId);
-      setTicketExecutionId(response.executionId);
-      setTicketStatusMessage(response.message || 'Market order submitted to backend execution.');
+      const executionId = response.executionId || ticketQuote.quoteId;
+
+      const signatureRequired = ticketQuote.requiredUserSignatureSteps.length > 0 ||
+        ticketQuote.legs.some((leg) => leg.requiresUserSignature === true);
+      if (signatureRequired) {
+        setTicketExecutionId(executionId);
+        setTicketStatusMessage(response.message || 'User signature is required before this route can be submitted.');
+        setTicketError('This route needs a wallet signature. Signature collection is not enabled in this terminal yet.');
+        return;
+      }
+
+      const submitted = await submitSignedBundle(token, executionId, [], false);
+      setTicketExecutionId(submitted.executionId);
+      const submittedStatus = (submitted.status ?? submitted.userStatus ?? 'SUBMITTED').toUpperCase();
+      if (submittedStatus === 'FAILED') {
+        const reason = submitted.submittedLegs?.find((leg) => leg.reason)?.reason;
+        setTicketStatusMessage('Market order failed at venue submit.');
+        setTicketError(reason ? `Execution failed: ${reason}` : 'Execution failed after backend submit.');
+        setBottomTab('Trade History');
+        return;
+      }
+      const successMessage = submittedStatus === 'FILLED'
+        ? 'Market order filled.'
+        : submittedStatus === 'PARTIAL'
+          ? 'Market order partially filled. Tracking remaining size.'
+          : 'Market order submitted. Tracking execution status.';
+      setTicketStatusMessage(successMessage);
+      setBottomTab(submittedStatus === 'SUBMITTED' || submittedStatus === 'PARTIAL' ? 'Open Orders' : 'Trade History');
     } catch (error) {
+      setTicketExecutionId(null);
       setTicketError(error instanceof Error ? error.message : 'Market order submit failed.');
     } finally {
       setTicketLoading(false);
     }
   }, [ticketQuote, token]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    const loadFundingBalances = async () => {
+      if (!token) {
+        setFundingBalances([]);
+        setFundingError(null);
+        setFundingLoading(false);
+        return;
+      }
+      setFundingLoading(true);
+      setFundingError(null);
+      try {
+        const response = await getVenueBalances(token);
+        if (!cancelled) {
+          setFundingBalances(response.balances ?? response.venues ?? []);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setFundingBalances([]);
+          setFundingError(error instanceof Error ? error.message : 'Unable to load venue-ready balances.');
+        }
+      } finally {
+        if (!cancelled) setFundingLoading(false);
+      }
+    };
+
+    void loadFundingBalances();
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
 
   React.useEffect(() => {
     void refreshOutcomes();
@@ -1562,15 +1663,35 @@ export const InfraTradingTerminal = ({
   }, [selectedVenueMarkets, terminalCanonicalEventId]);
 
   const ticketAmountValue = ticketAmountNumber(ticketAmount);
+  const ticketDepositRequired = side === 'buy' && Boolean(token) && !fundingLoading && !fundingError &&
+    (venueReadyBalance <= 0 || (typeof ticketAmountValue === 'number' && venueReadyBalance < ticketAmountValue));
+  const ticketFundingLabel = fundingLoading
+    ? 'checking...'
+    : fundingError
+      ? 'unavailable'
+      : venueReadyBalance > 0
+        ? formatUsdc(venueReadyBalance)
+        : 'deposit required';
   const ticketReceiveEstimate = side === 'buy'
     ? parsePositiveNumber(ticketQuote?.executableAmount) ?? ticketEstimatedShares
     : ticketAmountValue && ticketEffectivePrice
       ? ticketAmountValue * ticketEffectivePrice
       : null;
   const ticketEstimatedPayout = side === 'buy' ? ticketEstimatedShares : ticketReceiveEstimate;
-  const ticketActionDisabled = !token || !terminalMarketId || !selectedTicketOutcomeId || ticketLoading;
+  const ticketActionDisabled = !token || !terminalMarketId || !selectedTicketOutcomeId || ticketLoading || Boolean(ticketExecutionId && ticketQuote) ||
+    Boolean(side === 'buy' && (fundingLoading || fundingError));
   const ticketActionLabel = ticketLoading
     ? 'Checking live route...'
+    : side === 'buy' && fundingLoading
+      ? 'Checking balance...'
+    : side === 'buy' && fundingError
+      ? 'Funding unavailable'
+    : ticketDepositRequired
+      ? 'Deposit to trade'
+    : ticketExecutionId && ticketQuote && ticketError
+      ? 'Execution blocked'
+    : ticketExecutionId && ticketQuote
+      ? 'Order sent'
     : ticketQuote
       ? side === 'buy' ? 'Place market order' : 'Place sell order'
       : 'Preview market order';
@@ -1588,6 +1709,7 @@ export const InfraTradingTerminal = ({
   const ticketPrimaryDisabledClass = ticketActionDisabled ? 'opacity-50 cursor-not-allowed hover:bg-zinc-700' : '';
 
   return (
+    <>
     <div className={`lotus-terminal lotus-terminal-viewport ${darkMode ? 'lotus-terminal-dark' : 'lotus-terminal-light'} ${embedded ? 'h-[calc(100vh-6.5rem)]' : 'h-[calc(100vh-4rem)] -mx-4 -my-8 lg:-mx-12 lg:-my-12'} bg-[#09090b] text-white font-sans overflow-y-auto overflow-x-hidden custom-scrollbar`}>
       <div className="lotus-terminal-stage flex min-h-full w-full bg-[#09090b] text-white p-2 2xl:p-3 gap-2 2xl:gap-3 items-start">
       
@@ -2564,7 +2686,7 @@ export const InfraTradingTerminal = ({
                           <button type="button" className="px-3 py-1 bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-300 rounded text-xs font-semibold transition-colors">{side === 'buy' ? 'MAX' : 'SELL ALL'}</button>
                       </div>
                       <div className="text-right text-[11px] text-zinc-500">
-                          Venue-ready balance: <span className="font-bold text-white">checked on quote</span>
+                          Venue-ready balance: <span className="font-bold text-white">{ticketFundingLabel}</span>
                       </div>
                   </div>
 
@@ -2678,7 +2800,9 @@ export const InfraTradingTerminal = ({
                   <button
                     type="button"
                     onClick={() => {
-                      if (ticketQuote) {
+                      if (ticketDepositRequired) {
+                        setFundingModalOpen(true);
+                      } else if (ticketQuote) {
                         void submitMarketOrder();
                       } else {
                         void previewMarketOrder();
@@ -3040,5 +3164,25 @@ export const InfraTradingTerminal = ({
       </div>
 
     </div>
+    {fundingModalOpen && createPortal(
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Deposit venue-ready funds"
+        className="fixed left-0 top-0 z-[2147483647] flex h-[100dvh] w-[100dvw] items-center justify-center overflow-hidden bg-black/60 px-4 py-6 backdrop-blur-md"
+      >
+        <button
+          type="button"
+          aria-label="Close funding modal"
+          onClick={() => setFundingModalOpen(false)}
+          className="absolute inset-0 cursor-default"
+        />
+        <div className="relative z-10 w-full max-w-[400px]">
+          <FundingDeposit initialMode="deposit" modal onClose={() => setFundingModalOpen(false)} />
+        </div>
+      </div>,
+      document.body
+    )}
+    </>
   );
 };
