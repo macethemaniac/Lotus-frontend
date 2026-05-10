@@ -23,13 +23,17 @@ import {
   type ResolutionRiskProfile,
 } from '@/features/markets/api/market-api';
 import {
+  createExecutionQuote,
   getExecutionHistory,
   getLiveCandidates,
   getOpenOrders,
   getPositions,
+  submitExecutionQuote,
   type ExecutionPosition,
   type ExecutionStatus,
+  type LiveCandidatesResponse,
   type OpenOrdersResponse,
+  type RouteQuote,
   type TradeRouteCandidate,
 } from '@/features/trading/api/execution-api';
 import { ApiClientError } from '@/lib/api/http-client';
@@ -124,6 +128,8 @@ type TerminalVenueQuote = {
   noPrice: string;
   blocker: string | null;
 };
+
+type TicketOutcomeSide = 'yes' | 'no';
 
 type TerminalChartSeries = {
   id: string;
@@ -228,6 +234,78 @@ const toVenueQuotes = (candidates: TradeRouteCandidate[], marketType: 'binary' |
 
 const placeholderVenueQuotes = (venues: string[], yesPrice = 'Quote', noPrice = 'Quote', blocker: string | null = null): TerminalVenueQuote[] =>
   venues.map((venue) => ({ venue, yesPrice, noPrice, blocker }));
+
+const outcomeIdForTicketSide = (
+  outcomes: readonly TerminalOutcomeRow[],
+  side: TicketOutcomeSide,
+  fallbackOutcomeId: string | null
+): string | null => {
+  const exact = outcomes.find((outcome) => outcome.name.trim().toLowerCase() === side);
+  if (exact) return exact.id;
+  return fallbackOutcomeId ?? outcomes[0]?.id ?? null;
+};
+
+const ticketPriceForSide = (outcome: TerminalOutcomeRow | null, side: TicketOutcomeSide): number | null => {
+  const raw = side === 'yes' ? outcome?.yesPrice : outcome?.noPrice;
+  if (!raw || raw === 'Quote') return null;
+  const parsed = Number(raw.replace(/[Â¢c%<\s]/g, ''));
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return parsed / 100;
+};
+
+const formatUsdc = (value: number | null | undefined): string => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return '0 USDC';
+  return `${value.toLocaleString(undefined, { maximumFractionDigits: value >= 100 ? 0 : 2 })} USDC`;
+};
+
+const formatSignedShares = (value: number | null | undefined): string => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return '0 shares';
+  return `${value.toLocaleString(undefined, { maximumFractionDigits: value >= 100 ? 0 : 2 })} shares`;
+};
+
+const formatRouteAmount = (value: number): string =>
+  value.toFixed(8).replace(/\.?0+$/, '');
+
+const estimateShares = (amount: string, price: number | null | undefined): number | null => {
+  const parsedAmount = parsePositiveNumber(amount);
+  if (!parsedAmount || !price || price <= 0) return null;
+  return parsedAmount / price;
+};
+
+const summarizeExpectedFees = (quote: RouteQuote | null): string => {
+  const fees = quote?.expectedFees;
+  if (!fees || Object.keys(fees).length === 0) return 'Backend quote pending';
+  const pairs = Object.entries(fees)
+    .filter(([, value]) => typeof value === 'number' || typeof value === 'string')
+    .slice(0, 3)
+    .map(([key, value]) => `${key.replace(/[_-]+/g, ' ')}: ${String(value)}`);
+  return pairs.length ? pairs.join(' / ') : 'Backend quote pending';
+};
+
+const routePath = (quote: RouteQuote | null): string[] => {
+  if (quote?.venuePath?.length) return quote.venuePath;
+  const fromLegs = quote?.legs?.map((leg) => leg.venue).filter(Boolean) ?? [];
+  return [...new Set(fromLegs)];
+};
+
+const routeShareImprovement = (
+  amount: string,
+  quote: RouteQuote | null,
+  candidates: LiveCandidatesResponse | null
+): number | null => {
+  const amountNumber = parsePositiveNumber(amount);
+  const effective = quote?.effectivePrice;
+  const bestSingle = bestCandidate(candidates?.candidates ?? [])?.price;
+  if (!amountNumber || !effective || !bestSingle || effective <= 0 || bestSingle <= 0 || effective >= bestSingle) {
+    return null;
+  }
+  return amountNumber / effective - amountNumber / bestSingle;
+};
+
+const routeLegShareLabel = (leg: RouteQuote['legs'][number]): string =>
+  formatSignedShares(parsePositiveNumber(leg.size));
+
+const ticketAmountNumber = (amount: string): number | null => parsePositiveNumber(amount);
 
 const executionMarketId = (market: TerminalMarketSelection): string | null => market.marketId ?? market.id ?? null;
 
@@ -1003,7 +1081,15 @@ export const InfraTradingTerminal = ({
   session?: AuthSession | null;
 } = {}) => {
   const [side, setSide] = useState<'buy' | 'sell'>('buy');
-  const [orderType, setOrderType] = useState<'market' | 'limit' | 'pro'>('limit');
+  const [orderType] = useState<'market' | 'limit' | 'pro'>('market');
+  const [ticketOutcomeSide, setTicketOutcomeSide] = useState<TicketOutcomeSide>('yes');
+  const [ticketAmount, setTicketAmount] = useState('100');
+  const [ticketLiveCandidates, setTicketLiveCandidates] = useState<LiveCandidatesResponse | null>(null);
+  const [ticketQuote, setTicketQuote] = useState<RouteQuote | null>(null);
+  const [ticketExecutionId, setTicketExecutionId] = useState<string | null>(null);
+  const [ticketStatusMessage, setTicketStatusMessage] = useState<string | null>(null);
+  const [ticketLoading, setTicketLoading] = useState(false);
+  const [ticketError, setTicketError] = useState<string | null>(null);
   const [rulesInnerTab, setRulesInnerTab] = useState<'rules' | 'aggregation'>('rules');
   const [orderAction, setOrderAction] = useState<'setup' | 'preview'>('setup');
   const [marketType, setMarketType] = useState<'binary' | 'multi'>('binary');
@@ -1100,6 +1186,12 @@ export const InfraTradingTerminal = ({
   }, [selectedVenueMarkets, terminalMarket.venues]);
   const visibleOutcomeRows = showAllOutcomes ? terminalOutcomes : terminalOutcomes.slice(0, 5);
   const selectedOutcome = terminalOutcomes.find((outcome) => outcome.id === selectedOutcomeId) ?? terminalOutcomes[0] ?? null;
+  const selectedTicketOutcomeId = outcomeIdForTicketSide(terminalOutcomes, ticketOutcomeSide, selectedOutcomeId);
+  const selectedTicketOutcome = terminalOutcomes.find((outcome) => outcome.id === selectedTicketOutcomeId) ?? selectedOutcome;
+  const ticketRoutePath = routePath(ticketQuote);
+  const ticketEffectivePrice = ticketQuote?.effectivePrice ?? ticketPriceForSide(selectedTicketOutcome, ticketOutcomeSide);
+  const ticketEstimatedShares = estimateShares(ticketAmount, ticketEffectivePrice);
+  const ticketShareImprovement = routeShareImprovement(ticketAmount, ticketQuote, ticketLiveCandidates);
   const accountEmptyCopy = !token ? 'Log in to load your Lotus execution records for this market.' : 'No backend records for this market yet.';
   const totalVerifiedSize = positions.reduce((sum, position) => sum + (parsePositiveNumber(position.verifiedSize) ?? 0), 0);
   const totalCostBasis = positions.reduce((sum, position) => sum + (parsePositiveNumber(position.verifiedSize) ?? 0) * position.averageEntryPrice, 0);
@@ -1230,7 +1322,92 @@ export const InfraTradingTerminal = ({
     setShowAllOutcomes(false);
     setSelectedOutcomeId(null);
     setExpandedOutcomeId(null);
+    setTicketOutcomeSide('yes');
+    setTicketLiveCandidates(null);
+    setTicketQuote(null);
+    setTicketExecutionId(null);
+    setTicketStatusMessage(null);
+    setTicketError(null);
   }, [terminalMarketId]);
+
+  const selectTicketOutcome = useCallback((nextSide: TicketOutcomeSide, fallbackOutcomeId?: string | null) => {
+    setTicketOutcomeSide(nextSide);
+    setTicketLiveCandidates(null);
+    setTicketQuote(null);
+    setTicketExecutionId(null);
+    setTicketStatusMessage(null);
+    setTicketError(null);
+    setSelectedOutcomeId((current) => outcomeIdForTicketSide(terminalOutcomes, nextSide, fallbackOutcomeId ?? current));
+  }, [terminalOutcomes]);
+
+  const previewMarketOrder = useCallback(async () => {
+    if (!token) {
+      setTicketError('Log in to preview a live market route.');
+      return;
+    }
+    if (!terminalMarketId || !selectedTicketOutcomeId) {
+      setTicketError('Select a backend market outcome first.');
+      return;
+    }
+    const requestedShares = side === 'buy'
+      ? estimateShares(ticketAmount, ticketPriceForSide(selectedTicketOutcome, ticketOutcomeSide))
+      : parsePositiveNumber(ticketAmount);
+    if (!requestedShares) {
+      setTicketError(side === 'buy' ? 'Enter a USDC amount after a live outcome price is available.' : 'Enter the shares to sell.');
+      return;
+    }
+    const backendAmount = formatRouteAmount(requestedShares);
+    setTicketLoading(true);
+    setTicketError(null);
+    setTicketStatusMessage(null);
+    setTicketQuote(null);
+    try {
+      const liveCandidates = await getLiveCandidates(token, {
+        side,
+        marketId: terminalMarketId,
+        outcomeId: selectedTicketOutcomeId,
+        amount: backendAmount,
+        venues: marketVenueList.length ? marketVenueList : undefined,
+      });
+      setTicketLiveCandidates(liveCandidates);
+      if (liveCandidates.candidates.length === 0) {
+        setTicketError(liveCandidates.blocked[0]?.reason ?? 'No executable live route returned for this market order.');
+        return;
+      }
+      const response = await createExecutionQuote(token, {
+        side,
+        marketId: terminalMarketId,
+        outcomeId: selectedTicketOutcomeId,
+        amount: backendAmount,
+        venues: marketVenueList.length ? marketVenueList : undefined,
+        candidates: liveCandidates.candidates,
+      });
+      setTicketQuote(response.quote);
+      setOrderAction(routePath(response.quote).length > 0 ? 'preview' : 'setup');
+      setTicketStatusMessage('Live market quote ready. Review the route before placing the order.');
+    } catch (error) {
+      setTicketError(error instanceof Error ? error.message : 'Live market quote failed.');
+    } finally {
+      setTicketLoading(false);
+    }
+  }, [marketVenueList, selectedTicketOutcome, selectedTicketOutcomeId, side, terminalMarketId, ticketAmount, ticketOutcomeSide, token]);
+
+  const submitMarketOrder = useCallback(async () => {
+    if (!token || !ticketQuote) {
+      return;
+    }
+    setTicketLoading(true);
+    setTicketError(null);
+    try {
+      const response = await submitExecutionQuote(token, ticketQuote.quoteId);
+      setTicketExecutionId(response.executionId);
+      setTicketStatusMessage(response.message || 'Market order submitted to backend execution.');
+    } catch (error) {
+      setTicketError(error instanceof Error ? error.message : 'Market order submit failed.');
+    } finally {
+      setTicketLoading(false);
+    }
+  }, [ticketQuote, token]);
 
   React.useEffect(() => {
     void refreshOutcomes();
@@ -1366,6 +1543,32 @@ export const InfraTradingTerminal = ({
       cancelled = true;
     };
   }, [selectedVenueMarkets, terminalCanonicalEventId]);
+
+  const ticketAmountValue = ticketAmountNumber(ticketAmount);
+  const ticketReceiveEstimate = side === 'buy'
+    ? parsePositiveNumber(ticketQuote?.executableAmount) ?? ticketEstimatedShares
+    : ticketAmountValue && ticketEffectivePrice
+      ? ticketAmountValue * ticketEffectivePrice
+      : null;
+  const ticketEstimatedPayout = side === 'buy' ? ticketEstimatedShares : ticketReceiveEstimate;
+  const ticketActionDisabled = !token || !terminalMarketId || !selectedTicketOutcomeId || ticketLoading;
+  const ticketActionLabel = ticketLoading
+    ? 'Checking live route...'
+    : ticketQuote
+      ? side === 'buy' ? 'Place market order' : 'Place sell order'
+      : 'Preview market order';
+  const ticketRouteReady = Boolean(ticketQuote && ticketRoutePath.length > 0);
+  const ticketBlockedRoutes = ticketLiveCandidates?.blocked ?? [];
+  const ticketAmountLabel = side === 'buy' ? 'Amount' : 'Shares to Sell';
+  const ticketAmountUnit = side === 'buy' ? 'USDC' : 'Shares';
+  const ticketReceiveLabel = side === 'buy' ? 'To Win' : 'To Receive';
+  const ticketReceiveText = side === 'buy'
+    ? formatUsdc(ticketEstimatedPayout)
+    : formatUsdc(ticketReceiveEstimate);
+  const ticketPrimaryButtonClass = side === 'buy'
+    ? 'bg-[#ccff00] hover:bg-[#b0dc00] text-black shadow-[0_0_15px_rgba(204,255,0,0.15)]'
+    : 'bg-[#E52B50] hover:bg-[#ff3366] text-white shadow-[0_0_15px_rgba(229,43,80,0.15)]';
+  const ticketPrimaryDisabledClass = ticketActionDisabled ? 'opacity-50 cursor-not-allowed hover:bg-zinc-700' : '';
 
   return (
     <div className={`lotus-terminal lotus-terminal-viewport ${darkMode ? 'lotus-terminal-dark' : 'lotus-terminal-light'} ${embedded ? 'h-[calc(100vh-6.5rem)]' : 'h-[calc(100vh-4rem)] -mx-4 -my-8 lg:-mx-12 lg:-my-12'} bg-[#09090b] text-white font-sans overflow-y-auto overflow-x-hidden custom-scrollbar`}>
@@ -1516,9 +1719,9 @@ export const InfraTradingTerminal = ({
                               </div>
                             </button>
                           ))}
-                        </div>
                       </div>
-                    )}
+                  </div>
+               )}
                 </div>
                 <div className="hidden xl:flex items-center px-2.5 py-1 rounded-md bg-[#ccff00]/10 border border-[#ccff00]/20 text-[#99cc00] text-[10px] font-bold uppercase tracking-widest ml-1 2xl:ml-2">
                     {terminalMarket.routeType} ROUTE / {Math.max(1, Math.min(terminalMarket.venueCount, 3))} VENUES
@@ -1750,7 +1953,7 @@ export const InfraTradingTerminal = ({
                                             onClick={(event) => {
                                               event.stopPropagation();
                                               setSelectedOutcomeId(m.id);
-                                              setSide('buy');
+                                              selectTicketOutcome('yes', m.id);
                                             }}
                                             className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#1A3A34] text-[#4ade80] text-xs font-bold hover:bg-[#204941] transition-colors"
                                           >
@@ -1761,7 +1964,7 @@ export const InfraTradingTerminal = ({
                                             onClick={(event) => {
                                               event.stopPropagation();
                                               setSelectedOutcomeId(m.id);
-                                              setSide('sell');
+                                              selectTicketOutcome('no', m.id);
                                             }}
                                             className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#3F1D24] text-[#f87171] text-xs font-bold hover:bg-[#52252f] transition-colors"
                                           >
@@ -1800,7 +2003,7 @@ export const InfraTradingTerminal = ({
                                              onClick={(event) => {
                                                event.stopPropagation();
                                                setSelectedOutcomeId(m.id);
-                                               setSide('buy');
+                                               selectTicketOutcome('yes', m.id);
                                              }}
                                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#1A3A34] text-[#4ade80] text-xs font-bold hover:bg-[#204941] transition-colors"
                                            >
@@ -1811,7 +2014,7 @@ export const InfraTradingTerminal = ({
                                              onClick={(event) => {
                                                event.stopPropagation();
                                                setSelectedOutcomeId(m.id);
-                                               setSide('sell');
+                                               selectTicketOutcome('no', m.id);
                                              }}
                                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#3F1D24] text-[#f87171] text-xs font-bold hover:bg-[#52252f] transition-colors"
                                            >
@@ -2293,29 +2496,221 @@ export const InfraTradingTerminal = ({
          <div className="bg-[#121214] border border-zinc-800 rounded-xl flex flex-col shrink-0 min-h-0 transition-all duration-300">
              <div className="flex justify-between items-center p-3 border-b border-zinc-800/80">
                  <div className="flex gap-4 items-center pl-2">
-                     <button onClick={() => setSide('buy')} className={`pb-1 text-sm font-bold transition-colors ${side === 'buy' ? 'text-white border-b-2 border-white' : 'text-zinc-500 hover:text-zinc-300'}`}>Buy</button>
-                     <button onClick={() => setSide('sell')} className={`pb-1 text-sm font-bold transition-colors ${side === 'sell' ? 'text-white border-b-2 border-white' : 'text-zinc-500 hover:text-zinc-300'}`}>Sell</button>
+                     <button type="button" onClick={() => { setSide('buy'); setTicketQuote(null); setTicketStatusMessage(null); setTicketError(null); }} className={`pb-1 text-sm font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${side === 'buy' ? 'text-white border-b-2 border-white' : 'text-zinc-500 hover:text-zinc-300'}`}>Buy</button>
+                     <button type="button" onClick={() => { setSide('sell'); setTicketQuote(null); setTicketStatusMessage(null); setTicketError(null); }} className={`pb-1 text-sm font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${side === 'sell' ? 'text-white border-b-2 border-white' : 'text-zinc-500 hover:text-zinc-300'}`}>Sell</button>
                  </div>
-                 <button onClick={() => setOrderType(orderType === 'market' ? 'limit' : 'market')} className="text-zinc-300 text-xs font-semibold flex items-center gap-1 hover:text-white pr-2">
-                     {orderType === 'market' ? 'Market' : 'Limit'} <ChevronDown className="w-3.5 h-3.5" />
+                 <button type="button" disabled className="text-zinc-300 text-xs font-semibold flex items-center gap-1 pr-2 cursor-not-allowed" title="Limit orders are disabled for production until the backend limit-order contract is implemented.">
+                     {orderType === 'market' ? 'Market' : 'Limit'} <Lock className="w-3.5 h-3.5 text-zinc-600" />
                  </button>
              </div>
 
-             {side === 'buy' ? (
+              <div className="p-4 flex flex-col gap-4 animate-in fade-in duration-300">
+                  <div className="grid grid-cols-2 gap-3">
+                      <button type="button" onClick={() => selectTicketOutcome('yes')} className={`font-bold py-3 rounded-lg flex items-center justify-center gap-2 shadow-sm transition-colors text-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${ticketOutcomeSide === 'yes' ? 'bg-emerald-500 text-white hover:bg-emerald-400' : 'bg-transparent border border-emerald-500/30 text-emerald-500 hover:bg-emerald-500/10'}`}>
+                          YES {selectedTicketOutcome?.yesPrice ?? 'Quote'}
+                      </button>
+                      <button type="button" onClick={() => selectTicketOutcome('no')} className={`font-bold py-3 rounded-lg flex items-center justify-center gap-2 shadow-sm transition-colors text-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${ticketOutcomeSide === 'no' ? 'bg-[#E52B50] text-white hover:bg-[#ff3366]' : 'bg-transparent border border-red-500/30 text-red-500 hover:bg-red-500/10'}`}>
+                          NO {selectedTicketOutcome?.noPrice ?? 'Quote'}
+                      </button>
+                  </div>
+
+                  <div className="bg-[#0c0c0e] border border-zinc-800 rounded-lg p-3 relative group focus-within:border-zinc-700 transition-colors">
+                      <div className="text-[10px] text-zinc-500 font-medium mb-1.5 flex justify-between">
+                          <span>{ticketAmountLabel}</span>
+                          {side === 'sell' && <span className="text-zinc-600">Verified positions only</span>}
+                      </div>
+                      <div className="flex items-center justify-between">
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            aria-label={ticketAmountLabel}
+                            className="bg-transparent border-none text-white text-2xl font-bold font-mono outline-none w-full"
+                            placeholder="0"
+                            value={ticketAmount}
+                            onChange={(event) => {
+                              setTicketAmount(event.target.value);
+                              setTicketLiveCandidates(null);
+                              setTicketQuote(null);
+                              setTicketExecutionId(null);
+                              setTicketStatusMessage(null);
+                              setTicketError(null);
+                            }}
+                          />
+                          <div className="text-[10px] text-zinc-500 whitespace-nowrap">{ticketAmountUnit}</div>
+                      </div>
+                  </div>
+
+                  <div className="flex flex-col gap-2">
+                      <div className="flex justify-end gap-1.5">
+                          <button type="button" className="px-3 py-1 bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-300 rounded text-xs font-semibold transition-colors">25%</button>
+                          <button type="button" className="px-3 py-1 bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-300 rounded text-xs font-semibold transition-colors">50%</button>
+                          <button type="button" className="px-3 py-1 bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-300 rounded text-xs font-semibold transition-colors">{side === 'buy' ? 'MAX' : 'SELL ALL'}</button>
+                      </div>
+                      <div className="text-right text-[11px] text-zinc-500">
+                          Venue-ready balance: <span className="font-bold text-white">checked on quote</span>
+                      </div>
+                  </div>
+
+                  <div className="flex flex-col gap-2">
+                      {ticketQuote && (
+                        <div
+                          className={`flex justify-between items-center p-2.5 rounded-lg transition-colors ${ticketRouteReady ? 'bg-emerald-500/10 border border-emerald-500/20 cursor-pointer hover:bg-emerald-500/20' : 'bg-zinc-900/70 border border-zinc-800'}`}
+                          onClick={() => {
+                            if (ticketRouteReady) setOrderAction(orderAction === 'preview' ? 'setup' : 'preview');
+                          }}
+                        >
+                          <div className="flex items-center gap-2">
+                              <div className={`w-2 h-2 rounded-full ${ticketRouteReady ? 'bg-emerald-500 animate-pulse' : 'bg-amber-400'}`}></div>
+                              <span className={`text-[11px] font-bold tracking-wide uppercase ${ticketRouteReady ? 'text-emerald-400' : 'text-amber-300'}`}>
+                                {ticketRouteReady ? 'Smart Route Ready' : 'Backend Quote Ready'}
+                              </span>
+                          </div>
+                          <span className="text-[10px] text-zinc-400 font-medium flex items-center gap-1">
+                            {ticketRouteReady ? 'Preview Route' : 'No route path returned'}
+                            {ticketRouteReady && <ChevronRight className={`w-3.5 h-3.5 transition-transform ${orderAction === 'preview' ? 'translate-x-1' : ''}`}/>}
+                          </span>
+                        </div>
+                      )}
+
+                      {ticketError && (
+                        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] font-semibold text-amber-200">
+                          {ticketError}
+                        </div>
+                      )}
+                      {ticketStatusMessage && (
+                        <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-[11px] font-semibold text-emerald-200">
+                          {ticketStatusMessage}{ticketExecutionId ? ` ${ticketExecutionId}` : ''}
+                        </div>
+                      )}
+                      {ticketBlockedRoutes.slice(0, 3).map((blocked) => (
+                        <div key={`${blocked.venue}-${blocked.venueMarketId ?? blocked.reason}`} className="rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2 text-[10px] font-semibold text-zinc-400">
+                          {formatVenueLabel(blocked.venue)} unavailable: {blocked.reason}
+                        </div>
+                      ))}
+
+                      {orderAction === 'preview' && ticketRouteReady && ticketQuote && (
+                          <div className="bg-[#0c0c0e] border border-emerald-500/20 rounded-lg p-3 animate-in slide-in-from-top-2 duration-300 space-y-3 shadow-[0_0_15px_rgba(16,185,129,0.05)]">
+                              <div className="flex items-center justify-between pb-2 border-b border-zinc-800/60">
+                                  <div className="flex items-center gap-1.5">
+                                     <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                                     <span className="text-[10px] font-bold text-zinc-300 tracking-wide">Backend Route Check: Live</span>
+                                  </div>
+                                  <span className="px-1.5 py-0.5 rounded text-[8px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 uppercase tracking-widest font-mono font-bold">
+                                    {ticketQuote.routeType}
+                                  </span>
+                              </div>
+                              <div className="flex items-center gap-1 font-mono text-[9px] overflow-x-auto custom-scrollbar pb-1">
+                                  {ticketQuote.legs.map((leg, index) => (
+                                    <React.Fragment key={`${leg.venue}-${leg.venueMarketId ?? index}`}>
+                                      {index > 0 && (
+                                        <div className="flex items-center justify-center text-zinc-600">
+                                          <ChevronRight className="w-3 h-3" />
+                                        </div>
+                                      )}
+                                      <div className="min-w-[95px] flex-1 bg-[#121214] border border-zinc-800 rounded p-1.5 text-center flex flex-col justify-center">
+                                        <div className="text-zinc-500 w-max mx-auto mb-0.5 text-[8px] tracking-wider uppercase font-sans font-bold">Leg {index + 1}</div>
+                                        <div className="flex items-center justify-center gap-1 text-emerald-400 font-bold tracking-tighter">
+                                          <VenueLogo id={normalizeVenueId(leg.venue)} label={formatVenueLabel(leg.venue)} className="h-3 w-3 rounded-full" />
+                                          {formatVenueLabel(leg.venue)}
+                                        </div>
+                                        <div className="text-zinc-400 mt-1 pb-0.5 border-b border-zinc-800 border-dashed w-max mx-auto text-[10px]">
+                                          {formatProbabilityPrice(leg.price)}
+                                        </div>
+                                        <div className="text-zinc-500 mt-1 text-[9px]">{routeLegShareLabel(leg)}</div>
+                                      </div>
+                                    </React.Fragment>
+                                  ))}
+                              </div>
+                              {(typeof ticketQuote.estimatedSavings === 'number' || ticketShareImprovement) && (
+                                <div className="bg-[#ccff00]/10 border border-[#ccff00]/20 rounded p-1.5 text-center flex items-center justify-center gap-1.5">
+                                   {typeof ticketQuote.estimatedSavings === 'number' && (
+                                     <span className="text-[#ccff00] font-bold text-[10px]">Estimated savings: {formatUsdc(ticketQuote.estimatedSavings)}</span>
+                                   )}
+                                   {ticketShareImprovement && (
+                                     <span className="text-zinc-300 text-[9px]">Share improvement: +{formatSignedShares(ticketShareImprovement)}</span>
+                                   )}
+                                </div>
+                              )}
+                          </div>
+                      )}
+                  </div>
+
+                  <div className="h-px bg-zinc-800/80 -mx-4 my-0.5"></div>
+
+                  <div className="flex justify-between items-center px-1">
+                      <div className="flex flex-col gap-0.5">
+                          <div className="relative flex items-center gap-1 text-[11px] font-bold text-zinc-300 group/info">
+                              {ticketReceiveLabel}: <Info className="w-3.5 h-3.5 text-zinc-500" />
+                              <div className="pointer-events-none absolute left-0 top-5 z-30 hidden w-64 rounded-lg border border-zinc-700 bg-[#0c0c0e] p-3 text-[10px] font-semibold text-zinc-300 shadow-2xl group-hover/info:block">
+                                <div>Amount: {side === 'buy' ? formatUsdc(ticketAmountValue) : formatSignedShares(ticketAmountValue)}</div>
+                                <div>Trading Fee: {summarizeExpectedFees(ticketQuote)}</div>
+                                <div>Expected Avg. Price: {formatProbabilityPrice(ticketEffectivePrice)}</div>
+                                <div>Price Cap: {formatProbabilityPrice(ticketQuote?.expectedPrice ?? ticketEffectivePrice)}</div>
+                                {side === 'buy' && <div>Expected Shares: {formatSignedShares(ticketEstimatedShares)}</div>}
+                                <div>Min. Receive: {side === 'buy' ? formatSignedShares(ticketEstimatedShares) : formatUsdc(ticketReceiveEstimate)}</div>
+                                {ticketShareImprovement && <div>Share improvement: +{formatSignedShares(ticketShareImprovement)}</div>}
+                              </div>
+                          </div>
+                          <div className="text-[10px] font-medium text-zinc-500">Avg. Price: {formatProbabilityPrice(ticketEffectivePrice)}</div>
+                      </div>
+                      <div className={`font-mono text-xl font-black flex items-baseline gap-1 ${side === 'buy' ? 'text-emerald-500' : 'text-[#E52B50]'}`}>
+                          {ticketReceiveText}
+                      </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (ticketQuote) {
+                        void submitMarketOrder();
+                      } else {
+                        void previewMarketOrder();
+                      }
+                    }}
+                    disabled={ticketActionDisabled}
+                    className={`w-full font-bold py-3.5 rounded-lg text-sm transition-colors mt-2 ${ticketPrimaryButtonClass} ${ticketPrimaryDisabledClass}`}
+                  >
+                      {ticketActionLabel}
+                  </button>
+
+                  <div className="grid grid-cols-2 gap-2 pt-1">
+                      <button type="button" disabled className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg border text-[10px] uppercase font-bold transition-all bg-[#0c0c0e] border-zinc-800 text-zinc-500 cursor-not-allowed">
+                          <Ghost className="w-3 h-3" /> BACKEND PROTECTION
+                      </button>
+                      <button type="button" disabled className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg border text-[10px] uppercase font-bold transition-all bg-[#0c0c0e] border-zinc-800 text-zinc-500 cursor-not-allowed">
+                          <Zap className="w-3 h-3" /> ROUTE CONTROLLED
+                      </button>
+                  </div>
+              </div>
+              {false && (side === 'buy' ? (
                  <div className="p-4 flex flex-col gap-4 animate-in fade-in duration-300">
                      <div className="grid grid-cols-2 gap-3">
-                         <button className="bg-emerald-500 hover:bg-emerald-400 text-white font-bold py-3 rounded-lg flex items-center justify-center gap-2 shadow-sm transition-colors text-lg">
-                             YES {selectedOutcome?.yesPrice ?? 'Quote'}
+                         <button type="button" onClick={() => selectTicketOutcome('yes')} className={`font-bold py-3 rounded-lg flex items-center justify-center gap-2 shadow-sm transition-colors text-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${ticketOutcomeSide === 'yes' ? 'bg-emerald-500 text-white hover:bg-emerald-400' : 'bg-transparent border border-emerald-500/30 text-emerald-500 hover:bg-emerald-500/10'}`}>
+                             YES {selectedTicketOutcome?.yesPrice ?? 'Quote'}
                          </button>
-                         <button className="bg-transparent border border-red-500/30 text-red-500 hover:bg-red-500/10 font-bold py-3 rounded-lg flex items-center justify-center gap-2 transition-colors text-lg">
-                             NO {selectedOutcome?.noPrice ?? 'Quote'}
+                         <button type="button" onClick={() => selectTicketOutcome('no')} className={`font-bold py-3 rounded-lg flex items-center justify-center gap-2 shadow-sm transition-colors text-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${ticketOutcomeSide === 'no' ? 'bg-[#E52B50] text-white hover:bg-[#ff3366]' : 'bg-transparent border border-red-500/30 text-red-500 hover:bg-red-500/10'}`}>
+                             NO {selectedTicketOutcome?.noPrice ?? 'Quote'}
                          </button>
                      </div>
 
                      <div className="bg-[#0c0c0e] border border-zinc-800 rounded-lg p-3 relative group focus-within:border-zinc-700 transition-colors">
-                         <div className="text-[10px] text-zinc-500 font-medium mb-1.5">Contracts</div>
+                         <div className="text-[10px] text-zinc-500 font-medium mb-1.5">Shares</div>
                          <div className="flex items-center justify-between">
-                             <input type="text" className="bg-transparent border-none text-white text-2xl font-bold font-mono outline-none w-full" placeholder="0" defaultValue="1000" />
+                             <input
+                               type="text"
+                               inputMode="decimal"
+                               aria-label="Share amount"
+                               className="bg-transparent border-none text-white text-2xl font-bold font-mono outline-none w-full"
+                               placeholder="0"
+                               value={ticketAmount}
+                               onChange={(event) => {
+                                 setTicketAmount(event.target.value);
+                                 setTicketLiveCandidates(null);
+                                 setTicketQuote(null);
+                                 setTicketExecutionId(null);
+                                 setTicketStatusMessage(null);
+                               }}
+                             />
                              <div className="text-[10px] text-zinc-500 whitespace-nowrap">Min. Order 0.01 USDC</div>
                          </div>
                      </div>
@@ -2327,7 +2722,7 @@ export const InfraTradingTerminal = ({
                              <button className="px-3 py-1 bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-300 rounded text-xs font-semibold transition-colors">MAX</button>
                          </div>
                          <div className="text-right text-[11px] text-zinc-500">
-                             Available Balance: <span className="font-bold text-white">0 Contracts</span>
+                             Venue-ready balance: <span className="font-bold text-white">checked on quote</span>
                          </div>
                      </div>
 
@@ -2557,7 +2952,7 @@ export const InfraTradingTerminal = ({
                          </button>
                      </div>
                  </div>
-             )}
+             ))}
          </div>
 
          <div className="bg-[#121214] border border-zinc-800 rounded-xl p-3 2xl:p-4 flex flex-col gap-3 min-h-[250px] shrink-0">
