@@ -161,6 +161,13 @@ const normalizeVenueId = (venue: string): string => venue.toLowerCase().replace(
 const formatVenueLabel = (venue: string): string =>
   venue.replace(/[_-]+/g, ' ').toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase());
 
+const toBackendVenueId = (venue: string): string => {
+  const normalized = normalizeVenueId(venue);
+  if (normalized === 'poly' || normalized === 'polymarket') return 'POLYMARKET';
+  if (normalized === 'predict' || normalized === 'predict_fun' || normalized === 'predictfun') return 'PREDICT_FUN';
+  return normalized.toUpperCase();
+};
+
 const formatProbabilityPrice = (price: number | null | undefined): string => {
   if (typeof price !== 'number' || !Number.isFinite(price) || price <= 0) return 'Quote';
   const cents = price <= 1 ? price * 100 : price;
@@ -240,6 +247,10 @@ const outcomeIdForTicketSide = (
   side: TicketOutcomeSide,
   fallbackOutcomeId: string | null
 ): string | null => {
+  const fallback = fallbackOutcomeId ? outcomes.find((outcome) => outcome.id === fallbackOutcomeId) : null;
+  if (fallback && !['yes', 'no'].includes(fallback.name.trim().toLowerCase())) {
+    return fallback.id;
+  }
   const exact = outcomes.find((outcome) => outcome.name.trim().toLowerCase() === side);
   if (exact) return exact.id;
   return fallbackOutcomeId ?? outcomes[0]?.id ?? null;
@@ -1184,6 +1195,10 @@ export const InfraTradingTerminal = ({
       : selectedVenueMarkets.map((venueMarket) => venueMarket.venue);
     return [...new Set(venues.filter(Boolean))];
   }, [selectedVenueMarkets, terminalMarket.venues]);
+  const backendVenueList = useMemo(
+    () => [...new Set(marketVenueList.map(toBackendVenueId).filter(Boolean))],
+    [marketVenueList]
+  );
   const visibleOutcomeRows = showAllOutcomes ? terminalOutcomes : terminalOutcomes.slice(0, 5);
   const selectedOutcome = terminalOutcomes.find((outcome) => outcome.id === selectedOutcomeId) ?? terminalOutcomes[0] ?? null;
   const selectedTicketOutcomeId = outcomeIdForTicketSide(terminalOutcomes, ticketOutcomeSide, selectedOutcomeId);
@@ -1262,7 +1277,7 @@ export const InfraTradingTerminal = ({
             marketId: terminalMarketId,
             outcomeId: outcome.id,
             amount: '1',
-            venues: marketVenueList.length ? marketVenueList : undefined,
+            venues: backendVenueList.length ? backendVenueList : undefined,
           });
           const best = bestCandidate(candidateResponse.candidates);
           const average = averageCandidatePrice(candidateResponse.candidates);
@@ -1316,7 +1331,7 @@ export const InfraTradingTerminal = ({
     } finally {
       setOutcomesLoading(false);
     }
-  }, [marketVenueList, terminalMarket, terminalMarketId, token]);
+  }, [backendVenueList, marketVenueList, terminalMarket, terminalMarketId, token]);
 
   React.useEffect(() => {
     setShowAllOutcomes(false);
@@ -1367,7 +1382,7 @@ export const InfraTradingTerminal = ({
         marketId: terminalMarketId,
         outcomeId: selectedTicketOutcomeId,
         amount: backendAmount,
-        venues: marketVenueList.length ? marketVenueList : undefined,
+        venues: backendVenueList.length ? backendVenueList : undefined,
       });
       setTicketLiveCandidates(liveCandidates);
       if (liveCandidates.candidates.length === 0) {
@@ -1379,7 +1394,7 @@ export const InfraTradingTerminal = ({
         marketId: terminalMarketId,
         outcomeId: selectedTicketOutcomeId,
         amount: backendAmount,
-        venues: marketVenueList.length ? marketVenueList : undefined,
+        venues: backendVenueList.length ? backendVenueList : undefined,
         candidates: liveCandidates.candidates,
       });
       setTicketQuote(response.quote);
@@ -1390,7 +1405,7 @@ export const InfraTradingTerminal = ({
     } finally {
       setTicketLoading(false);
     }
-  }, [marketVenueList, selectedTicketOutcome, selectedTicketOutcomeId, side, terminalMarketId, ticketAmount, ticketOutcomeSide, token]);
+  }, [backendVenueList, selectedTicketOutcome, selectedTicketOutcomeId, side, terminalMarketId, ticketAmount, ticketOutcomeSide, token]);
 
   const submitMarketOrder = useCallback(async () => {
     if (!token || !ticketQuote) {
