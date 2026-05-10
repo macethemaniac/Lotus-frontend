@@ -523,8 +523,9 @@ User behavior:
 Chart:
 
 - Use approved design.
-- `GET /markets/:marketId/chart?outcomeId&timeframe=1H|6H|1D|1W|1M|ALL` is implemented for Lotus-owned live midpoint observations accumulated from backend orderbook reads.
-- Do not fake historical data and do not use Predexon. Older timeframes show `historyStatus: "accumulating"` until the backend has observed enough live points.
+- `GET /markets/:marketId/chart?outcomeId&timeframe=1H|6H|1D|1W|1M|ALL` is implemented for Lotus-owned midpoint history from backend venue orderbook snapshots, older approved historical state rows, and approved venue historical sources where available.
+- The backend owns durable chart accumulation through `venue_orderbook_snapshots`. `MARKET_ORDERBOOK_RECORDER_ENABLED=true` starts a watcher that polls approved open markets through backend quote readers, stores sanitized bid/ask/depth snapshots, and prunes old snapshots plus rows for expired/resolved or disabled catalog markets.
+- Do not fake historical data and do not use Predexon. Older timeframes show `historyStatus: "accumulating"` until the backend has recorded enough snapshots.
 
 Order book:
 
