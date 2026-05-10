@@ -1352,8 +1352,10 @@ export const InfraTradingTerminal = ({
     setTicketExecutionId(null);
     setTicketStatusMessage(null);
     setTicketError(null);
-    setSelectedOutcomeId((current) => outcomeIdForTicketSide(terminalOutcomes, nextSide, fallbackOutcomeId ?? current));
-  }, [terminalOutcomes]);
+    if (fallbackOutcomeId) {
+      setSelectedOutcomeId(fallbackOutcomeId);
+    }
+  }, []);
 
   const previewMarketOrder = useCallback(async () => {
     if (!token) {
