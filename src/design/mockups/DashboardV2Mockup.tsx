@@ -1512,7 +1512,7 @@ export const DashboardV2Mockup = ({
             </div>
           ) : (
             <div className="min-w-0 flex-1">
-              <PortfolioMockupV2 />
+              <PortfolioMockupV2 session={session} />
             </div>
           )}
         </div>

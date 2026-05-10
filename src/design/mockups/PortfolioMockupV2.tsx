@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Area,
@@ -16,9 +16,21 @@ import {
   BarChart2, Calendar, ChevronRight, Search, Share, ShieldCheck, X
 } from 'lucide-react';
 import { VenueLogo } from '@/components/icons/asset-logo';
+import type { AuthSession } from '@/features/auth/types';
+import {
+  getExecutionHistory,
+  getOpenOrders,
+  getPortfolioSummary,
+  getPortfolioTimeSeries,
+  type ExecutionStatus,
+  type PortfolioSummary,
+  type PortfolioTimeSeriesResponse,
+} from '@/features/trading/api/execution-api';
+import { getVenueActivations, getVenueBalances, type VenueActivation, type VenueBalance } from '@/features/funding/api/funding-api';
+import { openExecutionSocket } from '@/lib/ws/execution-ws-client';
 import { FundingDeposit } from './FundingDeposit';
 
-type PerformanceRange = '1D' | '7D' | '1M' | 'All';
+type PerformanceRange = '1D' | '7D' | '30D' | '90D' | 'ALL';
 
 type PortfolioPerformancePoint = {
   label: string;
@@ -50,19 +62,78 @@ const formatCurrency = (value: number, compact = false) =>
 
 const formatSignedCurrency = (value: number) => `${value >= 0 ? '+' : '-'}${formatCurrency(Math.abs(value))}`;
 
-const venueCashBalances = [
-  { id: 'polymarket', label: 'Polymarket', balance: 8450.25, status: 'Ready', activation: 'ready' },
-  { id: 'limitless', label: 'Limitless', balance: 1900.75, status: 'Ready', activation: 'ready' },
-  { id: 'predict', label: 'Predict.fun', balance: 1350, status: 'Ready', activation: 'ready' },
-  { id: 'opinion', label: 'Opinion', balance: 0, status: 'Setup needed', activation: 'required' },
-  { id: 'myriad', label: 'Myriad', balance: 0, status: 'Inactive', activation: 'required' },
+const trackedVenues = [
+  { id: 'polymarket', backend: 'POLYMARKET', label: 'Polymarket' },
+  { id: 'limitless', backend: 'LIMITLESS', label: 'Limitless' },
+  { id: 'predict', backend: 'PREDICT_FUN', label: 'Predict.fun' },
+  { id: 'opinion', backend: 'OPINION', label: 'Opinion' },
+  { id: 'myriad', backend: 'MYRIAD', label: 'Myriad' },
 ];
 
 const getRangeSeries = (range: PerformanceRange) => {
   if (range === '1D') return portfolioPerformanceSeries.slice(-2);
   if (range === '7D') return portfolioPerformanceSeries.slice(-4);
-  if (range === '1M') return portfolioPerformanceSeries.slice(-6);
+  if (range === '30D') return portfolioPerformanceSeries.slice(-6);
   return portfolioPerformanceSeries;
+};
+
+const parseMoney = (value: string | number | null | undefined): number | null => {
+  if (value === null || value === undefined) return null;
+  const parsed = typeof value === 'number' ? value : Number(String(value).replace(/[$,\s]/g, ''));
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const formatMaybeCurrency = (value: string | number | null | undefined, fallback = 'Unavailable') => {
+  const parsed = parseMoney(value);
+  return parsed === null ? fallback : formatCurrency(parsed);
+};
+
+const formatMaybeSignedCurrency = (value: string | number | null | undefined) => {
+  const parsed = parseMoney(value);
+  return parsed === null ? 'Unavailable' : formatSignedCurrency(parsed);
+};
+
+const venueKey = (venue: string) => venue.toUpperCase().replace(/[\s.-]+/g, '_');
+
+const venueLabel = (venue: string) =>
+  trackedVenues.find((item) => item.backend === venueKey(venue) || item.id === venue.toLowerCase())?.label ??
+  venue.replace(/[_-]+/g, ' ').toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase());
+
+const venueLogoId = (venue: string) =>
+  trackedVenues.find((item) => item.backend === venueKey(venue) || item.id === venue.toLowerCase())?.id ?? venue.toLowerCase();
+
+const userSafeError = (error: unknown) => error instanceof Error ? error.message : 'Portfolio data is temporarily unavailable.';
+
+const pointFromSnapshot = (point: PortfolioTimeSeriesResponse['points'][number], index: number): PortfolioPerformancePoint => {
+  const totalValue = parseMoney(point.totalMarkValue) ?? parseMoney(point.totalCostBasis) ?? 0;
+  const unrealizedPnl = parseMoney(point.totalUnrealizedPnl) ?? 0;
+  return {
+    label: new Date(point.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+    date: point.timestamp,
+    realizedPnl: 0,
+    unrealizedPnl,
+    totalValue,
+    volume: point.positionCount,
+  };
+};
+
+type VenueCashRow = {
+  id: string;
+  backend: string;
+  label: string;
+  balance: number;
+  status: string;
+  activation: 'ready' | 'required' | 'blocked';
+  blockers: string[];
+};
+
+type PortfolioDataState = {
+  summary: PortfolioSummary | null;
+  timeseries: PortfolioTimeSeriesResponse | null;
+  balances: VenueBalance[];
+  activations: VenueActivation[];
+  openOrders: ExecutionStatus[];
+  history: ExecutionStatus[];
 };
 
 function PerformanceTooltip({ active, payload, label }: { active?: boolean; payload?: any[]; label?: string }) {
@@ -94,16 +165,119 @@ function PerformanceTooltip({ active, payload, label }: { active?: boolean; payl
   );
 }
 
-export const PortfolioMockupV2: React.FC = () => {
+export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ session }) => {
   const [activeTab, setActiveTab] = useState<'positions' | 'orders' | 'history' | 'tips'>('positions');
   const [fundingModal, setFundingModal] = useState<'deposit' | 'withdraw' | null>(null);
-  const [activationVenue, setActivationVenue] = useState<(typeof venueCashBalances)[number] | null>(null);
-  const [performanceRange, setPerformanceRange] = useState<PerformanceRange>('All');
-  const performanceSeries = useMemo(() => getRangeSeries(performanceRange), [performanceRange]);
-  const latestPerformance = performanceSeries[performanceSeries.length - 1] ?? portfolioPerformanceSeries[portfolioPerformanceSeries.length - 1];
-  const totalPnl = latestPerformance.realizedPnl + latestPerformance.unrealizedPnl;
-  const totalRoi = latestPerformance.totalValue > 0 ? (totalPnl / latestPerformance.totalValue) * 100 : 0;
-  const activationRequiredVenues = venueCashBalances.filter((venue) => venue.activation === 'required');
+  const [activationVenue, setActivationVenue] = useState<VenueCashRow | null>(null);
+  const [performanceRange, setPerformanceRange] = useState<PerformanceRange>('7D');
+  const [data, setData] = useState<PortfolioDataState>({
+    summary: null,
+    timeseries: null,
+    balances: [],
+    activations: [],
+    openOrders: [],
+    history: [],
+  });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const token = session?.userJwt ?? null;
+
+  const loadPortfolio = useCallback(async () => {
+    if (!token) {
+      setData({ summary: null, timeseries: null, balances: [], activations: [], openOrders: [], history: [] });
+      setError(null);
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    try {
+      const [summary, timeseries, balanceResponse, activationResponse, openOrders, history] = await Promise.all([
+        getPortfolioSummary(token),
+        getPortfolioTimeSeries(token, { range: performanceRange }),
+        getVenueBalances(token),
+        getVenueActivations(token),
+        getOpenOrders(token, { limit: 50 }),
+        getExecutionHistory(token, { limit: 50 }),
+      ]);
+
+      setData({
+        summary,
+        timeseries,
+        balances: balanceResponse.balances ?? balanceResponse.venues ?? [],
+        activations: activationResponse.activations ?? activationResponse.venues ?? [],
+        openOrders: openOrders.items,
+        history: history.items,
+      });
+    } catch (loadError) {
+      setError(userSafeError(loadError));
+    } finally {
+      setLoading(false);
+    }
+  }, [performanceRange, token]);
+
+  useEffect(() => {
+    void loadPortfolio();
+    const interval = window.setInterval(() => {
+      void loadPortfolio();
+    }, 30_000);
+    return () => window.clearInterval(interval);
+  }, [loadPortfolio]);
+
+  useEffect(() => {
+    if (!session?.userId) return;
+    const client = openExecutionSocket({
+      onEvent: (event) => {
+        if (
+          event.type === 'EXECUTION_PORTFOLIO_UPDATE' ||
+          event.type === 'EXECUTION_MARK_UPDATE' ||
+          event.type === 'EXECUTION_POSITION_UPDATE' ||
+          event.type === 'EXECUTION_STATUS_UPDATE' ||
+          event.type === 'EXECUTION_BALANCE_UPDATE'
+        ) {
+          void loadPortfolio();
+        }
+      },
+      onStateChange: () => undefined,
+    });
+    client.socket.addEventListener('open', () => {
+      client.subscribe(`execution:portfolio:${session.userId}`);
+      client.subscribe(`execution:user:${session.userId}`);
+    });
+    return () => client.socket.close();
+  }, [loadPortfolio, session?.userId]);
+
+  const venueRows = useMemo<VenueCashRow[]>(() => {
+    return trackedVenues.map((venue) => {
+      const balances = data.balances.filter((balance) => venueKey(balance.venue) === venue.backend);
+      const balance = balances.reduce((sum, item) => sum + (parseMoney(item.readyAmount ?? item.availableAmount) ?? 0), 0);
+      const activation = data.activations.find((item) => venueKey(item.venue) === venue.backend);
+      const activationRequired = activation?.required === true || ['REQUIRED', 'ACTION_REQUIRED', 'PENDING'].includes(String(activation?.status ?? '').toUpperCase());
+      const blockers = activation?.blockers ?? [];
+      return {
+        ...venue,
+        balance,
+        status: balance > 0 ? 'Ready to trade' : activationRequired ? 'Activation required' : 'No venue-ready USDC',
+        activation: blockers.length > 0 ? 'blocked' : activationRequired ? 'required' : 'ready',
+        blockers,
+      };
+    });
+  }, [data.activations, data.balances]);
+
+  const positions = data.summary?.positions ?? [];
+  const totalCash = venueRows.reduce((sum, venue) => sum + venue.balance, 0);
+  const positionValue = parseMoney(data.summary?.totalMarkValue) ?? parseMoney(data.summary?.totalCostBasis) ?? 0;
+  const totalValue = totalCash + positionValue;
+  const unrealizedPnl = parseMoney(data.summary?.totalUnrealizedPnl);
+  const totalRoi = data.summary && parseMoney(data.summary.totalCostBasis)
+    ? ((unrealizedPnl ?? 0) / (parseMoney(data.summary.totalCostBasis) || 1)) * 100
+    : null;
+  const performanceSeries = useMemo(() => {
+    if (data.timeseries?.points.length) return data.timeseries.points.map(pointFromSnapshot);
+    return [];
+  }, [data.timeseries]);
+  const latestPerformance = performanceSeries[performanceSeries.length - 1] ?? null;
+  const activationRequiredVenues = venueRows.filter((venue) => venue.activation !== 'ready');
 
   return (
     <div className="min-h-screen bg-[#09090b] text-white p-6 font-sans antialiased space-y-6 animate-fade-in relative">
@@ -121,17 +295,31 @@ export const PortfolioMockupV2: React.FC = () => {
                 <Wallet className="w-4 h-4 text-zinc-400" />
                 Portfolio
               </div>
+              <button
+                type="button"
+                onClick={() => void loadPortfolio()}
+                disabled={loading || !token}
+                className="min-h-8 rounded-lg border border-zinc-800 px-3 text-[11px] font-bold uppercase tracking-[0.08em] text-zinc-400 transition-colors hover:border-zinc-700 hover:text-white disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
+              >
+                {loading ? 'Syncing' : 'Refresh'}
+              </button>
             </div>
+
+            {error && (
+              <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-200">
+                {error}
+              </div>
+            )}
 
             {/* Total Value */}
             <div className="grid grid-cols-2 gap-3">
               <div className="rounded-xl border border-zinc-800/80 bg-black/20 p-3">
                 <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.08em] text-zinc-500">Total Value</div>
-                <div className="text-[29px] leading-none font-bold tracking-tight text-white">$14,758.40</div>
+                <div className="text-[29px] leading-none font-bold tracking-tight text-white">{formatCurrency(totalValue)}</div>
               </div>
               <div className="rounded-xl border border-zinc-800/80 bg-black/20 p-3">
                 <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.08em] text-zinc-500">Positions</div>
-                <div className="text-[29px] leading-none font-bold tracking-tight text-white">$3,057.40</div>
+                <div className="text-[29px] leading-none font-bold tracking-tight text-white">{formatMaybeCurrency(data.summary?.totalMarkValue, formatCurrency(0))}</div>
               </div>
             </div>
 
@@ -140,15 +328,15 @@ export const PortfolioMockupV2: React.FC = () => {
               <div className="mb-3 flex items-start justify-between gap-3">
                 <div>
                   <div className="text-[11px] font-bold uppercase tracking-[0.08em] text-zinc-500">Venue Cash Balances</div>
-                  <div className="mt-1 text-lg font-bold text-white">$11,701.00</div>
+                  <div className="mt-1 text-lg font-bold text-white">{formatCurrency(totalCash)}</div>
                 </div>
                 <div className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.08em] text-emerald-300">
-                  3 ready
+                  {venueRows.filter((venue) => venue.balance > 0).length} ready
                 </div>
               </div>
 
               <div className="grid grid-cols-1 gap-2">
-                {venueCashBalances.map((venue) => (
+                {venueRows.map((venue) => (
                   <div
                     key={venue.id}
                     className="flex items-center justify-between gap-3 rounded-lg border border-zinc-800/70 bg-[#151518] px-3 py-2.5"
@@ -157,20 +345,20 @@ export const PortfolioMockupV2: React.FC = () => {
                       <VenueLogo id={venue.id} label={venue.label} className="h-6 w-6 rounded-md" />
                       <div className="min-w-0">
                         <div className="truncate text-sm font-semibold text-zinc-200">{venue.label}</div>
-                        <div className={`text-[10px] font-semibold ${venue.balance > 0 ? 'text-emerald-400' : 'text-zinc-500'}`}>
+                        <div className={`text-[10px] font-semibold ${venue.balance > 0 ? 'text-emerald-400' : venue.activation === 'blocked' ? 'text-amber-300' : 'text-zinc-500'}`}>
                           {venue.status}
                         </div>
                       </div>
                     </div>
                     <div className="text-right font-mono text-sm font-bold text-white">
                       {formatCurrency(venue.balance)}
-                      {venue.activation === 'required' && (
+                      {venue.activation !== 'ready' && (
                         <button
                           type="button"
                           onClick={() => setActivationVenue(venue)}
                           className="mt-1.5 flex min-h-8 items-center justify-center rounded-md border border-[#ccff00]/25 bg-[#ccff00]/10 px-2.5 text-[10px] font-bold uppercase tracking-[0.08em] text-[#ccff00] transition-colors hover:bg-[#ccff00]/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
                         >
-                          Activate
+                          Details
                         </button>
                       )}
                     </div>
@@ -184,7 +372,7 @@ export const PortfolioMockupV2: React.FC = () => {
                   className="mt-3 flex min-h-9 w-full items-center justify-center gap-2 rounded-lg border border-[#ccff00]/25 bg-[#ccff00]/10 px-3 text-xs font-bold text-[#ccff00] transition-colors hover:bg-[#ccff00]/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
                 >
                   <ShieldCheck className="h-4 w-4" />
-                  Activate pending venues
+                  Review pending venues
                 </button>
               )}
             </div>
@@ -220,7 +408,7 @@ export const PortfolioMockupV2: React.FC = () => {
               Performance
             </div>
             <div className="flex gap-1 bg-zinc-800/50 rounded-lg p-1 border border-zinc-700/50">
-              {(['1D', '7D', '1M', 'All'] as PerformanceRange[]).map((v) => (
+              {(['1D', '7D', '30D', '90D', 'ALL'] as PerformanceRange[]).map((v) => (
                 <button
                   key={v}
                   type="button"
@@ -236,24 +424,24 @@ export const PortfolioMockupV2: React.FC = () => {
           {/* Stats Grid */}
           <div className="grid grid-cols-4 gap-4 mb-6 relative z-10">
             <div>
-              <div className="text-sm font-semibold text-zinc-300 mb-1.5">Realized PNL</div>
-              <div className="text-lg font-bold text-[#22c55e]">{formatSignedCurrency(latestPerformance.realizedPnl)}</div>
+              <div className="text-sm font-semibold text-zinc-300 mb-1.5">Cost Basis</div>
+              <div className="text-lg font-bold text-white">{formatMaybeCurrency(data.summary?.totalCostBasis, '$0.00')}</div>
             </div>
             <div>
               <div className="text-sm font-semibold text-zinc-300 mb-1.5">Unrealized PNL</div>
-              <div className={`text-lg font-bold ${latestPerformance.unrealizedPnl >= 0 ? 'text-[#22c55e]' : 'text-red-400'}`}>
-                {formatSignedCurrency(latestPerformance.unrealizedPnl)}
+              <div className={`text-lg font-bold ${(unrealizedPnl ?? 0) >= 0 ? 'text-[#22c55e]' : 'text-red-400'}`}>
+                {formatMaybeSignedCurrency(data.summary?.totalUnrealizedPnl)}
               </div>
             </div>
             <div>
               <div className="text-sm font-semibold text-zinc-300 mb-1.5">Total ROI</div>
-              <div className={`text-lg font-bold ${totalRoi >= 0 ? 'text-[#22c55e]' : 'text-red-400'}`}>
-                {totalRoi >= 0 ? '+' : ''}{totalRoi.toFixed(2)}%
+              <div className={`text-lg font-bold ${(totalRoi ?? 0) >= 0 ? 'text-[#22c55e]' : 'text-red-400'}`}>
+                {totalRoi === null ? 'Unavailable' : `${totalRoi >= 0 ? '+' : ''}${totalRoi.toFixed(2)}%`}
               </div>
             </div>
             <div>
-              <div className="text-sm font-semibold text-zinc-300 mb-1.5">Total Volume</div>
-              <div className="text-lg font-bold text-white">{formatCurrency(latestPerformance.volume)}</div>
+              <div className="text-sm font-semibold text-zinc-300 mb-1.5">Marked Positions</div>
+              <div className="text-lg font-bold text-white">{data.summary ? `${data.summary.markedPositionCount}/${data.summary.positionCount}` : '0/0'}</div>
             </div>
           </div>
           
@@ -262,11 +450,13 @@ export const PortfolioMockupV2: React.FC = () => {
              <div className="flex items-center gap-3">
                <Calendar className="w-5 h-5 text-zinc-500" />
                <div>
-                 <div className="text-sm font-bold text-white">PNL Calendar</div>
-                 <div className="text-[11px] text-zinc-500">View your monthly breakdown</div>
+                 <div className="text-sm font-bold text-white">MTM Snapshot</div>
+                 <div className="text-[11px] text-zinc-500">
+                   {data.timeseries?.historyAvailable ? 'Backend portfolio time-series' : 'Current backend snapshot only'}
+                 </div>
                </div>
              </div>
-             <button className="w-6 h-6 rounded-md bg-zinc-800/80 flex items-center justify-center text-zinc-400 hover:text-white transition-colors">
+             <button type="button" disabled className="w-6 h-6 rounded-md bg-zinc-800/80 flex items-center justify-center text-zinc-500 cursor-not-allowed">
                <ChevronRight className="w-4 h-4" />
              </button>
           </div>
@@ -292,7 +482,7 @@ export const PortfolioMockupV2: React.FC = () => {
                   dy={8}
                 />
                 <YAxis
-                  dataKey="realizedPnl"
+                  dataKey="totalValue"
                   orientation="right"
                   axisLine={false}
                   tickLine={false}
@@ -307,7 +497,7 @@ export const PortfolioMockupV2: React.FC = () => {
                 />
                 <Area
                   type="monotone"
-                  dataKey="realizedPnl"
+                  dataKey="totalValue"
                   stroke="#22c55e"
                   strokeWidth={3}
                   fill="url(#portfolioPnlGradient)"
@@ -316,6 +506,11 @@ export const PortfolioMockupV2: React.FC = () => {
                 />
               </AreaChart>
             </ResponsiveContainer>
+            {!data.timeseries?.historyAvailable && (
+              <div className="pointer-events-none absolute inset-x-4 bottom-4 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-200">
+                Historical PnL is not drawn until backend persisted snapshots are available.
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -358,6 +553,80 @@ export const PortfolioMockupV2: React.FC = () => {
 
         {/* Table Content */}
         <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="border-b border-zinc-800 text-zinc-400 text-[13px] font-semibold">
+                <th className="px-6 py-4 font-semibold w-[40%]">{activeTab === 'positions' ? 'Market' : 'Execution'}</th>
+                <th className="px-6 py-4 font-semibold text-center w-[10%]">{activeTab === 'positions' ? 'Avg' : 'Status'}</th>
+                <th className="px-6 py-4 font-semibold text-center w-[10%]">{activeTab === 'positions' ? 'Current' : 'Settlement'}</th>
+                <th className="px-6 py-4 font-semibold text-center w-[12%]">{activeTab === 'positions' ? 'Size' : 'Route'}</th>
+                <th className="px-6 py-4 font-semibold text-center w-[12%]">{activeTab === 'positions' ? 'Sellable' : 'Updated'}</th>
+                <th className="px-6 py-4 font-semibold text-right w-[16%]">{activeTab === 'positions' ? 'Value' : 'Receipt'}</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-800/50 text-[15px]">
+              {activeTab === 'positions' && positions.map((position) => (
+                <tr key={position.positionId} className="hover:bg-zinc-900/30 transition-colors">
+                  <td className="px-6 py-5">
+                    <div className="flex items-center gap-4">
+                      <VenueLogo id={venueLogoId(position.venue)} label={venueLabel(position.venue)} className="h-11 w-11 rounded-lg border border-zinc-700/50" />
+                      <div className="min-w-0">
+                        <div className="truncate font-bold text-zinc-200 mb-1 leading-tight text-[15px]">{position.marketId}</div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[13px] text-zinc-400 font-medium">{venueLabel(position.venue)}</span>
+                          <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-[#22c55e]/10 text-[#22c55e]">{position.outcomeId}</span>
+                          {position.markFreshness === 'unavailable' && <span className="text-[11px] font-semibold text-amber-300">Mark unavailable</span>}
+                        </div>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-6 py-5 text-center font-mono font-medium text-zinc-300">{position.averageEntryPrice ? `${(position.averageEntryPrice * 100).toFixed(1)}c` : '-'}</td>
+                  <td className="px-6 py-5 text-center font-mono font-medium text-zinc-300">{position.markPrice === null ? '-' : `${(position.markPrice * 100).toFixed(1)}c`}</td>
+                  <td className="px-6 py-5 text-center font-mono font-medium text-zinc-300">{position.verifiedSize}</td>
+                  <td className="px-6 py-5 text-center font-mono font-medium text-zinc-300">{position.sellableSize}</td>
+                  <td className="px-6 py-5 text-right">
+                    <div className="flex flex-col items-end leading-tight gap-0.5">
+                      <div className="font-bold text-white text-[15px] font-mono">{formatMaybeCurrency(position.markValue, 'No mark')}</div>
+                      <div className={`text-[12px] font-bold font-mono ${(parseMoney(position.unrealizedPnl) ?? 0) >= 0 ? 'text-[#22c55e]' : 'text-red-400'}`}>
+                        {position.markFreshness === 'live' ? formatMaybeSignedCurrency(position.unrealizedPnl) : position.markBlocker ?? 'Unavailable'}
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {activeTab !== 'positions' && (activeTab === 'orders' ? data.openOrders : data.history).map((execution) => (
+                <tr key={execution.executionId} className="hover:bg-zinc-900/30 transition-colors">
+                  <td className="px-6 py-5">
+                    <div className="min-w-0">
+                      <div className="truncate font-mono text-sm font-bold text-zinc-200">{execution.executionId}</div>
+                      <div className="mt-1 text-[12px] font-medium text-zinc-500">{execution.route?.marketId ?? 'Backend execution'}</div>
+                    </div>
+                  </td>
+                  <td className="px-6 py-5 text-center font-mono font-medium text-zinc-300">{execution.userStatus ?? execution.status ?? 'Unknown'}</td>
+                  <td className="px-6 py-5 text-center font-mono font-medium text-zinc-300">{execution.settlementStatus ?? 'Pending'}</td>
+                  <td className="px-6 py-5 text-center font-mono font-medium text-zinc-300">{execution.route?.venuePath?.map(venueLabel).join(' / ') || '-'}</td>
+                  <td className="px-6 py-5 text-center font-mono font-medium text-zinc-300">
+                    {execution.updatedAt || execution.submittedAt ? new Date(execution.updatedAt ?? execution.submittedAt ?? '').toLocaleString() : '-'}
+                  </td>
+                  <td className="px-6 py-5 text-right">
+                    <button type="button" disabled className="min-h-8 rounded-lg border border-zinc-800 bg-[#18181b] px-3 text-xs font-semibold text-zinc-500 cursor-not-allowed">
+                      Receipt
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {activeTab === 'positions' && positions.length === 0 && (
+                <tr><td colSpan={6} className="px-6 py-10 text-center text-sm font-semibold text-zinc-500">No verified positions yet. Positions appear only after backend fill evidence is verified.</td></tr>
+              )}
+              {activeTab === 'orders' && data.openOrders.length === 0 && (
+                <tr><td colSpan={6} className="px-6 py-10 text-center text-sm font-semibold text-zinc-500">No open orders. Submitted and partial backend executions will appear here.</td></tr>
+              )}
+              {activeTab === 'history' && data.history.length === 0 && (
+                <tr><td colSpan={6} className="px-6 py-10 text-center text-sm font-semibold text-zinc-500">No trade history yet. Backend-confirmed executions will appear here.</td></tr>
+              )}
+            </tbody>
+          </table>
+          {false && (
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="border-b border-zinc-800 text-zinc-400 text-[13px] font-semibold">
@@ -451,6 +720,7 @@ export const PortfolioMockupV2: React.FC = () => {
               </tr>
             </tbody>
           </table>
+          )}
         </div>
         {!activeTab && (
            <div className="p-8 text-center text-zinc-500">No data available</div>
@@ -495,8 +765,8 @@ export const PortfolioMockupV2: React.FC = () => {
               <div className="flex items-center gap-3">
                 <VenueLogo id={activationVenue.id} label={activationVenue.label} className="h-9 w-9 rounded-lg" />
                 <div>
-                  <h2 className="text-base font-bold text-white">Activate {activationVenue.label}</h2>
-                  <p className="mt-0.5 text-xs text-zinc-500">Required before funds become venue-ready.</p>
+                  <h2 className="text-base font-bold text-white">{activationVenue.label} readiness</h2>
+                  <p className="mt-0.5 text-xs text-zinc-500">{activationVenue.status}</p>
                 </div>
               </div>
               <button
@@ -513,9 +783,14 @@ export const PortfolioMockupV2: React.FC = () => {
               <div className="flex items-start gap-3">
                 <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-[#ccff00]" />
                 <p className="text-sm leading-relaxed text-zinc-300">
-                  Activation is a user-signed venue approval. Lotus only treats funds as tradeable after backend readiness confirms the venue is active.
+                  Lotus only treats funds as tradeable after backend readiness confirms this venue is ready. This panel shows backend activation evidence only; it does not bypass venue setup.
                 </p>
               </div>
+              {activationVenue.blockers.length > 0 && (
+                <ul className="mt-3 list-disc space-y-1 pl-7 text-xs text-amber-200">
+                  {activationVenue.blockers.map((blocker) => <li key={blocker}>{blocker}</li>)}
+                </ul>
+              )}
             </div>
 
             <div className="mt-5 grid grid-cols-2 gap-3">
@@ -528,10 +803,13 @@ export const PortfolioMockupV2: React.FC = () => {
               </button>
               <button
                 type="button"
-                onClick={() => setActivationVenue(null)}
+                onClick={() => {
+                  setActivationVenue(null);
+                  setFundingModal('deposit');
+                }}
                 className="min-h-10 rounded-lg border border-[#ccff00]/40 bg-[#ccff00] text-sm font-black text-black transition-colors hover:bg-[#d7ff33] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 focus-visible:ring-offset-2 focus-visible:ring-offset-[#18181b]"
               >
-                Activate
+                Open funding
               </button>
             </div>
           </div>
