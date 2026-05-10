@@ -791,7 +791,7 @@ const LiveCanonicalChart = ({
   marketType: 'binary' | 'multi';
   outcomes?: TerminalOutcomeRow[];
 }) => {
-  const [activeTab, setActiveTab] = useState<MarketChartTimeframe>('1H');
+  const [activeTab, setActiveTab] = useState<MarketChartTimeframe>('ALL');
   const [venueChart, setVenueChart] = useState<MarketChartResponse | null>(null);
   const [outcomeCharts, setOutcomeCharts] = useState<Array<{ chart: MarketChartResponse; key: string; label: string; color: string }>>([]);
   const [loading, setLoading] = useState(false);
