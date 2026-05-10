@@ -13,10 +13,11 @@ import {
 import { 
   Wallet, Gift, Key, ArrowUpRight, ArrowDownRight,
   Download, ArrowDownToLine, ArrowUpFromLine, Sparkles,
-  BarChart2, Calendar, ChevronRight, Search, Share, ShieldCheck, X
+  BarChart2, Calendar, ChevronRight, Search, Share, ShieldCheck, X, Copy, Check
 } from 'lucide-react';
 import { VenueLogo } from '@/components/icons/asset-logo';
 import type { AuthSession } from '@/features/auth/types';
+import { listVenueAccounts, type UserVenueAccount } from '@/features/wallets/api/wallet-api';
 import {
   getExecutionHistory,
   getOpenOrders,
@@ -104,6 +105,8 @@ const venueLogoId = (venue: string) =>
 
 const userSafeError = (error: unknown) => error instanceof Error ? error.message : 'Portfolio data is temporarily unavailable.';
 
+const shortAddress = (value: string) => value.length > 14 ? `${value.slice(0, 6)}...${value.slice(-4)}` : value;
+
 const pointFromSnapshot = (point: PortfolioTimeSeriesResponse['points'][number], index: number): PortfolioPerformancePoint => {
   const totalValue = parseMoney(point.totalMarkValue) ?? parseMoney(point.totalCostBasis) ?? 0;
   const unrealizedPnl = parseMoney(point.totalUnrealizedPnl) ?? 0;
@@ -125,6 +128,8 @@ type VenueCashRow = {
   status: string;
   activation: 'ready' | 'required' | 'blocked';
   blockers: string[];
+  walletAddress?: string;
+  venueAccountStatus?: string;
 };
 
 type PortfolioDataState = {
@@ -132,6 +137,7 @@ type PortfolioDataState = {
   timeseries: PortfolioTimeSeriesResponse | null;
   balances: VenueBalance[];
   activations: VenueActivation[];
+  venueAccounts: UserVenueAccount[];
   openOrders: ExecutionStatus[];
   history: ExecutionStatus[];
 };
@@ -175,16 +181,18 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
     timeseries: null,
     balances: [],
     activations: [],
+    venueAccounts: [],
     openOrders: [],
     history: [],
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [copiedAddress, setCopiedAddress] = useState<string | null>(null);
   const token = session?.userJwt ?? null;
 
   const loadPortfolio = useCallback(async () => {
     if (!token) {
-      setData({ summary: null, timeseries: null, balances: [], activations: [], openOrders: [], history: [] });
+      setData({ summary: null, timeseries: null, balances: [], activations: [], venueAccounts: [], openOrders: [], history: [] });
       setError(null);
       return;
     }
@@ -192,11 +200,12 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
     setLoading(true);
     setError(null);
     try {
-      const [summary, timeseries, balanceResponse, activationResponse, openOrders, history] = await Promise.all([
+      const [summary, timeseries, balanceResponse, activationResponse, venueAccounts, openOrders, history] = await Promise.all([
         getPortfolioSummary(token),
         getPortfolioTimeSeries(token, { range: performanceRange }),
         getVenueBalances(token),
         getVenueActivations(token),
+        listVenueAccounts(token),
         getOpenOrders(token, { limit: 50 }),
         getExecutionHistory(token, { limit: 50 }),
       ]);
@@ -206,6 +215,7 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
         timeseries,
         balances: balanceResponse.balances ?? balanceResponse.venues ?? [],
         activations: activationResponse.activations ?? activationResponse.venues ?? [],
+        venueAccounts: venueAccounts.accounts ?? [],
         openOrders: openOrders.items,
         history: history.items,
       });
@@ -252,6 +262,7 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
       const balances = data.balances.filter((balance) => venueKey(balance.venue) === venue.backend);
       const balance = balances.reduce((sum, item) => sum + (parseMoney(item.readyAmount ?? item.availableAmount) ?? 0), 0);
       const activation = data.activations.find((item) => venueKey(item.venue) === venue.backend);
+      const account = data.venueAccounts.find((item) => venueKey(item.venue) === venue.backend);
       const activationRequired = activation?.required === true || ['REQUIRED', 'ACTION_REQUIRED', 'PENDING'].includes(String(activation?.status ?? '').toUpperCase());
       const blockers = activation?.blockers ?? [];
       return {
@@ -260,9 +271,11 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
         status: balance > 0 ? 'Ready to trade' : activationRequired ? 'Activation required' : 'No venue-ready USDC',
         activation: blockers.length > 0 ? 'blocked' : activationRequired ? 'required' : 'ready',
         blockers,
+        walletAddress: account?.walletAddress,
+        venueAccountStatus: account?.status,
       };
     });
-  }, [data.activations, data.balances]);
+  }, [data.activations, data.balances, data.venueAccounts]);
 
   const positions = data.summary?.positions ?? [];
   const totalCash = venueRows.reduce((sum, venue) => sum + venue.balance, 0);
@@ -278,6 +291,14 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
   }, [data.timeseries]);
   const latestPerformance = performanceSeries[performanceSeries.length - 1] ?? null;
   const activationRequiredVenues = venueRows.filter((venue) => venue.activation !== 'ready');
+  const copyVenueAddress = useCallback((address: string) => {
+    void navigator.clipboard?.writeText(address).then(() => {
+      setCopiedAddress(address);
+      window.setTimeout(() => {
+        setCopiedAddress((current) => current === address ? null : current);
+      }, 1_500);
+    });
+  }, []);
 
   return (
     <div className="min-h-screen bg-[#09090b] text-white p-6 font-sans antialiased space-y-6 animate-fade-in relative">
@@ -344,10 +365,26 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
                     <div className="flex min-w-0 items-center gap-2.5">
                       <VenueLogo id={venue.id} label={venue.label} className="h-6 w-6 rounded-md" />
                       <div className="min-w-0">
-                        <div className="truncate text-sm font-semibold text-zinc-200">{venue.label}</div>
+                        <div className="flex min-w-0 items-center gap-1.5">
+                          <div className="truncate text-sm font-semibold text-zinc-200">{venue.label}</div>
+                          {venue.walletAddress && (
+                            <button
+                              type="button"
+                              onClick={() => copyVenueAddress(venue.walletAddress as string)}
+                              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-[#ccff00] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
+                              aria-label={`Copy ${venue.label} venue address`}
+                              title={`Copy ${venue.label} address ${shortAddress(venue.walletAddress)}`}
+                            >
+                              {copiedAddress === venue.walletAddress ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                            </button>
+                          )}
+                        </div>
                         <div className={`text-[10px] font-semibold ${venue.balance > 0 ? 'text-emerald-400' : venue.activation === 'blocked' ? 'text-amber-300' : 'text-zinc-500'}`}>
                           {venue.status}
                         </div>
+                        {venue.walletAddress && (
+                          <div className="mt-0.5 font-mono text-[10px] text-zinc-600">{shortAddress(venue.walletAddress)}</div>
+                        )}
                       </div>
                     </div>
                     <div className="text-right font-mono text-sm font-bold text-white">
