@@ -125,6 +125,16 @@ type TerminalVenueQuote = {
   blocker: string | null;
 };
 
+type TerminalChartSeries = {
+  id: string;
+  label: string;
+  color: string;
+  emphasis?: boolean;
+  dashed?: boolean;
+};
+
+type TerminalChartRow = Record<string, string | number | null>;
+
 type TerminalRiskState = {
   loading: boolean;
   error: string | null;
@@ -135,6 +145,7 @@ type TerminalRiskState = {
 type TerminalOpenOrder = OpenOrdersResponse['items'][number];
 
 const EMPTY_VENUE_MARKETS: MarketCatalogVenueMarket[] = [];
+const EMPTY_TERMINAL_OUTCOMES: TerminalOutcomeRow[] = [];
 
 const isUuid = (value: string | null | undefined): value is string =>
   Boolean(value && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value));
@@ -687,46 +698,168 @@ const chartPointValue = (value: string | null | undefined): number | null => {
   return Number.isFinite(parsed) ? parsed * 100 : null;
 };
 
-const toChartRows = (chart: MarketChartResponse | null): Array<Record<string, string | number | null>> =>
-  chart?.points.map((point) => ({
-    label: point.label,
+const OUTCOME_CHART_COLORS = ["#22C55E", "#EF4444", "#3B82F6", "#F59E0B", "#8B5CF6", "#EC4899"];
+
+const normalizeChartKey = (prefix: string, value: string): string =>
+  `${prefix}_${value.replace(/[^a-zA-Z0-9_]/g, "_")}`;
+
+const bucketChartTimestamp = (timestamp: string): number => {
+  const parsed = Date.parse(timestamp);
+  if (!Number.isFinite(parsed)) return Date.now();
+  return Math.round(parsed / 10_000) * 10_000;
+};
+
+const formatChartTimeLabel = (timestamp: string, timeframe: MarketChartTimeframe): string => {
+  const date = new Date(timestamp);
+  if (!Number.isFinite(date.getTime())) return timestamp;
+  const options: Intl.DateTimeFormatOptions =
+    timeframe === "1H"
+      ? { hour: "2-digit", minute: "2-digit", second: "2-digit" }
+      : timeframe === "6H" || timeframe === "1D"
+        ? { hour: "2-digit", minute: "2-digit" }
+        : timeframe === "1W"
+          ? { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }
+          : { month: "short", day: "numeric" };
+  return new Intl.DateTimeFormat("en-US", options).format(date);
+};
+
+const toVenueChartModel = (
+  chart: MarketChartResponse | null,
+  timeframe: MarketChartTimeframe
+): { rows: TerminalChartRow[]; series: TerminalChartSeries[]; historyStatus: MarketChartResponse["historyStatus"] | null } => {
+  if (!chart) return { rows: [], series: [], historyStatus: null };
+  const series = chart.series.map((item) => ({
+    id: item.id,
+    label: item.label,
+    color: item.color,
+    emphasis: item.id === "unified",
+    dashed: item.id !== "unified"
+  }));
+  const rows = chart.points.map((point) => ({
+    label: formatChartTimeLabel(point.timestamp, timeframe),
+    timestamp: Date.parse(point.timestamp),
     unified: chartPointValue(point.unified),
     ...Object.fromEntries(Object.entries(point.venues).map(([venue, value]) => [venue, chartPointValue(value)]))
-  })) ?? [];
+  }));
+  return { rows, series, historyStatus: chart.historyStatus };
+};
+
+const toOutcomeChartModel = (
+  charts: Array<{ chart: MarketChartResponse; key: string; label: string; color: string }>,
+  timeframe: MarketChartTimeframe
+): { rows: TerminalChartRow[]; series: TerminalChartSeries[]; historyStatus: MarketChartResponse["historyStatus"] | null } => {
+  const rowsByBucket = new Map<number, TerminalChartRow>();
+  const series: TerminalChartSeries[] = charts.map((entry) => ({
+    id: entry.key,
+    label: entry.label,
+    color: entry.color
+  }));
+
+  for (const entry of charts) {
+    for (const point of entry.chart.points) {
+      const value = chartPointValue(point.unified);
+      if (value === null) continue;
+      const bucket = bucketChartTimestamp(point.timestamp);
+      const existing = rowsByBucket.get(bucket) ?? {
+        label: formatChartTimeLabel(point.timestamp, timeframe),
+        timestamp: bucket
+      };
+      existing[entry.key] = value;
+      rowsByBucket.set(bucket, existing);
+    }
+  }
+
+  const rows = [...rowsByBucket.values()].sort((left, right) => Number(left.timestamp ?? 0) - Number(right.timestamp ?? 0));
+  const historyStatus = charts.some((entry) => entry.chart.historyStatus === "live")
+    ? "live"
+    : charts.some((entry) => entry.chart.historyStatus === "accumulating")
+      ? "accumulating"
+      : charts.some((entry) => entry.chart.historyStatus === "unavailable")
+        ? "unavailable"
+        : null;
+  return { rows, series, historyStatus };
+};
 
 const LiveCanonicalChart = ({
   marketId,
   outcomeId,
   marketType,
+  outcomes = EMPTY_TERMINAL_OUTCOMES,
 }: {
   marketId: string | null;
   outcomeId: string | null;
   marketType: 'binary' | 'multi';
+  outcomes?: TerminalOutcomeRow[];
 }) => {
   const [activeTab, setActiveTab] = useState<MarketChartTimeframe>('1H');
-  const [chart, setChart] = useState<MarketChartResponse | null>(null);
+  const [venueChart, setVenueChart] = useState<MarketChartResponse | null>(null);
+  const [outcomeCharts, setOutcomeCharts] = useState<Array<{ chart: MarketChartResponse; key: string; label: string; color: string }>>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const tabs: MarketChartTimeframe[] = ['1H', '6H', '1D', '1W', '1M', 'ALL'];
-  const rows = useMemo(() => toChartRows(chart), [chart]);
-  const series = chart?.series ?? [];
+  const binaryOutcomeInputs = useMemo(() => {
+    if (marketType !== 'binary') return [];
+    const source = outcomes.length > 0
+      ? outcomes
+      : [
+          { id: 'YES', name: 'Yes' } as TerminalOutcomeRow,
+          { id: 'NO', name: 'No' } as TerminalOutcomeRow
+        ];
+    return source.slice(0, 5).map((outcome, index) => ({
+      id: outcome.id,
+      label: outcome.name,
+      key: normalizeChartKey('outcome', outcome.id),
+      color: OUTCOME_CHART_COLORS[index % OUTCOME_CHART_COLORS.length]!
+    }));
+  }, [marketType, outcomes]);
+  const chartModel = useMemo(
+    () => marketType === 'binary'
+      ? toOutcomeChartModel(outcomeCharts, activeTab)
+      : toVenueChartModel(venueChart, activeTab),
+    [activeTab, marketType, outcomeCharts, venueChart]
+  );
+  const { rows, series, historyStatus } = chartModel;
 
   React.useEffect(() => {
     let cancelled = false;
     const loadChart = async () => {
       if (!marketId) {
-        setChart(null);
+        setVenueChart(null);
+        setOutcomeCharts([]);
         setError(null);
         return;
       }
       setLoading(true);
       setError(null);
       try {
+        if (marketType === 'binary') {
+          const results = await Promise.allSettled(
+            binaryOutcomeInputs.map(async (outcome) => ({
+              ...outcome,
+              chart: await getMarketChart(marketId, { outcomeId: outcome.id, timeframe: activeTab })
+            }))
+          );
+          const fulfilled = results.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
+          if (!cancelled) {
+            setVenueChart(null);
+            setOutcomeCharts(fulfilled);
+            if (fulfilled.length === 0) {
+              const rejected = results.find((result) => result.status === 'rejected');
+              setError(safeMarketDataError(rejected?.reason, 'chart'));
+            }
+          }
+          return;
+        }
+
         const response = await getMarketChart(marketId, { outcomeId, timeframe: activeTab });
-        if (!cancelled) setChart(response);
+        if (!cancelled) {
+          setOutcomeCharts([]);
+          setVenueChart(response);
+        }
       } catch (err) {
         if (!cancelled) {
-          setChart(null);
+          setVenueChart(null);
+          setOutcomeCharts([]);
           setError(safeMarketDataError(err, 'chart'));
         }
       } finally {
@@ -741,7 +874,7 @@ const LiveCanonicalChart = ({
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [activeTab, marketId, outcomeId]);
+  }, [activeTab, binaryOutcomeInputs, marketId, marketType, outcomeId]);
 
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (!active || !payload?.length) return null;
@@ -789,9 +922,8 @@ const LiveCanonicalChart = ({
       </div>
       <div className="flex items-center gap-4 px-4 mt-4 text-[13px] min-h-[20px]">
         {series.slice(0, 5).map((item) => {
-          const latest = [...(chart?.points ?? [])].reverse().find((point) => item.id === 'unified' ? point.unified : point.venues[item.id]);
-          const rawValue = item.id === 'unified' ? latest?.unified : latest?.venues[item.id];
-          const value = chartPointValue(rawValue);
+          const latest = [...rows].reverse().find((point) => typeof point[item.id] === 'number');
+          const value = typeof latest?.[item.id] === 'number' ? latest[item.id] as number : null;
           return (
             <div key={item.id} className="flex items-center gap-1.5">
               <div className="w-2 h-2 rounded-full" style={{ backgroundColor: item.color }} />
@@ -801,7 +933,7 @@ const LiveCanonicalChart = ({
             </div>
           );
         })}
-        {chart?.historyStatus === 'accumulating' && (
+        {historyStatus === 'accumulating' && (
           <div className="text-zinc-500 font-bold ml-2">Live history accumulating</div>
         )}
       </div>
@@ -845,10 +977,10 @@ const LiveCanonicalChart = ({
                 dataKey={item.id}
                 name={item.label}
                 stroke={item.color}
-                strokeWidth={item.id === 'unified' ? 2.5 : 1.5}
+                strokeWidth={item.emphasis ? 2.5 : 1.8}
                 dot={false}
-                strokeDasharray={item.id === 'unified' ? undefined : '4 2'}
-                activeDot={{ r: item.id === 'unified' ? 5 : 4, stroke: '#18181b', strokeWidth: 2 }}
+                strokeDasharray={item.dashed ? '4 2' : undefined}
+                activeDot={{ r: item.emphasis ? 5 : 4, stroke: '#18181b', strokeWidth: 2 }}
                 connectNulls
               />
             ))}
@@ -1417,7 +1549,12 @@ export const InfraTradingTerminal = ({
             
             {/* Main Chart Section */}
             <div className="flex-1 flex flex-col relative border-r border-zinc-800 p-4 min-w-0">
-               <LiveCanonicalChart marketId={terminalMarketId} outcomeId={selectedOutcomeId} marketType={marketType} />
+               <LiveCanonicalChart
+                 marketId={terminalMarketId}
+                 outcomeId={selectedOutcomeId}
+                 marketType={marketType}
+                 outcomes={terminalOutcomes}
+               />
             </div>
 
             {/* Order Book Panel (Right side of middle container) */}
