@@ -32,6 +32,7 @@ import {
   type OpenOrdersResponse,
   type TradeRouteCandidate,
 } from '@/features/trading/api/execution-api';
+import { ApiClientError } from '@/lib/api/http-client';
 
 export type TerminalMarketSelection = {
   id?: string;
@@ -380,6 +381,23 @@ const safeExecutionAccountError = (error: unknown): string => {
   return message || 'Execution records are temporarily unavailable. Please try again shortly.';
 };
 
+const safeMarketDataError = (error: unknown, surface: 'chart' | 'orderbook'): string => {
+  const fallback = surface === 'chart'
+    ? 'Live chart data is temporarily unavailable. The market can still be reviewed from live outcomes and route quotes.'
+    : 'Live orderbook depth is temporarily unavailable. The market can still be reviewed from live outcomes and route quotes.';
+  if (error instanceof ApiClientError) {
+    if (error.status === 404 || error.status === 503) return fallback;
+    if (error.status >= 500) return fallback;
+    if (/route\s+(get|post|put|patch|delete):/i.test(error.message)) return fallback;
+    return error.message || fallback;
+  }
+  if (error instanceof Error) {
+    if (/route\s+(get|post|put|patch|delete):/i.test(error.message)) return fallback;
+    return error.message || fallback;
+  }
+  return fallback;
+};
+
 const describeOutcomeSchema = (schema: Record<string, unknown> | null | undefined): string => {
   if (!schema) return 'Outcome schema not specified';
   const yes = typeof schema.yesLabel === 'string' ? schema.yesLabel : 'Yes';
@@ -709,7 +727,7 @@ const LiveCanonicalChart = ({
       } catch (err) {
         if (!cancelled) {
           setChart(null);
-          setError(err instanceof Error ? err.message : 'Live chart unavailable');
+          setError(safeMarketDataError(err, 'chart'));
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -1110,7 +1128,7 @@ export const InfraTradingTerminal = ({
       } catch (error) {
         if (!cancelled) {
           setOrderbook(null);
-          setOrderbookError(error instanceof Error ? error.message : 'Live orderbook unavailable');
+          setOrderbookError(safeMarketDataError(error, 'orderbook'));
         }
       } finally {
         if (!cancelled) setOrderbookLoading(false);
