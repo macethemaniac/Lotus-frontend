@@ -52,6 +52,10 @@ Frontend rules:
 - `GET /markets/{marketId}/orderbook?outcomeId&venue&depth` returns sanitized live backend depth from Lotus venue quote readers only. It includes unified `bids`, `asks`, per-venue books, best bid/ask, midpoint, spread, status, and blockers. The frontend must not fabricate depth rows.
 - `GET /markets/{marketId}/chart?outcomeId&timeframe=1H|6H|1D|1W|1M|ALL` returns Lotus-owned live midpoint observations from backend venue orderbook snapshots, older approved historical state rows, and approved venue historical sources where available. It does not use Predexon or browser venue calls; older timeframes may return `historyStatus: "accumulating"` until Lotus has recorded enough snapshots.
 - Backend snapshot recording is durable and sanitized. When `MARKET_ORDERBOOK_RECORDER_ENABLED=true`, Lotus polls approved open catalog markets through backend quote readers, stores price/depth snapshots in `venue_orderbook_snapshots`, and prunes old rows plus rows for expired/resolved or disabled catalog markets. Resolved/cancelled/disabled markets should not keep accumulating chart history.
+- `POST /markets/quotes/batch` returns per-outcome partial quote success. A failed venue must not make the whole market unavailable when another venue returns a real live quote.
+- Batch quote items may return `status: "live" | "partial" | "stale" | "unavailable"`. `stale` means Lotus is showing a previous backend-observed quote while a fresh read failed; it is display evidence only and cannot unlock execution by itself.
+- Quote blockers are typed and venue-specific. Supported safe reasons include `QUOTE_PROVIDER_HTTP_<status>`, `QUOTE_PROVIDER_TIMEOUT`, `QUOTE_PROVIDER_EMPTY_BOOK`, `QUOTE_PROVIDER_BAD_PAYLOAD`, `VENUE_OUTCOME_ID_MISSING`, `OPINION_TOKEN_ID_MISSING`, and `QUOTE_SNAPSHOT_STALE`. Optional `detailsCode` is sanitized and never contains provider secrets or raw payloads.
+- For binary display only, the frontend may show `No = 1 - live Yes` when backend has a valid live Yes price. Derived No is never executable unless the backend also returns a real No candidate/quote for that venue/outcome.
 - Fields not returned by backend endpoints, including savings, order-flow counts, and historical movement, must render as quote-required/unavailable instead of fake values.
 - Local development note from May 9, 2026: if `GET /markets` returns HTTP 500 with `relation "frontend_market_approvals" does not exist`, apply the existing backend migration for `frontend_market_approvals` before testing dashboard data population.
 
@@ -98,7 +102,7 @@ Frontend rules:
 - Do not enable trading based on a wallet balance, bridge receipt, or destination received state alone.
 - Only backend readiness and execution preflight can mark capital usable for execution.
 
-### RFQ and Execution
+#### RFQ and Execution
 
 OpenAPI documents:
 
@@ -131,6 +135,9 @@ Frontend rules:
 - Do not call venue APIs.
 - Do not show completed or settled until backend status supports it.
 - `POST /execution/live-candidates` is user-authenticated live pricing evidence. The frontend can use it for visible market unified price displays and terminal quote preparation, but it must preserve backend blockers and cannot infer routeability from catalog metadata alone.
+- `POST /execution/live-candidates` returns usable candidates plus `blocked[]` rows when only some venues fail. `blocked[]` preserves `venue`, `reason`, optional `venueMarketId`, optional `venueOutcomeId`, and optional sanitized `detailsCode`.
+- Live candidate blockers use the same typed quote blocker vocabulary as market batch quotes. User-facing copy should normalize those codes to actionable labels such as `Opinion quote unavailable`, `Token mapping missing`, or `Provider timeout`; raw backend exception strings and provider payloads are never shown.
+- Opinion builder credentials are backend-only config (`OPINION_API_KEY` or `OPINION_BUILDER_API_KEY`). The frontend never receives the key and never calls Opinion directly. Opinion account/readiness and quote preparation may clear blockers, but live Opinion order submission stays disabled unless backend execution mode and separate production approval explicitly enable it.
 - Terminal bottom tabs use backend-only contracts: outcomes and live candidates for market outcome pricing, positions/open-orders/history HTTP polling as realtime fallback, and resolution-risk canonical/venue market profiles for rules and compatibility.
 - Rules and Risk venue text must be backend-verified for the exact selected venue market. Polymarket rules are hydrated from Gamma metadata when available; Limitless rules are hydrated from Limitless market detail/public detail metadata when available; other venues use only trusted ingested venue profile rule/source fields. The frontend must show unavailable rule metadata when these fields are `null`, not fallback titles or inferred copy.
 - Rules and Risk `oracleName` / `oracleType` fields identify the venue-declared resolution source, not the venue brand. The visible source type is the named provider from `oracleName` (for example, Binance), the source market is the remaining instrument/symbol (for example, BTC/USDT), and `oracleType` is shown only as the resolution method/category. Source URLs in `metadata.officialVenueRules.sourceUrl` and URLs inside verified rule/source text are rendered as outbound HTTPS hyperlinks, including UMA or other oracle-source links when the backend provides them.
@@ -139,7 +146,7 @@ Frontend rules:
 - Portfolio time-series is currently a backend-generated current MTM snapshot (`seriesBasis: CURRENT_MARK_TO_MARKET_SNAPSHOT`, `historyAvailable: false`) until persisted historical portfolio snapshots exist.
 - Open orders include only non-dry-run signed-bundle executions with `SUBMITTED` or `PARTIAL` status. Limit-order creation/list/cancel is not part of this contract slice.
 
-## Realtime
+###### Realtime
 
 WebSocket endpoint:
 
@@ -165,7 +172,7 @@ Supported events:
 
 HTTP polling remains fallback for execution status and positions. The current app shell subscribes to user notification, portfolio, and user execution topics, then refreshes durable HTTP data after relevant realtime events.
 
-## Not Wired In This Slice
+###### Not Wired In This Slice
 
 - Admin endpoints.
 - Venue provider APIs.

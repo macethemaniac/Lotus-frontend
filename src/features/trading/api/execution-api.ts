@@ -24,6 +24,7 @@ export type TradeRouteCandidate = {
   quoteQuality?: string;
   freshnessMs?: number;
   quoteBlockers?: string[];
+  metadata?: Record<string, unknown>;
 };
 
 export type LiveCandidatesResponse = {
@@ -33,7 +34,7 @@ export type LiveCandidatesResponse = {
   amount: string;
   source: "LIVE_QUOTE_SOURCE";
   candidates: TradeRouteCandidate[];
-  blocked: { venue: string; reason: string; venueMarketId?: string; venueOutcomeId?: string }[];
+  blocked: { venue: string; reason: string; venueMarketId?: string; venueOutcomeId?: string; detailsCode?: string }[];
 };
 
 export type RouteQuote = {
@@ -59,6 +60,7 @@ export type RouteQuote = {
     size: string;
     price: number;
     requiresUserSignature?: boolean;
+    metadata?: Record<string, unknown>;
   }>;
 };
 
@@ -68,6 +70,7 @@ export type SignatureBundle = {
   signatureRequests: Array<{
     legIndex: number;
     venue: string;
+    requestType?: string;
     signer?: string;
     account?: string;
     kind: string;
@@ -172,6 +175,37 @@ export type ExecutionReceiptResponse = {
   receipt: ExecutionStatus;
 };
 
+export type LiveSubmitVenueReadiness = {
+  venue: string;
+  status: "fresh" | "stale" | "blocked";
+  checkedAt: string;
+  blockers: string[];
+  account: {
+    walletAddress: string | null;
+    venueAccountAddress: string | null;
+    ownerAddress: string | null;
+  };
+  collateral: {
+    requiredNotional: string | null;
+    balance: string | null;
+    allowance: string | null;
+    tokenSymbol: string | null;
+    tokenAddress: string | null;
+    spenderAddress: string | null;
+    chainId: number | null;
+    approvalMethod?: "ERC20_APPROVE" | "ERC1155_SET_APPROVAL_FOR_ALL";
+  };
+};
+
+export type LiveSubmitReadinessSnapshot = {
+  quoteId: string;
+  generatedAt: string;
+  expiresAt: string;
+  status: "fresh" | "stale" | "blocked";
+  blockers: string[];
+  venues: LiveSubmitVenueReadiness[];
+};
+
 export function getLiveCandidates(token: string, request: LiveCandidateRequest) {
   return apiRequest<LiveCandidatesResponse>("/execution/live-candidates", { method: "POST", token, body: request });
 }
@@ -205,7 +239,7 @@ export function submitSignedBundle(token: string, executionId: string, signedLeg
 }
 
 export function getLiveReadiness(token: string, executionId: string) {
-  return apiRequest<unknown>(`/execution/${encodeURIComponent(executionId)}/live-readiness`, { token });
+  return apiRequest<LiveSubmitReadinessSnapshot>(`/execution/${encodeURIComponent(executionId)}/live-readiness`, { token });
 }
 
 export function getExecutionStatus(token: string, executionId: string) {

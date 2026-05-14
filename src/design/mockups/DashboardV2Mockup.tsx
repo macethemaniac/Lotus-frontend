@@ -4,9 +4,18 @@ import { VenueLogo } from '@/components/icons/asset-logo';
 import { InfraTradingTerminal, type TerminalMarketSelection } from '@/design/mockups/InfraTradingTerminal';
 import { PortfolioMockupV2 } from '@/design/mockups/PortfolioMockupV2';
 import type { AuthSession } from '@/features/auth/types';
-import { listMarkets, type MarketCatalogMarket } from '@/features/markets/api/market-api';
+import {
+  getMarketBatchQuotes,
+  getMarketChart,
+  getMarketOrderbook,
+  getMarketOutcomes,
+  listMarkets,
+  type MarketBatchQuoteItem,
+  type MarketCatalogMarket,
+} from '@/features/markets/api/market-api';
 import { getNotifications, markNotificationRead, type UserNotification } from '@/features/notifications/api/notification-api';
-import { getLiveCandidates, type LiveCandidatesResponse, type TradeRouteCandidate } from '@/features/trading/api/execution-api';
+import { getPortfolioSummary, type LiveCandidatesResponse, type PortfolioSummary, type TradeRouteCandidate } from '@/features/trading/api/execution-api';
+import { getVenueBalances, type VenueBalance } from '@/features/funding/api/funding-api';
 import { ApiClientError } from '@/lib/api/http-client';
 import { 
   Search, Bell, Home, BarChart2, ArrowRightLeft, 
@@ -14,7 +23,7 @@ import {
   ShieldCheck, AlertTriangle, Clock, ChevronRight,
   Flame, Globe, Cpu, MessageSquare, ChevronsLeft, ChevronsRight,
   Square, CheckSquare, Star, Sparkles, Trophy, Database, Filter, Sun, Moon, Vault, Volleyball, Landmark, Terminal,
-  LayoutGrid, List, Bookmark, Radio, CheckCircle2, Wallet
+  LayoutGrid, List, Bookmark, Radio, CheckCircle2, Wallet, X
 } from 'lucide-react';
 
 const Badge = ({ children, variant = 'default', className = '' }: any) => {
@@ -33,13 +42,24 @@ const Badge = ({ children, variant = 'default', className = '' }: any) => {
   );
 };
 
-export type LotusAppPage = 'home' | 'markets' | 'terminal' | 'portfolio';
+export type LotusAppPage = 'home' | 'markets' | 'terminal' | 'portfolio' | 'settings';
 
 type DashboardOutcomeRow = {
   id: string;
+  marketId: string;
+  eventId?: string;
+  canonicalEventId: string;
+  quoteOutcomeId: string;
   name: string;
   prob: string;
   liveStatus?: 'live' | 'unavailable' | 'not_requested';
+  venues?: string[];
+  venueMarkets?: MarketCatalogMarket['venueMarkets'];
+  marketType?: 'binary' | 'multi';
+  marketTitle?: string;
+  imageUrl?: string | null;
+  iconUrl?: string | null;
+  priceVenue?: string | null;
 };
 
 type DashboardMarketRow = Pick<TerminalMarketSelection, 'title' | 'category' | 'icon' | 'volume' | 'venueCount' | 'routeType'> & {
@@ -61,8 +81,10 @@ type DashboardMarketRow = Pick<TerminalMarketSelection, 'title' | 'category' | '
   savings: string;
   spread: string;
   fallbackLabel: string;
+  fallbackMode: 'best_venue' | 'fallback' | 'blocker' | 'pending';
   volumeLabel: string;
   closesBy: string;
+  closeTimestamp: number | null;
   change24hLabel: string;
   change24hDirection: 'positive' | 'negative' | 'neutral' | 'pending';
   venueDetails: Record<string, {
@@ -96,6 +118,14 @@ type DashboardMarketQuote = {
   sellOutcomes?: Record<string, DashboardOutcomeQuote>;
 };
 
+type MarketQuickFilter = 'all' | 'watchlist' | 'live_crypto' | 'trending' | 'best_routes' | 'sports' | 'crypto' | 'politics';
+type DashboardRouteFilter = 'Single' | 'Pair' | 'Tri' | 'Strict all';
+type DashboardSortKey = 'volume' | 'liquidity' | 'closing' | 'buys' | 'sells' | 'best_route';
+type ToastPosition = 'top-left' | 'top-center' | 'top-right' | 'bottom-left' | 'bottom-center' | 'bottom-right';
+
+const watchlistStorageKey = 'lotus.watchlist.marketIds';
+const notificationSettingsStorageKey = 'lotus.notification.settings';
+
 const categoryIconFallback: Record<string, string> = {
   sports: 'L',
   politics: 'L',
@@ -105,7 +135,10 @@ const categoryIconFallback: Record<string, string> = {
 };
 
 const routeTypeLabel = (market: MarketCatalogMarket): string => {
-  if (market.routeability.hasCrossVenue) return market.venueCount >= 3 ? 'Tri' : 'Pair';
+  if (market.routeability.hasCrossVenue) {
+    if (market.venueCount >= 4) return 'Strict all';
+    return market.venueCount >= 3 ? 'Tri' : 'Pair';
+  }
   return 'Single';
 };
 
@@ -114,6 +147,19 @@ const formatTitleCase = (value: string): string =>
     .replace(/[_-]+/g, ' ')
     .toLowerCase()
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
+
+const assetDisplayName = (value: string): string => {
+  const normalized = value.toUpperCase();
+  const names: Record<string, string> = {
+    BASE: 'Base',
+    BNB: 'BNB',
+    BTC: 'Bitcoin',
+    ETH: 'Ethereum',
+    SOL: 'Solana',
+    XRP: 'XRP',
+  };
+  return names[normalized] ?? formatTitleCase(value);
+};
 
 const getSafeMediaUrl = (value: string | null | undefined): string | null => {
   if (!value) return null;
@@ -135,9 +181,167 @@ const formatMarketDate = (value: string | null | undefined): string => {
 const formatVenueCloseDate = (expiresAt: string | null | undefined, resolvesAt: string | null | undefined): string =>
   formatMarketDate(expiresAt ?? resolvesAt);
 
+const dateTimestamp = (value: string | null | undefined): number | null => {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
 const normalizeVenueId = (venue: string): string => venue.toLowerCase().replace(/[\s._-]+/g, '_');
 
+const dashboardVenueIconId = (venue: string): string => {
+  const normalized = normalizeVenueId(venue);
+  if (['predict', 'predict_fun', 'predictfun'].includes(normalized)) return 'predict';
+  if (['poly_market', 'polymarket'].includes(normalized)) return 'polymarket';
+  return normalized;
+};
+
 const normalizeOutcomeId = (value: string): string => value.trim().toUpperCase().replace(/\s+/g, '_');
+
+const canonicalQuoteOutcomeId = (label: string): string => {
+  const trimmed = label.trim();
+  const normalized = normalizeOutcomeId(trimmed);
+  if (normalized === 'YES' || normalized === 'NO' || normalized === 'UP' || normalized === 'DOWN') {
+    return normalized;
+  }
+  return trimmed;
+};
+
+const extractDatePhrase = (title: string): string | null => {
+  const match = title.match(/\b(?:by|before|after|on)\s+(.+?)(?:\?|$)/i);
+  return match?.[0]?.replace(/\?$/, '').trim() ?? null;
+};
+
+const formatDateCandidate = (value: string): string | null => {
+  const normalized = value.replace(/_/g, '-').trim();
+  const compact = normalized.match(/\b(20\d{2})[-\s](\d{2})[-\s](\d{2})\b/);
+  const candidate = compact ? `${compact[1]}-${compact[2]}-${compact[3]}` : normalized;
+  const parsed = new Date(`${candidate}T12:00:00.000Z`);
+  if (!Number.isNaN(parsed.getTime()) && /^\d{4}-\d{2}-\d{2}$/.test(candidate)) {
+    return parsed.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' });
+  }
+  const natural = new Date(normalized);
+  if (!Number.isNaN(natural.getTime()) && /\b20\d{2}\b/.test(normalized) && /[A-Za-z]/.test(normalized)) {
+    return natural.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' });
+  }
+  return null;
+};
+
+const formatMonthYearCandidate = (value: string): string | null => {
+  const normalized = value.replace(/_/g, '-').trim();
+  const compact = normalized.match(/\b(20\d{2})[-\s](\d{2})[-\s](\d{2})\b/);
+  const candidate = compact ? `${compact[1]}-${compact[2]}-${compact[3]}` : normalized;
+  const parsed = new Date(`${candidate}T12:00:00.000Z`);
+  return Number.isNaN(parsed.getTime())
+    ? null
+    : parsed.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+};
+
+const formatPriceCandidate = (value: string): string => {
+  const numeric = Number(value.replace(/[$,_\s]/g, ''));
+  return Number.isFinite(numeric)
+    ? `$${numeric.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+    : value.trim();
+};
+
+const extractDateCandidate = (title: string): string | null => {
+  const suffixDate = title.match(/:\s*(20\d{2}[-_]\d{2}[-_]\d{2})\s*$/);
+  if (suffixDate?.[1]) return formatDateCandidate(suffixDate[1]) ?? suffixDate[1].replace(/_/g, '-');
+  const spacedDate = title.match(/\b(20\d{2})\s+(\d{2})\s+(\d{2})\b/);
+  if (spacedDate) return formatDateCandidate(`${spacedDate[1]}-${spacedDate[2]}-${spacedDate[3]}`);
+  const isoMatch = title.match(/\b(20\d{2}[-_]\d{2}[-_]\d{2})\b/);
+  if (isoMatch?.[1]) return formatDateCandidate(isoMatch[1]) ?? isoMatch[1].replace(/_/g, '-');
+  const phraseMatch = title.match(/\b(?:by|before|after|on)\s+(.+?)(?:\?|$)/i);
+  return phraseMatch?.[1]?.trim() ?? null;
+};
+
+const normalizeEventTopicTitle = (market: MarketCatalogMarket): string => {
+  if (market.displayTopic?.trim()) return market.displayTopic.trim();
+  const rawTitle = (market.eventTitle ?? market.title).trim();
+  const title = rawTitle
+    .replace(/\s*:\s*\d{4}[-_]\d{2}[-_]\d{2}$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const upper = title.toUpperCase();
+
+  const athMatch = upper.match(/\bATH_BY_DATE\|([A-Z0-9]+)\|/) ?? upper.match(/\bATH BY DATE ([A-Z0-9]+)\b/);
+  if (athMatch?.[1]) return `${athMatch[1]} ATH by ____`;
+
+  if (/ETHEREUM|ETH/i.test(title) && /ATH|ALL[-\s]?TIME HIGH/i.test(title)) return 'ETH ATH by ____';
+  if (/\bBTC\b|\bBITCOIN\b/i.test(title) && /ATH|ALL[-\s]?TIME HIGH/i.test(title)) return 'BTC ATH by ____';
+
+  const tokenLaunchMatch = upper.match(/\bTOKEN_LAUNCH_BY_DATE\|([A-Z0-9]+)\|/) ?? upper.match(/\bTOKEN LAUNCH BY DATE ([A-Z0-9]+)\b/);
+  if (tokenLaunchMatch?.[1]) return `${assetDisplayName(tokenLaunchMatch[1])} to launch a token by ____`;
+
+  const thresholdMatch = upper.match(/\bTHRESHOLD_BY_DATE\|([A-Z0-9]+)\|(20\d{2}[-_]\d{2}[-_]\d{2})\|/) ?? upper.match(/\bTHRESHOLD BY DATE ([A-Z0-9]+) (20\d{2}[-_]\d{2}[-_]\d{2})\b/);
+  if (thresholdMatch?.[1] && thresholdMatch[2]) {
+    const monthYear = formatMonthYearCandidate(thresholdMatch[2]);
+    if (monthYear) return `What price will ${assetDisplayName(thresholdMatch[1])} hit in ${monthYear}?`;
+  }
+
+  const firstThresholdMatch = upper.match(/\bFIRST_TO_THRESHOLD_BY_DATE\|([A-Z0-9]+)\|/) ?? upper.match(/\bFIRST TO THRESHOLD BY DATE ([A-Z0-9]+)\b/);
+  if (firstThresholdMatch?.[1]) return `${firstThresholdMatch[1]} first to hit ____`;
+
+  const fdvMatch = title.match(/FDV threshold after launch\s+(.+?)\s+one day after launch/i);
+  if (fdvMatch?.[1]) return `${formatTitleCase(fdvMatch[1])} FDV one day after launch`;
+  const fdvGeneric = title.match(/^(.+?)\s+FDV\s+(?:above|over|threshold).+one day after launch/i);
+  if (fdvGeneric?.[1]) return `${formatTitleCase(fdvGeneric[1])} FDV one day after launch`;
+
+  const datedBinary = title.match(/^(.+?)\s+(?:by|before|after|on)\s+.+\??$/i);
+  if (datedBinary && /(greenland|netanyahu|out|launch|confirm|hit|above|below|greater|less|all time high)/i.test(title)) {
+    return datedBinary[1]!.replace(/\?$/, '').trim();
+  }
+
+  return title.replace(/\?$/, '').trim();
+};
+
+const deriveCandidateOutcomeLabel = (market: MarketCatalogMarket): string => {
+  if (market.displayOutcome?.trim()) return market.displayOutcome.trim();
+  const title = market.title.trim();
+  if (/:\s*20\d{2}[-_]\d{2}[-_]\d{2}\s*$/.test(title)) {
+    const suffixDate = extractDateCandidate(title);
+    if (suffixDate) return suffixDate;
+  }
+  const fdvValue = title.match(/:\s*([$€£]?\s*[\d,.]+\s*[KMBT]?)/i)?.[1];
+  if (fdvValue) return fdvValue.replace(/\s+/g, '').toUpperCase();
+
+  const afterLaunchValue = title.match(/\b([$€£]?\s*[\d,.]+\s*[KMBT])\b/i)?.[1];
+  if (/FDV|above|threshold/i.test(title) && afterLaunchValue) {
+    return afterLaunchValue.replace(/\s+/g, '').toUpperCase();
+  }
+
+  const dateCandidate = extractDateCandidate(title);
+  if (dateCandidate) return dateCandidate;
+
+  const suffix = title.match(/:\s*(.+)$/)?.[1]?.trim();
+  if (suffix && suffix.length <= 48) {
+    return formatDateCandidate(suffix) ?? suffix;
+  }
+
+  return title.replace(/\?$/, '').trim();
+};
+
+const candidateOutcomeKey = (market: MarketCatalogMarket): string => {
+  if (market.displayOutcomeKey?.trim()) return market.displayOutcomeKey.trim().toLowerCase();
+  const dateCandidate = extractDateCandidate(market.title);
+  if (dateCandidate) return `date:${dateCandidate.toLowerCase()}`;
+  return `label:${deriveCandidateOutcomeLabel(market).toLowerCase().replace(/\s+/g, '_')}`;
+};
+
+const normalizeMarketOutcomeLabel = (marketTitle: string, outcomeLabel: string): string => {
+  const normalizedOutcome = outcomeLabel.trim();
+  const outcomeKey = normalizeOutcomeId(normalizedOutcome);
+  if (outcomeKey === 'YES') return extractDatePhrase(marketTitle) ?? 'Yes';
+  if (outcomeKey === 'NO') return 'No';
+
+  const fdvValue = marketTitle.match(/:\s*([$€£]?\s*[\d,.]+\s*[KMBT]?)/i)?.[1];
+  if (fdvValue && /^yes$/i.test(normalizedOutcome)) return fdvValue.replace(/\s+/g, '');
+
+  if (/winner|champion|mayor|election|nominee/i.test(marketTitle)) {
+    return normalizedOutcome;
+  }
+  return normalizedOutcome;
+};
 
 const formatProbabilityPrice = (price: number | null | undefined): string => {
   if (typeof price !== 'number' || !Number.isFinite(price) || price <= 0) return 'Quote';
@@ -165,6 +369,64 @@ const formatCompactMetric = (value: string | number | null | undefined): string 
 const formatMoneyMetric = (value: string | number | null | undefined): string | null => {
   const formatted = formatCompactMetric(value);
   return formatted ? `$${formatted}` : null;
+};
+
+const chunkArray = <T,>(items: T[], size: number): T[][] => {
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+  return chunks;
+};
+
+const formatCurrencyValue = (value: string | number | null | undefined): string => {
+  const parsed = typeof value === 'number' ? value : typeof value === 'string' ? Number(value.replace(/[$,\s]/g, '')) : NaN;
+  if (!Number.isFinite(parsed)) return 'Unavailable';
+  return parsed.toLocaleString(undefined, { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
+};
+
+const loadWatchlistIds = (): string[] => {
+  try {
+    const raw = window.localStorage.getItem(watchlistStorageKey);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : [];
+  } catch {
+    return [];
+  }
+};
+
+const saveWatchlistIds = (ids: string[]) => {
+  window.localStorage.setItem(watchlistStorageKey, JSON.stringify(ids));
+};
+
+const loadNotificationSettings = (): { toastPosition: ToastPosition; notificationsEnabled: boolean; notificationSound: boolean } => {
+  try {
+    const raw = window.localStorage.getItem(notificationSettingsStorageKey);
+    const parsed = raw ? JSON.parse(raw) : {};
+    const positions: ToastPosition[] = ['top-left', 'top-center', 'top-right', 'bottom-left', 'bottom-center', 'bottom-right'];
+    return {
+      toastPosition: positions.includes(parsed.toastPosition) ? parsed.toastPosition : 'bottom-right',
+      notificationsEnabled: typeof parsed.notificationsEnabled === 'boolean' ? parsed.notificationsEnabled : true,
+      notificationSound: typeof parsed.notificationSound === 'boolean' ? parsed.notificationSound : true,
+    };
+  } catch {
+    return { toastPosition: 'bottom-right', notificationsEnabled: true, notificationSound: true };
+  }
+};
+
+const saveNotificationSettings = (settings: { toastPosition: ToastPosition; notificationsEnabled: boolean; notificationSound: boolean }) => {
+  window.localStorage.setItem(notificationSettingsStorageKey, JSON.stringify(settings));
+  window.dispatchEvent(new CustomEvent('lotus:notification-settings', { detail: settings }));
+};
+
+const notificationPopoverClass = (position: ToastPosition): string => {
+  const base = 'fixed z-50 w-[21rem] overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-2xl animate-in fade-in duration-200 dark:border-zinc-800 dark:bg-[#1a1a1c]';
+  if (position === 'top-left') return `${base} left-16 top-16 slide-in-from-top-2`;
+  if (position === 'top-center') return `${base} left-1/2 top-16 -translate-x-1/2 slide-in-from-top-2`;
+  if (position === 'top-right') return `${base} right-72 top-16 slide-in-from-top-2`;
+  if (position === 'bottom-left') return `${base} bottom-14 left-16 slide-in-from-bottom-2`;
+  if (position === 'bottom-center') return `${base} bottom-14 left-1/2 -translate-x-1/2 slide-in-from-bottom-2`;
+  return `${base} bottom-14 right-72 slide-in-from-bottom-2`;
 };
 
 const parseMetricNumber = (value: string | number | null | undefined): number | null => {
@@ -224,15 +486,145 @@ const sumCandidateNotional = (quotes: DashboardOutcomeQuote[]): number =>
     sum + quote.candidates.reduce((candidateSum, candidate) => candidateSum + candidateSize(candidate) * candidate.price, 0)
   ), 0);
 
+const marketCategoryMatches = (market: DashboardMarketRow, category: string): boolean =>
+  market.category.toLowerCase().includes(category.toLowerCase());
+
+const categoryForQuickFilter = (filter: MarketQuickFilter): string | undefined => {
+  if (filter === 'sports') return 'Sports';
+  if (filter === 'crypto' || filter === 'live_crypto') return 'Crypto';
+  if (filter === 'politics') return 'Politics';
+  return undefined;
+};
+
+const routeRank = (routeType: string): number => {
+  if (routeType === 'Strict all') return 4;
+  if (routeType === 'Tri') return 3;
+  if (routeType === 'Pair') return 2;
+  return 1;
+};
+
+const sortTrendingMarkets = (markets: DashboardMarketRow[]): DashboardMarketRow[] =>
+  [...markets].sort((left, right) => {
+    const rightActivity = right.txnBuy + right.txnSell;
+    const leftActivity = left.txnBuy + left.txnSell;
+    if (rightActivity !== leftActivity) return rightActivity - leftActivity;
+    if (right.venueCount !== left.venueCount) return right.venueCount - left.venueCount;
+    return routeRank(right.routeType) - routeRank(left.routeType);
+  });
+
+const applyQuickFilter = (
+  markets: DashboardMarketRow[],
+  filter: MarketQuickFilter,
+  watchlistIds: string[],
+): DashboardMarketRow[] => {
+  const activeMarkets = markets.filter((market) => market.status !== 'RESOLVED_OR_EXPIRED');
+  const watched = new Set(watchlistIds);
+  if (filter === 'watchlist') return activeMarkets.filter((market) => watched.has(market.id));
+  if (filter === 'best_routes') {
+    return [...activeMarkets]
+      .filter((market) => market.routeType !== 'Single' && market.status !== 'RESOLVED_OR_EXPIRED')
+      .sort((left, right) => routeRank(right.routeType) - routeRank(left.routeType));
+  }
+  if (filter === 'trending') return sortTrendingMarkets(activeMarkets);
+  if (filter === 'live_crypto') {
+    return sortTrendingMarkets(activeMarkets.filter((market) => marketCategoryMatches(market, 'Crypto') && market.status === 'OPEN'));
+  }
+  return activeMarkets;
+};
+
+const displayedMetricValue = (value: string): number => {
+  const compactMatch = value.replace(/[$,\s]/g, '').match(/^([0-9.]+)([KMB])?$/i);
+  if (!compactMatch) return 0;
+  const amount = Number(compactMatch[1]);
+  if (!Number.isFinite(amount)) return 0;
+  const suffix = compactMatch[2]?.toUpperCase();
+  if (suffix === 'B') return amount * 1_000_000_000;
+  if (suffix === 'M') return amount * 1_000_000;
+  if (suffix === 'K') return amount * 1_000;
+  return amount;
+};
+
+const applyPanelFiltersAndSort = (
+  markets: DashboardMarketRow[],
+  categories: string[],
+  routeTypes: DashboardRouteFilter[],
+  sortKey: DashboardSortKey,
+): DashboardMarketRow[] => {
+  const categorySet = new Set(categories.map((category) => category.toLowerCase()));
+  const routeSet = new Set(routeTypes);
+  const filtered = markets.filter((market) => {
+    const categoryMatch = categorySet.size === 0 || Array.from(categorySet).some((category) => market.category.toLowerCase().includes(category));
+    const routeMatch = routeSet.size === 0 || routeSet.has(market.routeType as DashboardRouteFilter);
+    return categoryMatch && routeMatch;
+  });
+
+  return [...filtered].sort((left, right) => {
+    if (sortKey === 'closing') {
+      const leftClose = left.closeTimestamp ?? Number.MAX_SAFE_INTEGER;
+      const rightClose = right.closeTimestamp ?? Number.MAX_SAFE_INTEGER;
+      return leftClose - rightClose;
+    }
+    if (sortKey === 'buys') return right.txnBuy - left.txnBuy;
+    if (sortKey === 'sells') return right.txnSell - left.txnSell;
+    if (sortKey === 'best_route') return routeRank(right.routeType) - routeRank(left.routeType);
+    if (sortKey === 'liquidity') {
+      const rightLiquidity = right.volumeLabel === 'Liq' ? displayedMetricValue(right.volume) : 0;
+      const leftLiquidity = left.volumeLabel === 'Liq' ? displayedMetricValue(left.volume) : 0;
+      if (rightLiquidity !== leftLiquidity) return rightLiquidity - leftLiquidity;
+    }
+    return displayedMetricValue(right.volume) - displayedMetricValue(left.volume);
+  });
+};
+
 const getReadableBlocker = (blocked: LiveCandidatesResponse['blocked']): string | null => {
   const reason = blocked.find((item) => item.reason)?.reason;
-  return reason ? reason.replace(/[_-]+/g, ' ').toLowerCase() : null;
+  return reason ? readableQuoteBlocker(reason) : null;
+};
+
+const readableQuoteBlocker = (reason: string): string => {
+  const normalized = reason.toUpperCase();
+  if (normalized.includes('OPINION_TOKEN_ID_MISSING')) return 'Opinion token mapping missing';
+  if (normalized.includes('VENUE_OUTCOME_ID_MISSING')) return 'Outcome token mapping missing';
+  if (normalized.includes('QUOTE_PROVIDER_TIMEOUT')) return 'Provider timeout';
+  if (normalized.includes('QUOTE_PROVIDER_EMPTY_BOOK')) return 'No live depth';
+  if (normalized.includes('QUOTE_PROVIDER_BAD_PAYLOAD')) return 'Provider payload unavailable';
+  const http = normalized.match(/QUOTE_PROVIDER_HTTP_(\d{3})/);
+  if (http) return `Provider unavailable (${http[1]})`;
+  if (normalized.includes('QUOTE_READER_UNSUPPORTED')) return 'Venue quote reader unsupported';
+  if (normalized.includes('QUOTE_SNAPSHOT_STALE')) return 'Stale quote';
+  if (normalized.includes('QUOTE_READER_FAILED')) return 'Venue quote unavailable';
+  return reason.replace(/[_-]+/g, ' ').toLowerCase();
+};
+
+const marketIdForCatalogMarket = (market: MarketCatalogMarket): string => market.canonicalMarketIds[0] ?? market.canonicalEventId;
+
+const venuesForCatalogMarket = (market: MarketCatalogMarket): string[] =>
+  Array.from(new Set((market.venues.length ? market.venues : market.venueMarkets.map((item) => item.venue)).map(normalizeVenueId)));
+
+const binaryCandidateOutcomeRow = (market: MarketCatalogMarket): DashboardOutcomeRow => {
+  const marketId = marketIdForCatalogMarket(market);
+  return {
+    id: marketId,
+    marketId,
+    eventId: market.eventId ?? market.canonicalEventId,
+    canonicalEventId: market.canonicalEventId,
+    quoteOutcomeId: 'YES',
+    name: deriveCandidateOutcomeLabel(market),
+    prob: 'Quote',
+    liveStatus: 'not_requested',
+    venues: venuesForCatalogMarket(market),
+    venueMarkets: market.venueMarkets,
+    marketType: market.outcomeCount > 2 ? 'multi' : 'binary',
+    marketTitle: market.title,
+    imageUrl: getSafeMediaUrl(market.imageUrl),
+    iconUrl: getSafeMediaUrl(market.iconUrl),
+  };
 };
 
 const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardMarketRow => {
-  const venues = Array.from(new Set((market.venues.length ? market.venues : market.venueMarkets.map((item) => item.venue)).map(normalizeVenueId)));
+  const venues = venuesForCatalogMarket(market);
   const routeType = routeTypeLabel(market);
-  const marketId = market.canonicalMarketIds[0] ?? market.canonicalEventId;
+  const marketId = marketIdForCatalogMarket(market);
   const marketClass = formatTitleCase(market.marketClass || 'Market');
   const category = formatTitleCase(market.category || 'Market');
   const catalogVolume = formatMoneyMetric(market.volume24h ?? market.volume);
@@ -251,6 +643,10 @@ const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardM
       }];
     })
   );
+  const catalogOutcomeLabels = Array.from(new Set(market.venueMarkets.flatMap((venueMarket) =>
+    venueMarket.outcomes.map((outcome) => outcome.label?.trim()).filter((label): label is string => Boolean(label))
+  )));
+  const isBinaryOutcomeMarket = catalogOutcomeLabels.length > 0 && catalogOutcomeLabels.every((label) => ['YES', 'NO'].includes(normalizeOutcomeId(label)));
   const outcomeByLabel = new Map<string, DashboardOutcomeRow>();
   for (const venueMarket of market.venueMarkets) {
     for (const outcome of venueMarket.outcomes) {
@@ -258,30 +654,39 @@ const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardM
       if (!label || outcomeByLabel.has(label.toLowerCase())) continue;
       outcomeByLabel.set(label.toLowerCase(), {
         id: outcome.id || normalizeOutcomeId(label),
-        name: label,
+        marketId,
+        eventId: market.eventId ?? market.canonicalEventId,
+        canonicalEventId: market.canonicalEventId,
+        quoteOutcomeId: canonicalQuoteOutcomeId(label),
+        name: normalizeMarketOutcomeLabel(market.title, label),
         prob: 'Quote',
         liveStatus: 'not_requested',
+        venues,
+        venueMarkets: market.venueMarkets,
+        marketType: market.outcomeCount > 2 ? 'multi' : 'binary',
+        marketTitle: market.title,
+        imageUrl: getSafeMediaUrl(market.imageUrl),
+        iconUrl: getSafeMediaUrl(market.iconUrl),
       });
     }
   }
-  const outcomeRows = Array.from(outcomeByLabel.values())
+  const outcomeRows = (isBinaryOutcomeMarket ? [binaryCandidateOutcomeRow(market)] : Array.from(outcomeByLabel.values()))
     .sort((left, right) => {
       const order = ['YES', 'NO'];
-      const leftIndex = order.indexOf(normalizeOutcomeId(left.name));
-      const rightIndex = order.indexOf(normalizeOutcomeId(right.name));
+      const leftIndex = order.indexOf(left.quoteOutcomeId);
+      const rightIndex = order.indexOf(right.quoteOutcomeId);
       if (leftIndex === -1 && rightIndex === -1) return 0;
       if (leftIndex === -1) return 1;
       if (rightIndex === -1) return -1;
       return leftIndex - rightIndex;
-    })
-    .slice(0, 4);
+    });
 
   return {
     id: marketId,
     marketId,
     eventId: market.eventId ?? market.canonicalEventId,
     canonicalEventId: market.canonicalEventId,
-    title: market.title,
+    title: normalizeEventTopicTitle(market),
     category: `${category} - ${marketClass}`,
     icon: categoryIconFallback[market.category.toLowerCase()] ?? 'L',
     volume: catalogVolume ?? catalogLiquidity ?? 'Backend catalog',
@@ -295,7 +700,7 @@ const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardM
     status: market.status,
     outcomes: outcomeRows.length > 0
       ? outcomeRows
-      : [{ id: 'OUTCOMES', name: 'Outcomes load in terminal', prob: 'Quote', liveStatus: 'not_requested' }],
+      : [{ id: 'OUTCOMES', marketId, eventId: market.eventId ?? market.canonicalEventId, canonicalEventId: market.canonicalEventId, quoteOutcomeId: 'OUTCOMES', name: 'Outcomes load in terminal', prob: 'Quote', liveStatus: 'not_requested' }],
     imageUrl: getSafeMediaUrl(market.imageUrl),
     iconUrl: getSafeMediaUrl(market.iconUrl),
     priceLabel: 'Quote',
@@ -304,7 +709,9 @@ const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardM
     savings: 'Quote required',
     spread: 'Quote required',
     fallbackLabel: routeType === 'Single' ? 'Single venue' : 'Route preview',
+    fallbackMode: routeType === 'Single' ? 'fallback' : 'pending',
     closesBy: formatMarketDate(market.expiresAt ?? market.resolvesAt),
+    closeTimestamp: dateTimestamp(market.expiresAt ?? market.resolvesAt),
     change24hLabel: 'Quote',
     change24hDirection: 'pending',
     venueDetails,
@@ -316,6 +723,72 @@ const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardM
     txnLabel: buyCount !== null || sellCount !== null ? 'Txns' : buyVolume !== null || sellVolume !== null ? 'Vol' : 'Pending',
     badges: venues,
   };
+};
+
+const mapCatalogMarketsToDashboardRows = (markets: MarketCatalogMarket[]): DashboardMarketRow[] => {
+  const grouped = new Map<string, MarketCatalogMarket[]>();
+  for (const market of markets) {
+    const topic = normalizeEventTopicTitle(market);
+    const key = `${market.category.toLowerCase()}:${topic.toLowerCase()}`;
+    const existing = grouped.get(key) ?? [];
+    existing.push(market);
+    grouped.set(key, existing);
+  }
+
+  return Array.from(grouped.values()).map((group) => {
+    if (group.length === 1) return mapCatalogMarketToDashboardRow(group[0]!);
+
+    const base = mapCatalogMarketToDashboardRow(group[0]!);
+    const venues = Array.from(new Set(group.flatMap(venuesForCatalogMarket)));
+    const routeTypes = group.map(routeTypeLabel);
+    const routeType = routeTypes.includes('Strict all') ? 'Strict all' : routeTypes.includes('Tri') ? 'Tri' : routeTypes.includes('Pair') ? 'Pair' : 'Single';
+    const outcomeByCandidate = new Map<string, DashboardOutcomeRow>();
+    for (const market of group) {
+      const key = candidateOutcomeKey(market);
+      if (!outcomeByCandidate.has(key)) {
+        outcomeByCandidate.set(key, binaryCandidateOutcomeRow(market));
+      }
+    }
+    const outcomes = Array.from(outcomeByCandidate.values());
+    const venueMarkets = group.flatMap((market) => market.venueMarkets);
+    const metricTotal = (selector: (market: MarketCatalogMarket) => string | null): number | null => {
+      let total = 0;
+      let hasValue = false;
+      for (const market of group) {
+        const parsed = parseMetricNumber(selector(market));
+        if (parsed !== null) {
+          total += parsed;
+          hasValue = true;
+        }
+      }
+      return hasValue ? total : null;
+    };
+    const buyCount = metricTotal((market) => market.buyCount);
+    const sellCount = metricTotal((market) => market.sellCount);
+    const buyVolume = metricTotal((market) => market.buyVolume);
+    const sellVolume = metricTotal((market) => market.sellVolume);
+    const volume = formatMoneyMetric(String(metricTotal((market) => market.volume24h ?? market.volume) ?? '')) ?? base.volume;
+    const liquidity = formatMoneyMetric(String(metricTotal((market) => market.liquidity) ?? ''));
+    return {
+      ...base,
+      id: `${base.canonicalEventId}:${base.title}`,
+      marketId: outcomes[0]?.marketId ?? base.marketId,
+      title: base.title,
+      routeType,
+      venueCount: venues.length,
+      venues,
+      venueMarkets,
+      marketType: 'binary',
+      outcomes,
+      badges: venues,
+      volume: volume ?? liquidity ?? base.volume,
+      volumeLabel: volume ? 'Vol' : liquidity ? 'Liq' : base.volumeLabel,
+      txnBuy: buyCount ?? buyVolume ?? 0,
+      txnSell: sellCount ?? sellVolume ?? 0,
+      txnLabel: buyCount !== null || sellCount !== null ? 'Txns' : buyVolume !== null || sellVolume !== null ? 'Vol' : 'Pending',
+      fallbackLabel: routeType === 'Single' ? 'Single venue' : `${routeType} route`,
+    };
+  });
 };
 
 const blockedFromError = (error: unknown): LiveCandidatesResponse['blocked'] => {
@@ -359,10 +832,42 @@ const toOutcomeQuote = (
   };
 };
 
+const toOutcomeQuoteFromBatch = (quote: MarketBatchQuoteItem): DashboardOutcomeQuote => {
+  const candidates: TradeRouteCandidate[] = quote.venues
+    .filter((venue) => venue.price !== null)
+    .map((venue) => ({
+      venue: venue.venue,
+      venueMarketId: venue.venueMarketId,
+      ...(venue.venueOutcomeId ? { venueOutcomeId: venue.venueOutcomeId } : {}),
+      price: Number(venue.price),
+      availableSize: venue.availableSize,
+      ...(venue.spread && venue.price ? { spreadBps: (Number(venue.spread) / Math.max(Number(venue.price), 0.000001)) * 10_000 } : {}),
+      quoteQuality: venue.quoteQuality,
+      ...(venue.freshnessMs !== null ? { freshnessMs: venue.freshnessMs } : {}),
+      quoteBlockers: venue.blockers,
+    }));
+  const bestCandidate = chooseBestCandidate(candidates);
+  const price = quote.unifiedAveragePrice !== null ? Number(quote.unifiedAveragePrice) : bestCandidate?.price ?? null;
+  return {
+    outcomeId: quote.outcomeId,
+    price: Number.isFinite(price) ? price : null,
+    priceLabel: formatProbabilityPercent(Number.isFinite(price) ? price : null),
+    generatedAt: quote.generatedAt,
+    bestCandidate,
+    candidates,
+    blocked: quote.blockers,
+    blocker: getReadableBlocker(quote.blockers),
+  };
+};
+
 const applyLiveQuoteToMarket = (market: DashboardMarketRow, quote: DashboardMarketQuote | undefined): DashboardMarketRow => {
   if (!quote) return market;
+  const quoteForOutcome = (outcome: DashboardOutcomeRow) =>
+    quote.outcomes[outcome.id] ??
+    quote.outcomes[outcome.quoteOutcomeId] ??
+    quote.outcomes[normalizeOutcomeId(outcome.name)];
   const quotedOutcomes = market.outcomes.map((outcome) => {
-    const liveQuote = quote.outcomes[outcome.id] ?? quote.outcomes[normalizeOutcomeId(outcome.name)];
+    const liveQuote = quoteForOutcome(outcome);
     if (!liveQuote) return outcome;
     return {
       ...outcome,
@@ -371,10 +876,10 @@ const applyLiveQuoteToMarket = (market: DashboardMarketRow, quote: DashboardMark
     };
   });
   const liveQuotes = quotedOutcomes
-    .map((outcome) => quote.outcomes[outcome.id] ?? quote.outcomes[normalizeOutcomeId(outcome.name)])
+    .map((outcome) => quoteForOutcome(outcome))
     .filter((item): item is DashboardOutcomeQuote => Boolean(item?.bestCandidate));
-  const yesOutcome = market.outcomes.find((outcome) => normalizeOutcomeId(outcome.name) === 'YES');
-  const yesLiveQuote = yesOutcome ? quote.outcomes[yesOutcome.id] ?? quote.outcomes[normalizeOutcomeId(yesOutcome.name)] : null;
+  const yesOutcome = market.outcomes.find((outcome) => outcome.quoteOutcomeId === 'YES');
+  const yesLiveQuote = yesOutcome ? quoteForOutcome(yesOutcome) : null;
   const displayQuote = yesLiveQuote?.bestCandidate ? yesLiveQuote : liveQuotes[0] ?? null;
   if (!displayQuote) {
     const unavailable = quotedOutcomes.some((outcome) => outcome.liveStatus === 'unavailable');
@@ -384,6 +889,7 @@ const applyLiveQuoteToMarket = (market: DashboardMarketRow, quote: DashboardMark
       priceVenue: null,
       changeLabel: unavailable ? 'Live unavailable' : market.changeLabel,
       fallbackLabel: unavailable ? 'Backend blocker' : market.fallbackLabel,
+      fallbackMode: unavailable ? 'blocker' : market.fallbackMode,
       quoteRequired: true,
     };
   }
@@ -404,6 +910,7 @@ const applyLiveQuoteToMarket = (market: DashboardMarketRow, quote: DashboardMark
     savings: 'Unified',
     spread: formatSpreadBps(displayQuote.bestCandidate),
     fallbackLabel: displayQuote.bestCandidate?.venue ?? market.fallbackLabel,
+    fallbackMode: displayQuote.bestCandidate?.venue ? 'best_venue' : market.fallbackMode,
     closesBy: bestVenueDetails?.closesBy ?? market.closesBy,
     change24hLabel: bestVenueDetails?.change24hLabel ?? market.change24hLabel,
     change24hDirection: bestVenueDetails?.change24hDirection ?? market.change24hDirection,
@@ -456,19 +963,30 @@ export const DashboardV2Mockup = ({
   session?: AuthSession | null;
 }) => {
   const [isDarkMode, setIsDarkMode] = useState(true);
-  const [isFilterCollapsed, setIsFilterCollapsed] = useState(false);
+  const [isFilterCollapsed, setIsFilterCollapsed] = useState(true);
   const [showNotifications, setShowNotifications] = useState(false);
   const [marketViewMode, setMarketViewMode] = useState<'grid' | 'list'>('grid');
   const [selectedTerminalMarket, setSelectedTerminalMarket] = useState<TerminalMarketSelection | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
+  const [selectedRouteTypes, setSelectedRouteTypes] = useState<DashboardRouteFilter[]>([]);
+  const [marketSortKey, setMarketSortKey] = useState<DashboardSortKey>('volume');
   const [marketsLoading, setMarketsLoading] = useState(false);
   const [marketsError, setMarketsError] = useState<string | null>(null);
   const [marketRows, setMarketRows] = useState<DashboardMarketRow[]>([]);
   const [marketQuotes, setMarketQuotes] = useState<Record<string, DashboardMarketQuote>>({});
   const [marketCount, setMarketCount] = useState(0);
+  const [marketFilter, setMarketFilter] = useState<MarketQuickFilter>('all');
+  const [homeMarketLimit, setHomeMarketLimit] = useState(15);
+  const [watchlistIds, setWatchlistIds] = useState<string[]>(loadWatchlistIds);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [notificationsError, setNotificationsError] = useState<string | null>(null);
   const [notificationItems, setNotificationItems] = useState<UserNotification[]>([]);
+  const [notificationSettings, setNotificationSettings] = useState(loadNotificationSettings);
+  const [portfolioSummary, setPortfolioSummary] = useState<PortfolioSummary | null>(null);
+  const [portfolioBalances, setPortfolioBalances] = useState<VenueBalance[]>([]);
+  const [portfolioLoading, setPortfolioLoading] = useState(false);
+  const [portfolioError, setPortfolioError] = useState<string | null>(null);
   const [expandedCategories, setExpandedCategories] = useState<Record<string, boolean>>({
     'Sports': true,
     'Politics': true,
@@ -480,22 +998,151 @@ export const DashboardV2Mockup = ({
       [category]: !prev[category]
     }));
   };
+  const toggleSelectedCategory = (category: string) => {
+    setSelectedCategories((current) =>
+      current.includes(category) ? current.filter((item) => item !== category) : [...current, category]
+    );
+  };
+  const toggleRouteType = (routeType: DashboardRouteFilter) => {
+    setSelectedRouteTypes((current) =>
+      current.includes(routeType) ? current.filter((item) => item !== routeType) : [...current, routeType]
+    );
+  };
 
   const pageTitle = activePage === 'markets' ? 'Markets' : 'Top Opportunities';
   const effectiveMarketViewMode = activePage === 'markets' ? 'list' : marketViewMode;
   const isMarketSurface = activePage === 'home' || activePage === 'markets';
-  const baseDisplayedMarkets = activePage === 'home' ? marketRows.slice(0, 6) : marketRows;
-  const displayedMarkets = baseDisplayedMarkets.map((market) => applyLiveQuoteToMarket(market, marketQuotes[market.id]));
+  const quotedMarketRows = useMemo(
+    () => marketRows.map((market) => applyLiveQuoteToMarket(market, marketQuotes[market.id])),
+    [marketRows, marketQuotes],
+  );
+  const filteredMarketRows = useMemo(
+    () => applyPanelFiltersAndSort(
+      applyQuickFilter(quotedMarketRows, marketFilter, watchlistIds),
+      selectedCategories,
+      selectedRouteTypes,
+      marketSortKey,
+    ),
+    [marketFilter, marketSortKey, quotedMarketRows, selectedCategories, selectedRouteTypes, watchlistIds],
+  );
+  const terminalMarketSelections = useMemo<TerminalMarketSelection[]>(
+    () => quotedMarketRows.map((market) => ({
+      id: market.id,
+      marketId: market.marketId,
+      eventId: market.eventId,
+      canonicalEventId: market.canonicalEventId,
+      title: market.title,
+      category: market.category,
+      icon: market.icon,
+      volume: market.volume,
+      venueCount: market.venueCount,
+      routeType: market.routeType,
+      venues: market.venues,
+      venueMarkets: market.venueMarkets,
+      marketType: market.marketType,
+      outcomes: market.outcomes,
+      imageUrl: market.imageUrl,
+      iconUrl: market.iconUrl,
+      priceLabel: market.priceLabel,
+      priceVenue: market.priceVenue,
+      changeLabel: market.changeLabel,
+      change24hLabel: market.change24hLabel,
+      change24hDirection: market.change24hDirection,
+    })),
+    [quotedMarketRows],
+  );
+  const baseDisplayedMarkets = activePage === 'home' ? filteredMarketRows.slice(0, homeMarketLimit) : filteredMarketRows;
+  const displayedMarkets = baseDisplayedMarkets;
+  const canLoadMoreMarkets = activePage === 'home' && homeMarketLimit < filteredMarketRows.length;
+  const emptyMarketCopy = marketFilter === 'watchlist'
+    ? 'Your watchlist is empty. Bookmark markets from the cards or list to track them here.'
+    : marketFilter === 'best_routes'
+      ? 'No cross-venue routeable markets are available for this view yet.'
+      : 'Try another search. Lotus only shows backend-approved market metadata here.';
+  const filterCategory = selectedCategories.length === 1 ? selectedCategories[0] : categoryForQuickFilter(marketFilter);
   const marketSummary = useMemo(() => {
-    const quotedRows = marketRows.map((market) => applyLiveQuoteToMarket(market, marketQuotes[market.id]));
-    const crossVenue = quotedRows.filter((market) => market.routeType !== 'Single').length;
-    const routePreviewRequired = quotedRows.filter((market) => market.quoteRequired).length;
+    const routeable = quotedMarketRows.filter((market) => market.venueCount > 0 && market.status !== 'RESOLVED_OR_EXPIRED').length;
+    const crossVenue = quotedMarketRows.filter((market) => market.routeType !== 'Single').length;
+    const routePreviewRequired = quotedMarketRows.filter((market) => market.quoteRequired).length;
     return {
-      routeable: marketCount || marketRows.length,
+      routeable: marketCount || routeable,
       crossVenue,
       routePreviewRequired,
     };
-  }, [marketCount, marketRows, marketQuotes]);
+  }, [marketCount, quotedMarketRows]);
+  const portfolioCashTotal = portfolioBalances.reduce((sum, balance) => {
+    const parsed = Number(balance.availableAmount ?? balance.readyAmount ?? 0);
+    return Number.isFinite(parsed) ? sum + parsed : sum;
+  }, 0);
+  const portfolioValueLabel = portfolioLoading
+    ? 'Syncing'
+    : portfolioSummary?.totalMarkValue !== null && portfolioSummary?.totalMarkValue !== undefined
+      ? formatCurrencyValue(portfolioSummary.totalMarkValue)
+      : portfolioError
+        ? 'Unavailable'
+        : formatCurrencyValue(portfolioCashTotal);
+  const portfolioCashLabel = portfolioLoading
+    ? 'Syncing'
+    : portfolioError
+        ? 'Unavailable'
+        : formatCurrencyValue(portfolioCashTotal);
+  const portfolioPositionsLabel = portfolioLoading
+    ? 'Syncing'
+    : portfolioSummary
+      ? `${portfolioSummary.positionCount} verified`
+      : portfolioError
+        ? 'Unavailable'
+        : 'Verified only';
+  const portfolioMtmLabel = portfolioSummary
+    ? portfolioSummary.unavailableMarkCount > 0
+      ? `${portfolioSummary.markedPositionCount}/${portfolioSummary.positionCount} marked`
+      : 'MTM'
+    : portfolioError ? 'MTM' : 'MTM unavailable';
+  const recentActivityItems = useMemo(() => {
+    const notificationRows = notificationItems.slice(0, 3).map((notification) => ({
+      type: notification.severity === 'success' ? 'buy' : notification.severity === 'error' || notification.severity === 'warning' ? 'sell' : 'route',
+      title: notification.title,
+      market: notification.body,
+      time: formatRelativeTime(notification.createdAt) || 'Live',
+      price: notification.readAt ? '' : 'New',
+    }));
+    const systemRows = [
+      {
+        type: marketsError ? 'sell' : 'route',
+        title: marketsError ? 'Market catalog unavailable' : 'Market catalog synced',
+        market: marketsError ?? `${marketSummary.routeable} backend-approved markets loaded`,
+        time: marketsLoading ? 'Loading' : 'Live',
+        price: '',
+      },
+      {
+        type: marketSummary.routePreviewRequired > 0 ? 'route' : 'buy',
+        title: marketSummary.routePreviewRequired > 0 ? 'Route preview required' : 'Routes refreshed',
+        market: marketSummary.routePreviewRequired > 0
+          ? `${marketSummary.routePreviewRequired} markets still need live quote evidence`
+          : 'Visible markets have live route evidence',
+        time: marketSummary.routePreviewRequired > 0 ? 'Safe' : 'Live',
+        price: '',
+      },
+      {
+        type: portfolioError ? 'sell' : 'buy',
+        title: portfolioError ? 'Portfolio sync blocked' : 'Portfolio MTM synced',
+        market: portfolioError ?? `${portfolioPositionsLabel} positions, ${portfolioCashLabel} available cash`,
+        time: portfolioLoading ? 'Loading' : 'Ready',
+        price: '',
+      },
+    ];
+    return [...notificationRows, ...systemRows].slice(0, 4);
+  }, [
+    marketSummary.routePreviewRequired,
+    marketSummary.routeable,
+    marketsError,
+    marketsLoading,
+    notificationItems,
+    portfolioCashLabel,
+    portfolioError,
+    portfolioLoading,
+    portfolioPositionsLabel,
+  ]);
   const inferTerminalMarketType = (title: string): 'binary' | 'multi' => (
     title.includes('Winner') || title.includes('Champion') || title.includes('Region') || title.includes('Season')
       ? 'multi'
@@ -509,6 +1156,40 @@ export const DashboardV2Mockup = ({
     onNavigate?.('terminal');
   };
 
+  const toggleMarketWatch = (marketId: string) => {
+    setWatchlistIds((current) => {
+      const next = current.includes(marketId)
+        ? current.filter((id) => id !== marketId)
+        : [...current, marketId];
+      saveWatchlistIds(next);
+      return next;
+    });
+  };
+
+  const filterButtonClass = (active: boolean, tone: 'default' | 'lotus' | 'hot' = 'default') => {
+    if (active && tone === 'hot') {
+      return 'flex items-center gap-2 px-3 py-2 bg-zinc-900 dark:bg-zinc-100 border border-zinc-900 dark:border-zinc-100 rounded-lg text-sm font-medium text-white dark:text-zinc-900 shadow-sm transition-all whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]';
+    }
+    if (active || tone === 'lotus') {
+      return 'flex items-center gap-2 px-3 py-2 bg-[#ccff00]/10 border border-[#ccff00]/30 rounded-lg text-sm font-medium text-zinc-900 dark:text-[#ccff00] hover:bg-[#ccff00]/20 transition-all whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]';
+    }
+    return 'flex items-center gap-2 px-3 py-2 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800 hover:border-zinc-300 dark:hover:border-zinc-700 hover:text-zinc-900 dark:hover:text-zinc-100 shadow-sm transition-all whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]';
+  };
+  const panelCategoryOptions = ['Sports', 'Politics', 'Crypto', 'Business', 'Technology', 'Health'];
+  const routeTypeOptions: DashboardRouteFilter[] = ['Strict all', 'Tri', 'Pair', 'Single'];
+  const sortOptions: Array<{ id: DashboardSortKey; label: string }> = [
+    { id: 'volume', label: 'Volume' },
+    { id: 'liquidity', label: 'Liquidity' },
+    { id: 'closing', label: 'Closing period' },
+    { id: 'buys', label: 'Buys' },
+    { id: 'sells', label: 'Sells' },
+    { id: 'best_route', label: 'Best route' },
+  ];
+
+  useEffect(() => {
+    setHomeMarketLimit(15);
+  }, [filterCategory, marketFilter, marketSortKey, searchQuery, selectedCategories, selectedRouteTypes]);
+
   useEffect(() => {
     if (!isMarketSurface) return;
     let cancelled = false;
@@ -516,12 +1197,13 @@ export const DashboardV2Mockup = ({
       setMarketsLoading(true);
       setMarketsError(null);
       listMarkets({
+        category: filterCategory,
         search: searchQuery.trim() || undefined,
-        limit: activePage === 'markets' ? 80 : 18,
+        limit: activePage === 'markets' ? 120 : 120,
       })
         .then((response) => {
           if (cancelled) return;
-          setMarketRows(response.markets.map(mapCatalogMarketToDashboardRow));
+          setMarketRows(mapCatalogMarketsToDashboardRows(response.markets));
           setMarketCount(response.count);
         })
         .catch((error) => {
@@ -539,22 +1221,21 @@ export const DashboardV2Mockup = ({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [activePage, isMarketSurface, searchQuery]);
+  }, [activePage, filterCategory, isMarketSurface, searchQuery]);
 
   useEffect(() => {
-    if (!isMarketSurface || !session?.userJwt || marketRows.length === 0) {
+    if (!isMarketSurface || marketRows.length === 0) {
       setMarketQuotes({});
       return;
     }
 
     let cancelled = false;
+    const quoteLimit = activePage === 'markets' ? 60 : Math.max(homeMarketLimit, 15);
     const marketsToQuote = marketRows
-      .slice(0, activePage === 'markets' ? 12 : 6)
+      .slice(0, quoteLimit)
       .map((market) => ({
         market,
-        outcomes: market.outcomes
-          .filter((outcome) => ['YES', 'NO'].includes(normalizeOutcomeId(outcome.name)))
-          .slice(0, 2),
+        outcomes: market.outcomes,
       }))
       .filter((item) => item.outcomes.length > 0);
 
@@ -564,57 +1245,89 @@ export const DashboardV2Mockup = ({
     }
 
     const loadQuotes = async () => {
-      const entries = await Promise.all(marketsToQuote.map(async ({ market, outcomes }) => {
-        const [outcomeEntries, sellOutcomeEntries] = await Promise.all([
-          Promise.all(outcomes.map(async (outcome) => {
-          try {
-            const response = await getLiveCandidates(session.userJwt, {
-              side: 'buy',
-              marketId: market.marketId,
-              outcomeId: outcome.id,
-              amount: '1',
-            });
-            return [outcome.id, toOutcomeQuote(outcome.id, response)] as const;
-          } catch (error) {
-            return [outcome.id, toOutcomeQuote(outcome.id, null, error)] as const;
-          }
-          })),
-          Promise.all(outcomes.map(async (outcome) => {
-            try {
-              const response = await getLiveCandidates(session.userJwt, {
-                side: 'sell',
-                marketId: market.marketId,
-                outcomeId: outcome.id,
-                amount: '1',
-              });
-              return [outcome.id, toOutcomeQuote(outcome.id, response)] as const;
-            } catch (error) {
-              return [outcome.id, toOutcomeQuote(outcome.id, null, error)] as const;
-            }
-          })),
-        ]);
-        return [market.id, {
-          marketId: market.marketId,
-          outcomes: Object.fromEntries(outcomeEntries),
-          sellOutcomes: Object.fromEntries(sellOutcomeEntries),
-        }] as const;
-      }));
+      const requestItems = marketsToQuote.flatMap(({ market, outcomes }) =>
+        outcomes.map((outcome) => ({
+          parentMarketId: market.id,
+          outcomeId: outcome.id,
+          marketId: outcome.marketId ?? market.marketId,
+          quoteOutcomeId: outcome.quoteOutcomeId,
+        }))
+      );
 
-      if (cancelled) return;
-      setMarketQuotes((current) => ({
-        ...current,
-        ...Object.fromEntries(entries),
+      const chunks = chunkArray(requestItems, 18);
+      await Promise.all(chunks.map(async (chunk) => {
+        try {
+          const response = await getMarketBatchQuotes({
+            items: chunk.map((item) => ({
+              marketId: item.marketId,
+              outcomeId: item.quoteOutcomeId,
+              side: 'buy' as const,
+              amount: '1',
+            })),
+          });
+          if (cancelled) return;
+          const quoteByKey = new Map(response.quotes.map((quote) => [`${quote.marketId}:${quote.outcomeId}:buy`, quote]));
+          const nextByMarket = new Map<string, Record<string, DashboardOutcomeQuote>>();
+          for (const item of chunk) {
+            const quote = quoteByKey.get(`${item.marketId}:${item.quoteOutcomeId}:buy`);
+            const bucket = nextByMarket.get(item.parentMarketId) ?? {};
+            bucket[item.outcomeId] = quote
+              ? toOutcomeQuoteFromBatch(quote)
+              : toOutcomeQuote(item.outcomeId, null, new Error('QUOTE_UNAVAILABLE'));
+            nextByMarket.set(item.parentMarketId, bucket);
+          }
+          setMarketQuotes((current) => {
+            const next = { ...current };
+            for (const [marketId, outcomes] of nextByMarket.entries()) {
+              next[marketId] = {
+                marketId,
+                outcomes: {
+                  ...(next[marketId]?.outcomes ?? {}),
+                  ...outcomes,
+                },
+                sellOutcomes: next[marketId]?.sellOutcomes,
+              };
+            }
+            return next;
+          });
+        } catch {
+          // Keep last-good quotes visible; failed chunks will retry on the next poll.
+        }
       }));
     };
 
     loadQuotes();
-    const interval = window.setInterval(loadQuotes, 45_000);
+    const interval = window.setInterval(loadQuotes, 12_000);
 
     return () => {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [activePage, isMarketSurface, marketRows, session?.userJwt]);
+  }, [activePage, homeMarketLimit, isMarketSurface, marketRows]);
+
+  const terminalPrefetchKey = useMemo(
+    () => displayedMarkets
+      .slice(0, 12)
+      .map((market) => `${market.marketId}:${market.outcomes[0]?.quoteOutcomeId ?? 'YES'}`)
+      .join('|'),
+    [displayedMarkets]
+  );
+
+  useEffect(() => {
+    if (!isMarketSurface || displayedMarkets.length === 0) return;
+    const marketsToWarm = displayedMarkets.slice(0, 12);
+    const timer = window.setTimeout(() => {
+      for (const market of marketsToWarm) {
+        const quoteOutcomeId = market.outcomes.find((outcome) => outcome.quoteOutcomeId === 'YES')?.quoteOutcomeId
+          ?? market.outcomes[0]?.quoteOutcomeId
+          ?? 'YES';
+        void getMarketOutcomes(market.marketId).catch(() => undefined);
+        void getMarketOrderbook(market.marketId, { outcomeId: quoteOutcomeId, depth: 20 }).catch(() => undefined);
+        void getMarketChart(market.marketId, { outcomeId: quoteOutcomeId, timeframe: '1H' }).catch(() => undefined);
+      }
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [isMarketSurface, terminalPrefetchKey]);
 
   useEffect(() => {
     if (!session?.userJwt) return;
@@ -634,6 +1347,42 @@ export const DashboardV2Mockup = ({
 
     return () => {
       cancelled = true;
+    };
+  }, [session?.userJwt]);
+
+  useEffect(() => {
+    if (!session?.userJwt) {
+      setPortfolioSummary(null);
+      setPortfolioBalances([]);
+      setPortfolioError(null);
+      return;
+    }
+
+    let cancelled = false;
+    const loadPortfolioRail = async () => {
+      setPortfolioLoading(true);
+      setPortfolioError(null);
+      try {
+        const [summary, balanceResponse] = await Promise.all([
+          getPortfolioSummary(session.userJwt),
+          getVenueBalances(session.userJwt),
+        ]);
+        if (cancelled) return;
+        setPortfolioSummary(summary);
+        setPortfolioBalances(balanceResponse.balances ?? balanceResponse.venues ?? []);
+      } catch (error) {
+        if (cancelled) return;
+        setPortfolioError(toSafeErrorMessage(error, 'Portfolio summary is unavailable right now.'));
+      } finally {
+        if (!cancelled) setPortfolioLoading(false);
+      }
+    };
+
+    loadPortfolioRail();
+    const interval = window.setInterval(loadPortfolioRail, 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
     };
   }, [session?.userJwt]);
 
@@ -667,7 +1416,7 @@ export const DashboardV2Mockup = ({
           <NavItem icon={<PieChart className="w-4 h-4" />} active={activePage === 'portfolio'} label="Portfolio" onClick={() => onNavigate?.('portfolio')} />
         </nav>
         <div className="mt-auto flex flex-col gap-5 w-full items-center">
-          <NavItem icon={<Settings className="w-4 h-4" />} label="Settings" />
+          <NavItem icon={<Settings className="w-4 h-4" />} active={activePage === 'settings'} label="Settings" onClick={() => onNavigate?.('settings')} />
         </div>
       </aside>
 
@@ -698,7 +1447,7 @@ export const DashboardV2Mockup = ({
                 >
                   <Bell className="w-4 h-4" />
                   {unreadNotificationCount > 0 && (
-                    <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full border-2 border-white dark:border-zinc-900"></span>
+                    <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-[#ccff00] rounded-full border-2 border-white dark:border-zinc-900"></span>
                   )}
                   
                   {/* Tooltip */}
@@ -711,7 +1460,7 @@ export const DashboardV2Mockup = ({
 
                 {/* Popover */}
                 {showNotifications && (
-                  <div className="absolute top-full right-0 mt-3 w-[21rem] bg-white dark:bg-[#1a1a1c] border border-zinc-200 dark:border-zinc-800 rounded-xl shadow-2xl overflow-hidden z-50 animate-in fade-in slide-in-from-top-2 duration-200 block">
+                  <div className={notificationPopoverClass(notificationSettings.toastPosition)}>
                     <div className="flex items-center justify-between p-3.5 border-b border-zinc-200 dark:border-zinc-800/80">
                       <div>
                         <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">Notifications</h3>
@@ -782,7 +1531,7 @@ export const DashboardV2Mockup = ({
         </header>
 
         {/* Scrollable Area */}
-        <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 xl:p-5 custom-scrollbar flex gap-4">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 pb-24 xl:p-5 xl:pb-24 custom-scrollbar flex gap-4">
           {isMarketSurface ? (
           <>
           
@@ -810,230 +1559,78 @@ export const DashboardV2Mockup = ({
                 </div>
               
               <div className="space-y-4">
-                {/* Route Quality */}
-                <div className="border border-zinc-200 dark:border-zinc-800 rounded-xl overflow-hidden bg-white dark:bg-zinc-900">
-                  <div className="flex items-center justify-between p-3 bg-zinc-50/50 dark:bg-zinc-800/50">
-                    <h4 className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Route Quality</h4>
-                  </div>
-                  <div className="p-3 pt-0 space-y-1.5 flex flex-col text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                    <label className="flex items-center gap-2 cursor-pointer group">
-                      <div className="w-4 h-4 rounded border border-[#ccff00] bg-[#ccff00]/10 flex items-center justify-center text-[#99cc00]">✓</div>
-                      <span className="group-hover:text-zinc-900 dark:group-hover:text-zinc-100 transition-colors">Best Opportunities</span>
-                    </label>
-                    <label className="flex items-center gap-2 cursor-pointer group">
-                      <div className="w-4 h-4 rounded border border-zinc-300 dark:border-zinc-700 group-hover:border-zinc-400 dark:group-hover:border-zinc-500 bg-white dark:bg-zinc-900 flex items-center justify-center transition-colors"></div>
-                      <span className="group-hover:text-zinc-900 dark:group-hover:text-zinc-100 transition-colors">Best Routes</span>
-                    </label>
-                    <label className="flex items-center gap-2 cursor-pointer group">
-                      <div className="w-4 h-4 rounded border border-zinc-300 dark:border-zinc-700 group-hover:border-zinc-400 dark:group-hover:border-zinc-500 bg-white dark:bg-zinc-900 flex items-center justify-center transition-colors"></div>
-                      <span className="group-hover:text-zinc-900 dark:group-hover:text-zinc-100 transition-colors">Review Required</span>
-                    </label>
-                    <label className="flex items-center gap-2 cursor-pointer group">
-                      <div className="w-4 h-4 rounded border border-zinc-300 dark:border-zinc-700 group-hover:border-zinc-400 dark:group-hover:border-zinc-500 bg-white dark:bg-zinc-900 flex items-center justify-center transition-colors"></div>
-                      <span className="group-hover:text-zinc-900 dark:group-hover:text-zinc-100 transition-colors">Fallback Available</span>
-                    </label>
-                  </div>
-                </div>
-
-                {/* Route Type */}
-                <div className="border border-zinc-200 dark:border-zinc-800 rounded-xl overflow-hidden bg-white dark:bg-zinc-900">
-                  <div className="flex items-center justify-between p-3 cursor-pointer bg-zinc-50/50 dark:bg-zinc-800/50" onClick={() => toggleCategory('RouteType')}>
-                    <h4 className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Route Type</h4>
-                    {expandedCategories['RouteType'] !== false ? <ChevronUp className="w-4 h-4 text-zinc-400 dark:text-zinc-500" /> : <ChevronDown className="w-4 h-4 text-zinc-400 dark:text-zinc-500" />}
-                  </div>
-                  {expandedCategories['RouteType'] !== false && (
-                    <div className="p-3 pt-0 flex flex-wrap gap-2">
-                       <button className="px-3 py-1.5 border border-[#ccff00]/50 bg-[#ccff00]/10 text-zinc-900 dark:text-zinc-100 rounded-lg text-xs font-medium shadow-sm transition-all">Pair</button>
-                       <button className="px-3 py-1.5 border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:border-zinc-300 dark:hover:border-zinc-600 hover:text-zinc-900 dark:hover:text-zinc-100 rounded-lg text-xs font-medium shadow-sm transition-all">Single</button>
-                       <button className="px-3 py-1.5 border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:border-zinc-300 dark:hover:border-zinc-600 hover:text-zinc-900 dark:hover:text-zinc-100 rounded-lg text-xs font-medium shadow-sm transition-all">Tri</button>
-                    </div>
-                  )}
-                </div>
-
-                {/* Confidence */}
-                <div className="border border-zinc-200 dark:border-zinc-800 rounded-xl overflow-hidden bg-white dark:bg-zinc-900">
-                  <div className="flex items-center justify-between p-3 cursor-pointer bg-zinc-50/50 dark:bg-zinc-800/50" onClick={() => toggleCategory('Confidence')}>
-                    <h4 className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Confidence</h4>
-                    {expandedCategories['Confidence'] !== false ? <ChevronUp className="w-4 h-4 text-zinc-400 dark:text-zinc-500" /> : <ChevronDown className="w-4 h-4 text-zinc-400 dark:text-zinc-500" />}
-                  </div>
-                  {expandedCategories['Confidence'] !== false && (
-                    <div className="p-3 pt-0 flex flex-col gap-1.5 text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                      <label className="flex items-center gap-2 cursor-pointer group">
-                        <div className="w-4 h-4 rounded border border-zinc-300 dark:border-zinc-700 group-hover:border-zinc-400 dark:group-hover:border-zinc-500 bg-white dark:bg-zinc-900 flex items-center justify-center transition-colors"></div>
-                        <span className="text-xs group-hover:text-zinc-900 dark:group-hover:text-zinc-100 transition-colors">Exact Match</span>
-                      </label>
-                      <label className="flex items-center gap-2 cursor-pointer group">
-                        <div className="w-4 h-4 rounded border border-zinc-300 dark:border-zinc-700 group-hover:border-zinc-400 dark:group-hover:border-zinc-500 bg-white dark:bg-zinc-900 flex items-center justify-center transition-colors"></div>
-                        <span className="text-xs group-hover:text-zinc-900 dark:group-hover:text-zinc-100 transition-colors">Semantic Match</span>
-                      </label>
-                      <label className="flex items-center gap-2 cursor-pointer group">
-                        <div className="w-4 h-4 rounded border border-zinc-300 dark:border-zinc-700 group-hover:border-zinc-400 dark:group-hover:border-zinc-500 bg-white dark:bg-zinc-900 flex items-center justify-center transition-colors"></div>
-                        <span className="text-xs group-hover:text-zinc-900 dark:group-hover:text-zinc-100 transition-colors">Under Review</span>
-                      </label>
-                    </div>
-                  )}
-                </div>
-
-                {/* Categories */}
-                <div className="border border-zinc-200 dark:border-zinc-800 rounded-xl overflow-hidden bg-white dark:bg-zinc-900">
-                  <div className="flex items-center justify-between p-3 bg-zinc-50/50 dark:bg-zinc-800/50">
+                <div className="rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+                  <div className="flex items-center justify-between border-b border-zinc-200 bg-zinc-50/50 p-3 dark:border-zinc-800 dark:bg-zinc-800/50">
                     <h4 className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Categories</h4>
+                    {selectedCategories.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setSelectedCategories([])}
+                        className="text-[10px] font-bold uppercase tracking-[0.08em] text-[#7a9900] hover:text-[#ccff00] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
+                      >
+                        Clear
+                      </button>
+                    )}
                   </div>
-                  
-                  <div className="p-3 pt-0 space-y-4">
-                      {/* Sports */}
-                      <div>
-                        <div className="flex items-center justify-between mb-2 cursor-pointer group" onClick={() => toggleCategory('Sports')}>
-                          <div className="flex items-center gap-1.5 text-zinc-500 dark:text-zinc-400 group-hover:text-zinc-900 dark:group-hover:text-zinc-100">
-                            {expandedCategories['Sports'] ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                            <span className="text-sm font-medium">Sports</span>
-                          </div>
-                          <label className="flex items-center gap-2 cursor-pointer group/label" onClick={(e) => e.stopPropagation()}>
-                            <div className="w-4 h-4 rounded border border-zinc-300 dark:border-zinc-700 group-hover/label:border-zinc-400 dark:group-hover/label:border-zinc-500 flex items-center justify-center bg-white dark:bg-zinc-900 transition-colors"></div>
-                            <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400 group-hover/label:text-zinc-700 dark:group-hover/label:text-zinc-300 transition-colors">Select all</span>
-                          </label>
-                        </div>
-                        
-                        {expandedCategories['Sports'] && (
-                          <div className="flex flex-wrap gap-2 pl-5">
-                            {['American Football', 'Basketball', 'Baseball', 'Combat Sports', 'Golf', 'Motor Sports', 'Cricket', 'Rugby', 'Soccer', 'Tennis', 'Hockey'].map((cat) => (
-                              <button key={cat} className="px-3 py-1.5 border border-zinc-200 dark:border-zinc-700 rounded-lg text-xs font-medium text-zinc-700 dark:text-zinc-300 bg-white dark:bg-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-700 hover:border-zinc-300 dark:hover:border-zinc-600 hover:text-zinc-900 dark:hover:text-zinc-100 shadow-sm transition-all">
-                                {cat}
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Politics */}
-                      <div>
-                        <div className="flex items-center justify-between mb-2 cursor-pointer group" onClick={() => toggleCategory('Politics')}>
-                          <div className="flex items-center gap-1.5 text-zinc-500 dark:text-zinc-400 group-hover:text-zinc-900 dark:group-hover:text-zinc-100">
-                            {expandedCategories['Politics'] ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                            <span className="text-sm font-medium">Politics</span>
-                          </div>
-                          <label className="flex items-center gap-2 cursor-pointer group/label" onClick={(e) => e.stopPropagation()}>
-                            <div className="w-4 h-4 rounded border border-zinc-300 dark:border-zinc-700 group-hover/label:border-zinc-400 dark:group-hover/label:border-zinc-500 flex items-center justify-center bg-white dark:bg-zinc-900 transition-colors"></div>
-                            <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400 group-hover/label:text-zinc-700 dark:group-hover/label:text-zinc-300 transition-colors">Select all</span>
-                          </label>
-                        </div>
-                        
-                        {expandedCategories['Politics'] && (
-                          <div className="flex flex-wrap gap-2 pl-5">
-                            {['Conflicts', 'Economic Policy', 'Elections', 'Geopolitics', 'Immigration', 'Government Policy', 'World', 'US Politics', 'Military Affairs', 'World Politics', 'Diplomatic Relations'].map((cat) => (
-                              <button key={cat} className="px-3 py-1.5 border border-zinc-200 dark:border-zinc-700 rounded-lg text-xs font-medium text-zinc-700 dark:text-zinc-300 bg-white dark:bg-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-700 hover:border-zinc-300 dark:hover:border-zinc-600 hover:text-zinc-900 dark:hover:text-zinc-100 shadow-sm transition-all">
-                                {cat}
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Business */}
-                      <div>
-                        <div className="flex items-center justify-between mb-2 cursor-pointer group" onClick={() => toggleCategory('Business')}>
-                          <div className="flex items-center gap-1.5 text-zinc-500 dark:text-zinc-400 group-hover:text-zinc-900 dark:group-hover:text-zinc-100">
-                            <ChevronDown className="w-3.5 h-3.5" />
-                            <span className="text-sm font-medium">Business</span>
-                            <span className="text-[10px] bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 px-1.5 py-0.5 rounded-full">2</span>
-                          </div>
-                          <label className="flex items-center gap-2 cursor-pointer group/label" onClick={(e) => e.stopPropagation()}>
-                            <div className="w-4 h-4 rounded border border-zinc-300 dark:border-zinc-600 group-hover/label:border-zinc-400 dark:group-hover/label:border-zinc-500 flex items-center justify-center bg-white dark:bg-zinc-900 transition-colors"></div>
-                            <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400 group-hover/label:text-zinc-700 dark:group-hover/label:text-zinc-300 transition-colors">Select all</span>
-                          </label>
-                        </div>
-                      </div>
-                      
-                      {/* Cryptocurrency */}
-                      <div>
-                        <div className="flex items-center justify-between mb-2 cursor-pointer group" onClick={() => toggleCategory('Cryptocurrency')}>
-                          <div className="flex items-center gap-1.5 text-zinc-500 dark:text-zinc-400 group-hover:text-zinc-900 dark:group-hover:text-zinc-100">
-                            <ChevronDown className="w-3.5 h-3.5" />
-                            <span className="text-sm font-medium">Cryptocurrency</span>
-                            <span className="text-[10px] bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 px-1.5 py-0.5 rounded-full">4</span>
-                          </div>
-                          <label className="flex items-center gap-2 cursor-pointer group/label" onClick={(e) => e.stopPropagation()}>
-                            <div className="w-4 h-4 rounded border border-zinc-300 dark:border-zinc-600 group-hover/label:border-zinc-400 dark:group-hover/label:border-zinc-500 flex items-center justify-center bg-white dark:bg-zinc-900 transition-colors"></div>
-                            <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400 group-hover/label:text-zinc-700 dark:group-hover/label:text-zinc-300 transition-colors">Select all</span>
-                          </label>
-                        </div>
-                      </div>
-
-                      {/* Health service */}
-                      <div>
-                        <div className="flex items-center justify-between mb-2 cursor-pointer group" onClick={() => toggleCategory('Health service')}>
-                          <div className="flex items-center gap-1.5 text-zinc-500 dark:text-zinc-400 group-hover:text-zinc-900 dark:group-hover:text-zinc-100">
-                            <ChevronDown className="w-3.5 h-3.5" />
-                            <span className="text-sm font-medium">Health service</span>
-                          </div>
-                          <label className="flex items-center gap-2 cursor-pointer group/label" onClick={(e) => e.stopPropagation()}>
-                            <div className="w-4 h-4 rounded border border-zinc-300 dark:border-zinc-600 group-hover/label:border-zinc-400 dark:group-hover/label:border-zinc-500 flex items-center justify-center bg-white dark:bg-zinc-900 transition-colors"></div>
-                            <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400 group-hover/label:text-zinc-700 dark:group-hover/label:text-zinc-300 transition-colors">Select all</span>
-                          </label>
-                        </div>
-                      </div>
-
-                      {/* Technology */}
-                      <div>
-                        <div className="flex items-center justify-between mb-2 cursor-pointer group" onClick={() => toggleCategory('Technology')}>
-                          <div className="flex items-center gap-1.5 text-zinc-500 dark:text-zinc-400 group-hover:text-zinc-900 dark:group-hover:text-zinc-100">
-                            <ChevronDown className="w-3.5 h-3.5" />
-                            <span className="text-sm font-medium">Technology</span>
-                          </div>
-                          <label className="flex items-center gap-2 cursor-pointer group/label" onClick={(e) => e.stopPropagation()}>
-                            <div className="w-4 h-4 rounded border border-zinc-300 dark:border-zinc-600 group-hover/label:border-zinc-400 dark:group-hover/label:border-zinc-500 flex items-center justify-center bg-white dark:bg-zinc-900 transition-colors"></div>
-                            <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400 group-hover/label:text-zinc-700 dark:group-hover/label:text-zinc-300 transition-colors">Select all</span>
-                          </label>
-                        </div>
-                      </div>
-                    </div>
-                </div>
-
-                <div className="h-px w-full bg-zinc-200 dark:bg-zinc-800"></div>
-
-                {/* Sortby */}
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Sortby</span>
-                  <div className="flex items-center gap-2 px-3 py-1.5 border border-zinc-200 dark:border-zinc-700 rounded-lg text-sm text-zinc-600 dark:text-zinc-400 cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-800 bg-white dark:bg-zinc-900">
-                    Volume <ChevronDown className="w-3.5 h-3.5 text-zinc-400 dark:text-zinc-500" />
+                  <div className="flex flex-wrap gap-2 p-3">
+                    {panelCategoryOptions.map((category) => {
+                      const active = selectedCategories.includes(category);
+                      return (
+                        <button
+                          key={category}
+                          type="button"
+                          onClick={() => toggleSelectedCategory(category)}
+                          className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${active ? 'border-[#ccff00]/60 bg-[#ccff00]/15 text-[#ccff00]' : 'border-zinc-200 bg-white text-zinc-700 hover:border-[#ccff00]/35 hover:text-zinc-900 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:text-zinc-100'}`}
+                        >
+                          {category}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
 
-                {/* Lookback period */}
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Lookback period</span>
-                  <div className="flex items-center gap-2 px-3 py-1.5 border border-zinc-200 dark:border-zinc-700 rounded-lg text-sm text-zinc-600 dark:text-zinc-400 cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-800 bg-white dark:bg-zinc-900">
-                    30m <ChevronDown className="w-3.5 h-3.5 text-zinc-400 dark:text-zinc-500" />
+                <div className="rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+                  <div className="flex items-center justify-between border-b border-zinc-200 bg-zinc-50/50 p-3 dark:border-zinc-800 dark:bg-zinc-800/50">
+                    <h4 className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Route Type</h4>
+                    {selectedRouteTypes.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setSelectedRouteTypes([])}
+                        className="text-[10px] font-bold uppercase tracking-[0.08em] text-[#7a9900] hover:text-[#ccff00] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-2 p-3">
+                    {routeTypeOptions.map((routeType) => {
+                      const active = selectedRouteTypes.includes(routeType);
+                      return (
+                        <button
+                          key={routeType}
+                          type="button"
+                          onClick={() => toggleRouteType(routeType)}
+                          className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${active ? 'border-[#ccff00]/60 bg-[#ccff00]/15 text-[#ccff00]' : 'border-zinc-200 bg-white text-zinc-700 hover:border-[#ccff00]/35 hover:text-zinc-900 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:text-zinc-100'}`}
+                        >
+                          {routeType}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
 
-                <div className="h-px w-full bg-zinc-200 dark:bg-zinc-800"></div>
-
-                {/* Volume */}
-                <div className="border border-zinc-200 dark:border-zinc-800 rounded-xl overflow-hidden bg-white dark:bg-zinc-900">
-                  <div className="flex items-center justify-between p-3 cursor-pointer bg-zinc-50/50 dark:bg-zinc-800/50" onClick={() => toggleCategory('Volume')}>
-                    <h4 className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Volume</h4>
-                    {expandedCategories['Volume'] !== false ? <ChevronUp className="w-4 h-4 text-zinc-400 dark:text-zinc-500" /> : <ChevronDown className="w-4 h-4 text-zinc-400 dark:text-zinc-500" />}
-                  </div>
-                  {expandedCategories['Volume'] !== false && (
-                    <div className="p-3 pt-0 flex flex-wrap gap-2">
-                      <button className="px-3 py-1.5 border border-zinc-200 dark:border-zinc-700 rounded-lg text-xs font-medium text-zinc-700 dark:text-zinc-300 bg-white dark:bg-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-700 hover:border-zinc-300 dark:hover:border-zinc-600 hover:text-zinc-900 dark:hover:text-zinc-100 shadow-sm transition-all">
-                        &gt; $10k
-                      </button>
-                      <button className="px-3 py-1.5 border border-zinc-200 dark:border-zinc-700 rounded-lg text-xs font-medium text-zinc-700 dark:text-zinc-300 bg-white dark:bg-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-700 hover:border-zinc-300 dark:hover:border-zinc-600 hover:text-zinc-900 dark:hover:text-zinc-100 shadow-sm transition-all">
-                        &gt; $50k
-                      </button>
-                      <button className="px-3 py-1.5 border border-zinc-200 dark:border-zinc-700 rounded-lg text-xs font-medium text-zinc-700 dark:text-zinc-300 bg-white dark:bg-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-700 hover:border-zinc-300 dark:hover:border-zinc-600 hover:text-zinc-900 dark:hover:text-zinc-100 shadow-sm transition-all">
-                        &gt; $100k
-                      </button>
-                      <button className="px-3 py-1.5 border border-zinc-200 dark:border-zinc-700 rounded-lg text-xs font-medium text-zinc-700 dark:text-zinc-300 bg-white dark:bg-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-700 hover:border-zinc-300 dark:hover:border-zinc-600 hover:text-zinc-900 dark:hover:text-zinc-100 shadow-sm transition-all">
-                        &gt; $250k
-                      </button>
-                      <button className="px-3 py-1.5 border border-zinc-200 dark:border-zinc-700 rounded-lg text-xs font-medium text-zinc-700 dark:text-zinc-300 bg-white dark:bg-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-700 hover:border-zinc-300 dark:hover:border-zinc-600 hover:text-zinc-900 dark:hover:text-zinc-100 shadow-sm transition-all">
-                        Custom
-                      </button>
-                    </div>
-                  )}
+                <div className="rounded-xl border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
+                  <label className="block text-sm font-medium text-zinc-900 dark:text-zinc-100" htmlFor="dashboard-sort-by">Sort by</label>
+                  <select
+                    id="dashboard-sort-by"
+                    value={marketSortKey}
+                    onChange={(event) => setMarketSortKey(event.target.value as DashboardSortKey)}
+                    className="mt-2 h-9 w-full rounded-lg border border-zinc-200 bg-white px-3 text-xs font-semibold text-zinc-800 outline-none transition focus:border-[#ccff00]/60 focus:ring-2 focus:ring-[#ccff00]/25 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
+                  >
+                    {sortOptions.map((option) => (
+                      <option key={option.id} value={option.id}>{option.label}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
             </div>
@@ -1063,37 +1660,56 @@ export const DashboardV2Mockup = ({
                   <List className="h-4 w-4" />
                 </button>
               </div>
-              <button className="flex h-10 items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 text-sm font-semibold text-zinc-800 shadow-sm transition-all hover:border-[#ccff00]/40 hover:text-zinc-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00] dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-[#ccff00]/40">
+              <button
+                type="button"
+                onClick={() => setMarketFilter((current) => current === 'watchlist' ? 'all' : 'watchlist')}
+                className={`flex h-10 items-center gap-2 rounded-lg border px-3 text-sm font-semibold shadow-sm transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00] ${marketFilter === 'watchlist' ? 'border-[#ccff00]/45 bg-[#ccff00]/10 text-[#ccff00]' : 'border-zinc-200 bg-white text-zinc-800 hover:border-[#ccff00]/40 hover:text-zinc-950 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:border-[#ccff00]/40'}`}
+              >
                 <Bookmark className="h-4 w-4 text-zinc-500 dark:text-zinc-400" /> Watchlist
               </button>
               <div className="flex h-10 items-center rounded-xl border border-zinc-200 bg-white p-0.5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-                <button className="h-8 rounded-lg bg-[#ccff00] px-4 text-sm font-bold text-black shadow-[0_0_18px_rgba(204,255,0,0.18)]">
+                <button
+                  type="button"
+                  onClick={() => onNavigate?.('home')}
+                  className={`h-8 rounded-lg px-4 text-sm font-bold transition ${activePage === 'home' ? 'bg-[#ccff00] text-black shadow-[0_0_18px_rgba(204,255,0,0.18)]' : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-zinc-100'}`}
+                >
                   Events
                 </button>
-                <button className="h-8 rounded-lg px-4 text-sm font-semibold text-zinc-600 transition hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-zinc-100">
+                <button
+                  type="button"
+                  onClick={() => onNavigate?.('markets')}
+                  className={`h-8 rounded-lg px-4 text-sm font-bold transition ${activePage === 'markets' ? 'bg-[#ccff00] text-black shadow-[0_0_18px_rgba(204,255,0,0.18)]' : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-zinc-100'}`}
+                >
                   Markets
                 </button>
               </div>
-              <button className="flex h-10 items-center rounded-full bg-[#ccff00] px-4 text-sm font-bold text-black shadow-[0_0_18px_rgba(204,255,0,0.16)]">
+              <button
+                type="button"
+                onClick={() => setMarketFilter('all')}
+                className={`flex h-10 items-center rounded-full px-4 text-sm font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00] ${marketFilter === 'all' ? 'bg-[#ccff00] text-black shadow-[0_0_18px_rgba(204,255,0,0.16)]' : 'border border-zinc-200 bg-white text-zinc-700 hover:border-[#ccff00]/40 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300'}`}
+              >
                 All
               </button>
-              <button className="relative flex h-10 items-center gap-2 rounded-full border border-[#ccff00]/45 bg-[#ccff00]/10 px-4 text-sm font-semibold text-[#ccff00] transition hover:bg-[#ccff00]/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]">
-                <span className="absolute -top-2.5 right-1 rounded bg-[#ccff00] px-1.5 py-0.5 text-[9px] font-black leading-none text-black">SOON</span>
+              <button
+                type="button"
+                onClick={() => setMarketFilter('live_crypto')}
+                className={`relative flex h-10 items-center gap-2 rounded-full border px-4 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00] ${marketFilter === 'live_crypto' ? 'border-[#ccff00]/65 bg-[#ccff00]/15 text-[#ccff00]' : 'border-[#ccff00]/45 bg-[#ccff00]/10 text-[#ccff00] hover:bg-[#ccff00]/15'}`}
+              >
                 <Radio className="h-4 w-4" /> Live Crypto
               </button>
-              <button className="flex items-center gap-2 px-3 py-2 bg-zinc-900 dark:bg-zinc-100 border border-zinc-900 dark:border-zinc-100 rounded-lg text-sm font-medium text-white dark:text-zinc-900 shadow-sm transition-all whitespace-nowrap">
+              <button type="button" onClick={() => setMarketFilter('trending')} className={filterButtonClass(marketFilter === 'trending', 'hot')}>
                 <Flame className="w-4 h-4 text-orange-500" /> Trending
               </button>
-              <button className="flex items-center gap-2 px-3 py-2 bg-[#ccff00]/10 border border-[#ccff00]/30 rounded-lg text-sm font-medium text-zinc-900 dark:text-[#ccff00] hover:bg-[#ccff00]/20 transition-all whitespace-nowrap">
+              <button type="button" onClick={() => setMarketFilter('best_routes')} className={filterButtonClass(marketFilter === 'best_routes', 'lotus')}>
                 <ArrowRightLeft className="w-4 h-4 text-[#99cc00]" /> Best Routes
               </button>
-              <button className="flex items-center gap-2 px-3 py-2 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800 hover:border-zinc-300 dark:hover:border-zinc-700 hover:text-zinc-900 dark:hover:text-zinc-100 shadow-sm transition-all whitespace-nowrap">
+              <button type="button" onClick={() => setMarketFilter('sports')} className={filterButtonClass(marketFilter === 'sports')}>
                 <Trophy className="w-4 h-4 text-zinc-400 dark:text-zinc-500" /> Sports
               </button>
-              <button className="flex items-center gap-2 px-3 py-2 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800 hover:border-zinc-300 dark:hover:border-zinc-700 hover:text-zinc-900 dark:hover:text-zinc-100 shadow-sm transition-all whitespace-nowrap">
+              <button type="button" onClick={() => setMarketFilter('crypto')} className={filterButtonClass(marketFilter === 'crypto')}>
                 <Database className="w-4 h-4 text-zinc-400 dark:text-zinc-500" /> Crypto
               </button>
-              <button className="flex items-center gap-2 px-3 py-2 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800 hover:border-zinc-300 dark:hover:border-zinc-700 hover:text-zinc-900 dark:hover:text-zinc-100 shadow-sm transition-all whitespace-nowrap">
+              <button type="button" onClick={() => setMarketFilter('politics')} className={filterButtonClass(marketFilter === 'politics')}>
                 <Landmark className="w-4 h-4 text-zinc-400 dark:text-zinc-500" /> Politics
               </button>
             </div>
@@ -1261,12 +1877,14 @@ export const DashboardV2Mockup = ({
                   <MarketGridMessage title="Markets unavailable" body={marketsError} />
                 )}
                 {!marketsLoading && !marketsError && displayedMarkets.length === 0 && (
-                  <MarketGridMessage title="No markets found" body="Try another search. Lotus only shows backend-approved market metadata here." />
+                  <MarketGridMessage title="No markets found" body={emptyMarketCopy} />
                 )}
                 {displayedMarkets.map((market) => (
                   <MarketCard
                     key={market.id}
                     {...market}
+                    isWatched={watchlistIds.includes(market.id)}
+                    onToggleWatch={toggleMarketWatch}
                     onOpenTerminal={openMarketInTerminal}
                   />
                 ))}
@@ -1421,8 +2039,22 @@ export const DashboardV2Mockup = ({
                   markets={displayedMarkets}
                   loading={marketsLoading}
                   error={marketsError}
+                  watchlistIds={watchlistIds}
+                  onToggleWatch={toggleMarketWatch}
                   onOpenMarket={openMarketInTerminal}
+                  emptyCopy={emptyMarketCopy}
                 />
+              )}
+              {canLoadMoreMarkets && (
+                <div className="mt-4 mb-10 flex justify-center">
+                  <button
+                    type="button"
+                    onClick={() => setHomeMarketLimit((current) => Math.min(current + 15, filteredMarketRows.length))}
+                    className="rounded-lg border border-[#ccff00]/40 bg-[#ccff00]/10 px-4 py-2 text-xs font-bold text-[#ccff00] transition hover:bg-[#ccff00]/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
+                  >
+                    Load 15 more
+                  </button>
+                </div>
               )}
             </div>
 
@@ -1453,26 +2085,31 @@ export const DashboardV2Mockup = ({
             </div>
 
             {/* Portfolio Summary */}
-            <div className="bg-zinc-900 dark:bg-zinc-800 rounded-2xl p-4 text-white shadow-lg relative overflow-hidden border border-transparent dark:border-zinc-700">
+            <button
+              type="button"
+              onClick={() => onNavigate?.('portfolio')}
+              className="bg-zinc-900 dark:bg-zinc-800 rounded-2xl p-4 text-left text-white shadow-lg relative overflow-hidden border border-transparent dark:border-zinc-700 transition hover:border-[#ccff00]/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/60"
+              aria-label="Open portfolio"
+            >
               <div className="absolute top-0 right-0 w-32 h-32 bg-[#ccff00]/10 rounded-full blur-2xl -mr-10 -mt-10 pointer-events-none"></div>
               
               <h3 className="text-xs font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-widest mb-2">Portfolio</h3>
               <div className="flex items-end gap-2 mb-5">
-                <span className="text-2xl font-bold tracking-tight">Backend-led</span>
-                <span className="text-xs font-medium text-[#ccff00] mb-1">MTM</span>
+                <span className="text-2xl font-bold tracking-tight">{portfolioValueLabel}</span>
+                <span className="text-xs font-medium text-[#ccff00] mb-1">{portfolioMtmLabel}</span>
               </div>
               
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="text-xs text-zinc-400 dark:text-zinc-500">Available Cash</span>
-                  <span className="text-xs font-mono font-medium">Open portfolio</span>
+                  <span className="text-xs font-mono font-medium">{portfolioCashLabel}</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-xs text-zinc-400 dark:text-zinc-500">Active Positions</span>
-                  <span className="text-xs font-mono font-medium">Verified only</span>
+                  <span className="text-xs font-mono font-medium">{portfolioPositionsLabel}</span>
                 </div>
               </div>
-            </div>
+            </button>
 
             {/* Recent Activity */}
             <div>
@@ -1481,39 +2118,54 @@ export const DashboardV2Mockup = ({
               </div>
               
               <div className="space-y-4 relative before:absolute before:inset-y-0 before:left-[11px] before:w-px before:bg-zinc-200 dark:before:bg-zinc-700">
-                <ActivityItem 
-                  type="route"
-                  title="Market catalog synced"
-                  market={`${marketSummary.routeable} backend-approved markets loaded`}
-                  time={marketsLoading ? 'Loading' : 'Live'}
-                  price=""
-                />
-                <ActivityItem 
-                  type="route"
-                  title="Route preview required"
-                  market="Savings and spreads appear after backend quote evidence"
-                  time="Safe"
-                  price=""
-                />
-                <ActivityItem 
-                  type="buy"
-                  title="Open terminal"
-                  market="Market clicks carry canonical IDs into the terminal"
-                  time="Ready"
-                  price=""
-                />
+                {notificationsLoading && recentActivityItems.length === 0 ? (
+                  <ActivityItem type="route" title="Loading activity" market="Checking durable notification inbox" time="Live" price="" />
+                ) : recentActivityItems.map((item, index) => (
+                  <ActivityItem
+                    key={`${item.title}-${index}`}
+                    type={item.type}
+                    title={item.title}
+                    market={item.market}
+                    time={item.time}
+                    price={item.price}
+                  />
+                ))}
+                {notificationsError && (
+                  <ActivityItem
+                    type="sell"
+                    title="Notification inbox unavailable"
+                    market={notificationsError}
+                    time="Retry"
+                    price=""
+                  />
+                )}
               </div>
             </div>
           </div>
           </>
           ) : activePage === 'terminal' ? (
             <div className="min-w-0 flex-1">
-              <InfraTradingTerminal embedded darkMode={isDarkMode} selectedMarket={selectedTerminalMarket} session={session} />
+              <InfraTradingTerminal
+                embedded
+                darkMode={isDarkMode}
+                selectedMarket={selectedTerminalMarket}
+                relatedMarkets={terminalMarketSelections}
+                session={session}
+              />
             </div>
-          ) : (
+          ) : activePage === 'portfolio' ? (
             <div className="min-w-0 flex-1">
               <PortfolioMockupV2 session={session} />
             </div>
+          ) : (
+            <SettingsPage
+              settings={notificationSettings}
+              onSettingsChange={(nextSettings) => {
+                setNotificationSettings(nextSettings);
+                saveNotificationSettings(nextSettings);
+              }}
+              onClose={() => onNavigate?.('home')}
+            />
           )}
         </div>
       </main>
@@ -1570,6 +2222,147 @@ const ActivityItem = ({ type, title, market, time, price }: any) => {
     </div>
   );
 };
+
+const SettingsPage = ({
+  settings,
+  onSettingsChange,
+  onClose,
+}: {
+  settings: { toastPosition: ToastPosition; notificationsEnabled: boolean; notificationSound: boolean };
+  onSettingsChange: (settings: { toastPosition: ToastPosition; notificationsEnabled: boolean; notificationSound: boolean }) => void;
+  onClose: () => void;
+}) => {
+  const [activeSection, setActiveSection] = useState<'notifications' | 'animations' | 'connected'>('notifications');
+  const [reducedMotion, setReducedMotion] = useState(false);
+  const updateNotificationSetting = (partial: Partial<typeof settings>) => {
+    onSettingsChange({ ...settings, ...partial });
+  };
+  const positions = [
+    { id: 'top-left' as const, label: 'Top Left' },
+    { id: 'top-center' as const, label: 'Top Center' },
+    { id: 'top-right' as const, label: 'Top Right' },
+    { id: 'bottom-left' as const, label: 'Bottom Left' },
+    { id: 'bottom-center' as const, label: 'Bottom Center' },
+    { id: 'bottom-right' as const, label: 'Bottom Right' },
+  ];
+  const navItems = [
+    { id: 'notifications' as const, label: 'Notifications', Icon: Bell },
+    { id: 'animations' as const, label: 'Animations', Icon: Sparkles },
+    { id: 'connected' as const, label: 'Connected Apps', Icon: Globe },
+  ];
+
+  return (
+    <div className="min-w-0 flex-1 overflow-y-auto bg-[#070708] p-4 pb-16">
+      <div className="relative min-h-full rounded-xl border border-zinc-900 bg-[#0c0c0d]">
+        <button
+          type="button"
+          onClick={onClose}
+          className="absolute right-8 top-8 z-10 flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-950 text-zinc-400 transition hover:border-[#ccff00]/40 hover:text-[#ccff00] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
+          aria-label="Close settings"
+        >
+          <X className="h-4 w-4" />
+        </button>
+        <div className="grid min-h-[calc(100vh-7rem)] grid-cols-[220px_minmax(0,1fr)]">
+          <aside className="border-r border-zinc-800 p-4">
+            <h2 className="mb-5 text-sm font-bold text-white">Settings</h2>
+            <nav className="space-y-2">
+              {navItems.map(({ id, label, Icon }) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setActiveSection(id)}
+                  className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-xs font-semibold transition ${activeSection === id ? 'bg-zinc-900 text-white' : 'text-zinc-500 hover:bg-zinc-900/60 hover:text-zinc-200'}`}
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                  {label}
+                </button>
+              ))}
+            </nav>
+          </aside>
+
+          <section className="mx-auto w-full max-w-2xl px-10 py-10">
+            {activeSection === 'notifications' && (
+              <div>
+                <h1 className="text-base font-bold text-white">Notifications</h1>
+                <p className="mt-2 text-xs text-zinc-500">Configure how and when you receive notifications.</p>
+                <div className="mt-8 space-y-7">
+                  <SettingsToggle label="Display Notification" enabled={settings.notificationsEnabled} onChange={(value) => updateNotificationSetting({ notificationsEnabled: value })} />
+                  <div>
+                    <div className="mb-3 text-xs font-medium text-zinc-400">Toast Position</div>
+                    <div className="grid grid-cols-3 gap-4">
+                      {positions.map((position) => (
+                        <button
+                          key={position.id}
+                          type="button"
+                          onClick={() => updateNotificationSetting({ toastPosition: position.id })}
+                          className={`rounded-lg border p-3 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${settings.toastPosition === position.id ? 'border-[#ccff00]/60 bg-[#ccff00]/10' : 'border-zinc-800 bg-zinc-950/50 hover:border-[#ccff00]/30'}`}
+                        >
+                          <div className="relative h-8 rounded border border-zinc-800 bg-[#171719]">
+                            <span className={`absolute h-2 w-2 rounded-full bg-[#ccff00] shadow-[0_0_10px_rgba(204,255,0,0.5)] ${position.id.includes('top') ? 'top-2' : 'bottom-2'} ${position.id.includes('left') ? 'left-2' : position.id.includes('right') ? 'right-2' : 'left-1/2 -translate-x-1/2'}`} />
+                            <span className="absolute left-5 right-3 top-2 h-1 rounded bg-zinc-700" />
+                            <span className="absolute left-5 right-8 top-4 h-1 rounded bg-zinc-800" />
+                          </div>
+                          <div className={`mt-2 text-[11px] ${settings.toastPosition === position.id ? 'font-semibold text-[#ccff00]' : 'text-zinc-400'}`}>{position.label}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <SettingsToggle label="Notification Sound" enabled={settings.notificationSound} onChange={(value) => updateNotificationSetting({ notificationSound: value })} />
+                </div>
+              </div>
+            )}
+
+            {activeSection === 'animations' && (
+              <div>
+                <h1 className="text-base font-bold text-white">Animations</h1>
+                <p className="mt-2 text-xs text-zinc-500">Control motion and visual feedback across Lotus.</p>
+                <div className="mt-8 space-y-5">
+                  <SettingsToggle label="Reduce Motion" enabled={reducedMotion} onChange={setReducedMotion} />
+                  <div className="rounded-xl border border-zinc-800 bg-zinc-950/50 p-4 text-xs text-zinc-500">
+                    Motion preferences are local to this browser.
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {activeSection === 'connected' && (
+              <div>
+                <h1 className="text-base font-bold text-white">Connected Apps</h1>
+                <p className="mt-2 text-xs text-zinc-500">Manage account-linked services and wallet sessions.</p>
+                <div className="mt-8 space-y-3">
+                  <ConnectedAppRow name="Turnkey" status="Connected" />
+                  <ConnectedAppRow name="X / Twitter" status="Managed by Turnkey auth" />
+                  <ConnectedAppRow name="Google" status="Managed by Turnkey auth" />
+                </div>
+              </div>
+            )}
+          </section>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const SettingsToggle = ({ label, enabled, onChange }: { label: string; enabled: boolean; onChange: (value: boolean) => void }) => (
+  <div className="flex items-center justify-between">
+    <span className="text-xs font-medium text-zinc-400">{label}</span>
+    <button
+      type="button"
+      onClick={() => onChange(!enabled)}
+      className={`relative h-4 w-8 rounded-full transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${enabled ? 'bg-[#ccff00]' : 'bg-zinc-800'}`}
+      aria-pressed={enabled}
+    >
+      <span className={`absolute top-0.5 h-3 w-3 rounded-full transition ${enabled ? 'right-0.5 bg-black' : 'left-0.5 bg-zinc-400'}`} />
+    </button>
+  </div>
+);
+
+const ConnectedAppRow = ({ name, status }: { name: string; status: string }) => (
+  <div className="flex items-center justify-between rounded-xl border border-zinc-800 bg-zinc-950/50 px-4 py-3">
+    <span className="text-sm font-semibold text-white">{name}</span>
+    <span className="text-xs text-zinc-500">{status}</span>
+  </div>
+);
 
 const marketListRows = [
   {
@@ -1803,12 +2596,18 @@ const LotusMarketList = ({
   markets,
   loading,
   error,
+  watchlistIds,
+  onToggleWatch,
   onOpenMarket,
+  emptyCopy,
 }: {
   markets: DashboardMarketRow[];
   loading: boolean;
   error: string | null;
+  watchlistIds: string[];
+  onToggleWatch: (marketId: string) => void;
   onOpenMarket?: (market: Pick<TerminalMarketSelection, 'title' | 'category' | 'icon' | 'volume' | 'venueCount' | 'routeType'> & Partial<TerminalMarketSelection>) => void;
+  emptyCopy: string;
 }) => {
   const changeClass = (direction: DashboardMarketRow['change24hDirection']) => {
     if (direction === 'positive') return 'text-emerald-400';
@@ -1839,7 +2638,7 @@ const LotusMarketList = ({
         <div className="px-5 py-6 text-sm font-medium text-amber-300">{error}</div>
       )}
       {!loading && !error && markets.length === 0 && (
-        <div className="px-5 py-6 text-sm font-medium text-zinc-400">No backend-approved markets found for this search.</div>
+        <div className="px-5 py-6 text-sm font-medium text-zinc-400">{emptyCopy}</div>
       )}
       {markets.map((market) => (
         <div key={market.id} className="group grid grid-cols-[minmax(360px,1.7fr)_112px_96px_84px_116px_92px_96px_150px] items-center gap-4 px-5 py-3.5 transition-colors hover:bg-[#ccff00]/[0.035]">
@@ -1847,8 +2646,13 @@ const LotusMarketList = ({
             <button type="button" className="flex h-7 w-5 shrink-0 items-center justify-center rounded-md text-zinc-500 transition hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70" aria-label={`Expand ${market.title}`}>
               <ChevronDown className="h-3.5 w-3.5" />
             </button>
-            <button type="button" className="flex h-7 w-5 shrink-0 items-center justify-center rounded-md text-zinc-500 transition hover:text-[#ccff00] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70" aria-label={`Watch ${market.title}`} disabled>
-              <Bookmark className="h-3.5 w-3.5" />
+            <button
+              type="button"
+              onClick={() => onToggleWatch(market.id)}
+              className={`flex h-7 w-5 shrink-0 items-center justify-center rounded-md transition hover:text-[#ccff00] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${watchlistIds.includes(market.id) ? 'text-[#ccff00]' : 'text-zinc-500'}`}
+              aria-label={`${watchlistIds.includes(market.id) ? 'Remove' : 'Add'} ${market.title} ${watchlistIds.includes(market.id) ? 'from' : 'to'} watchlist`}
+            >
+              <Bookmark className={`h-3.5 w-3.5 ${watchlistIds.includes(market.id) ? 'fill-current' : ''}`} />
             </button>
             <button
               type="button"
@@ -2082,7 +2886,8 @@ const NavItem = ({
   </div>
 );
 
-const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, venueCount, routeType, savings, spread, fallback, fallbackLabel, icon, imageUrl, iconUrl, priceLabel, priceVenue, changeLabel, prob, change, volume, volumeLabel = 'Vol', txnBuy, txnSell, txnLabel = 'Pending', badges = [], outcomes, marketType, venues, venueMarkets, onOpenTerminal }: any) => {
+const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, venueCount, routeType, savings, spread, fallback, fallbackLabel, fallbackMode = 'pending', icon, imageUrl, iconUrl, priceLabel, priceVenue, changeLabel, prob, change, volume, volumeLabel = 'Vol', txnBuy, txnSell, txnLabel = 'Pending', badges = [], outcomes, marketType, venues, venueMarkets, isWatched = false, onToggleWatch, onOpenTerminal }: any) => {
+  const [outcomesExpanded, setOutcomesExpanded] = useState(false);
   const allVenues = [
     { id: 'polymarket', label: 'Polymarket' },
     { id: 'predict', label: 'Predict.fun' },
@@ -2096,8 +2901,18 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
   const buyCount = typeof txnBuy === 'number' ? txnBuy : 0;
   const sellCount = typeof txnSell === 'number' ? txnSell : 0;
   const totalCount = buyCount + sellCount;
+  const activeBadgeIds = new Set((badges as string[]).map(dashboardVenueIconId));
+  const visibleOutcomes = outcomesExpanded ? outcomes : outcomes?.slice(0, 5);
+  const hiddenOutcomeCount = Math.max(0, (outcomes?.length ?? 0) - (visibleOutcomes?.length ?? 0));
   const fallbackText = fallbackLabel ?? (fallback ? 'Yes' : 'No');
-  const terminalPayload = { id, marketId, eventId, canonicalEventId, title, category, icon, volume, venueCount, routeType, venues, venueMarkets, marketType, outcomes, imageUrl, iconUrl };
+  const routeVenueCaption = fallbackMode === 'best_venue'
+    ? 'Best venue'
+    : fallbackMode === 'blocker'
+      ? 'Blocked'
+      : fallbackMode === 'pending'
+        ? 'Route'
+        : 'Fallback';
+  const terminalPayload = { id, marketId, eventId, canonicalEventId, title, category, icon, volume, venueCount, routeType, venues, venueMarkets, marketType, outcomes, imageUrl, iconUrl, priceLabel, priceVenue, changeLabel };
 
   return (
     <div className="bg-white dark:bg-[#121214] border border-zinc-200 dark:border-zinc-800 rounded-2xl p-4 flex min-h-[260px] flex-col justify-between gap-3 shadow-sm hover:border-zinc-300 dark:hover:border-zinc-700 hover:shadow-md transition-all group">
@@ -2118,7 +2933,7 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
             </span>
             <span className="flex gap-1.5 mb-3">
               {allVenues.map(v => {
-                const isActive = badges.includes(v.id);
+                const isActive = activeBadgeIds.has(v.id);
                 return (
                   <span
                     key={v.id} 
@@ -2134,10 +2949,18 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
           </span>
         </button>
         <div className="text-right shrink-0 ml-2">
+          <button
+            type="button"
+            onClick={() => onToggleWatch?.(id)}
+            className={`mb-2 inline-flex h-6 w-6 items-center justify-center rounded-md border transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${isWatched ? 'border-[#ccff00]/40 bg-[#ccff00]/10 text-[#ccff00]' : 'border-zinc-800 bg-zinc-900/50 text-zinc-500 hover:text-[#ccff00]'}`}
+            aria-label={`${isWatched ? 'Remove' : 'Add'} ${title} ${isWatched ? 'from' : 'to'} watchlist`}
+          >
+            <Bookmark className={`h-3.5 w-3.5 ${isWatched ? 'fill-current' : ''}`} />
+          </button>
           <div className="mb-1 flex items-center justify-end gap-1.5">
             {priceVenue && (
               <span className="flex h-4 w-4 items-center justify-center rounded border border-zinc-700/70 bg-zinc-900/80 p-0.5 shadow-sm" title={priceVenue}>
-                <VenueLogo id={normalizeVenueId(priceVenue)} label={priceVenue} className="h-full w-full rounded-[inherit] object-cover" />
+                <VenueLogo id={dashboardVenueIconId(priceVenue)} label={priceVenue} className="h-full w-full rounded-[inherit] object-cover" />
               </span>
             )}
             <span className="text-base font-mono font-bold text-zinc-900 dark:text-zinc-100 leading-none">{displayPrice}</span>
@@ -2160,7 +2983,7 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
              <span className="text-zinc-700 dark:text-zinc-300"><span className="text-zinc-500 dark:text-zinc-400">Savings:</span> <span className="text-[#99cc00] font-bold">{savings}</span></span>
              {spread && <span className="text-zinc-700 dark:text-zinc-300"><span className="text-zinc-500 dark:text-zinc-400">Spread:</span> {spread}</span>}
           </div>
-          <span className="text-zinc-700 dark:text-zinc-300"><span className="text-zinc-500 dark:text-zinc-400">Fallback:</span> {fallbackText}</span>
+          <span className="text-zinc-700 dark:text-zinc-300"><span className="text-zinc-500 dark:text-zinc-400">{routeVenueCaption}:</span> {fallbackText}</span>
         </div>
       )}
 
@@ -2169,23 +2992,48 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
       {/* Outcomes */}
       {outcomes && outcomes.length > 0 && (
         <div className="flex flex-col gap-2 mt-1">
-          {outcomes.map((outcome: any, idx: number) => (
-            <div key={idx} className="flex items-center justify-between text-sm">
-              <span className="font-semibold text-zinc-600 dark:text-zinc-400 truncate pr-2 flex-1 text-xs">{outcome.name}</span>
-              <div className="flex items-center gap-3 shrink-0">
-                <span className="font-mono font-bold text-zinc-900 dark:text-zinc-100 w-12 text-right text-xs">{outcome.prob}{/^\d+(\.\d+)?$/.test(String(outcome.prob)) ? '%' : ''}</span>
-                <div className="flex gap-1.5">
-                  <button type="button" onClick={() => onOpenTerminal?.(terminalPayload)} className="w-9 py-1 bg-emerald-500 hover:bg-emerald-600 text-white text-[10px] transition-colors rounded font-bold shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70">Yes</button>
-                  <button type="button" onClick={() => onOpenTerminal?.(terminalPayload)} className="w-9 py-1 bg-red-500 hover:bg-red-600 text-white text-[10px] transition-colors rounded font-bold shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70">No</button>
+          {visibleOutcomes.map((outcome: any, idx: number) => {
+            const outcomePayload = {
+              ...terminalPayload,
+              id: outcome.marketId ?? terminalPayload.id,
+              marketId: outcome.marketId ?? terminalPayload.marketId,
+              eventId: outcome.eventId ?? terminalPayload.eventId,
+              canonicalEventId: outcome.canonicalEventId ?? terminalPayload.canonicalEventId,
+              title,
+              venues: outcome.venues ?? terminalPayload.venues,
+              venueMarkets: outcome.venueMarkets ?? terminalPayload.venueMarkets,
+              marketType: outcome.marketType ?? terminalPayload.marketType,
+              imageUrl: outcome.imageUrl ?? terminalPayload.imageUrl,
+              iconUrl: outcome.iconUrl ?? terminalPayload.iconUrl,
+              priceLabel: outcome.prob ?? terminalPayload.priceLabel,
+              priceVenue: outcome.priceVenue ?? terminalPayload.priceVenue,
+              outcomes,
+              initialOutcomeId: outcome.id,
+            };
+            return (
+              <div key={outcome.id ?? idx} className="flex items-center justify-between text-sm">
+                <span className="font-semibold text-zinc-600 dark:text-zinc-400 truncate pr-2 flex-1 text-xs">{outcome.name}</span>
+                <div className="flex items-center gap-3 shrink-0">
+                  <span className="font-mono font-bold text-zinc-900 dark:text-zinc-100 w-12 text-right text-xs">{outcome.prob}{/^\d+(\.\d+)?$/.test(String(outcome.prob)) ? '%' : ''}</span>
+                  <div className="flex gap-1.5">
+                    <button type="button" onClick={() => onOpenTerminal?.({ ...outcomePayload, initialOutcomeSide: 'yes' })} className="w-9 py-1 bg-emerald-500 hover:bg-emerald-600 text-white text-[10px] transition-colors rounded font-bold shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70">Yes</button>
+                    <button type="button" onClick={() => onOpenTerminal?.({ ...outcomePayload, initialOutcomeSide: 'no' })} className="w-9 py-1 bg-red-500 hover:bg-red-600 text-white text-[10px] transition-colors rounded font-bold shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70">No</button>
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
           
-          <div className="flex items-center justify-between text-[11px] font-medium text-zinc-500 dark:text-zinc-400 py-1 mt-1 cursor-pointer hover:text-zinc-300 transition-colors">
-            <span>Show more outcomes</span>
-            <ChevronDown className="w-3.5 h-3.5" />
-          </div>
+          {(outcomes?.length ?? 0) > 5 && (
+            <button
+              type="button"
+              onClick={() => setOutcomesExpanded((current) => !current)}
+              className="flex items-center justify-between rounded-md py-1 text-[11px] font-medium text-zinc-500 transition-colors hover:text-zinc-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
+            >
+              <span>{outcomesExpanded ? 'Show fewer outcomes' : `Show ${hiddenOutcomeCount} more outcome${hiddenOutcomeCount === 1 ? '' : 's'}`}</span>
+              <ChevronDown className={`w-3.5 h-3.5 transition-transform ${outcomesExpanded ? 'rotate-180' : ''}`} />
+            </button>
+          )}
         </div>
       )}
 

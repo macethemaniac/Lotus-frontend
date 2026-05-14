@@ -1,4 +1,5 @@
 import { apiRequest } from "@/lib/api/http-client";
+import { staleWhileRevalidate } from "@/lib/api/stale-cache";
 
 export type MarketCatalogMedia = {
   imageUrl: string | null;
@@ -38,6 +39,9 @@ export type MarketCatalogMarket = MarketCatalogMedia & MarketCatalogMetrics & {
   eventTitle?: string;
   canonicalEventId: string;
   canonicalMarketIds: string[];
+  displayTopic?: string;
+  displayOutcome?: string;
+  displayOutcomeKey?: string;
   title: string;
   normalizedTitle: string;
   category: string;
@@ -122,8 +126,8 @@ export type MarketOrderbookResponse = {
   bestAsk: string | null;
   midpoint: string | null;
   spread: string | null;
-  status: "live" | "partial" | "unavailable";
-  blockers: Array<{ venue: string; reason: string; venueMarketId?: string; venueOutcomeId?: string }>;
+  status: "live" | "partial" | "stale" | "unavailable";
+  blockers: Array<{ venue: string; reason: string; venueMarketId?: string; venueOutcomeId?: string; detailsCode?: string }>;
 };
 
 export type MarketChartTimeframe = "1H" | "6H" | "1D" | "1W" | "1M" | "ALL";
@@ -142,6 +146,50 @@ export type MarketChartResponse = {
     venues: Record<string, string | null>;
   }>;
   blockers: MarketOrderbookResponse["blockers"];
+};
+
+export type MarketBatchQuoteRequestItem = {
+  marketId: string;
+  outcomeId: string;
+  side?: "buy" | "sell";
+  amount?: string | number;
+};
+
+export type MarketBatchQuoteVenueEvidence = {
+  venue: string;
+  venueMarketId: string;
+  venueOutcomeId: string | null;
+  price: string | null;
+  bid: string | null;
+  ask: string | null;
+  availableSize: string;
+  liquidity: string;
+  spread: string | null;
+  source: "STREAM" | "REST";
+  quoteQuality: string;
+  freshnessMs: number | null;
+  blockers: string[];
+};
+
+export type MarketBatchQuoteItem = {
+  marketId: string;
+  outcomeId: string;
+  side: "buy" | "sell";
+  generatedAt: string;
+  status: "live" | "partial" | "stale" | "unavailable";
+  bestVenue: string | null;
+  bestVenuePrice: string | null;
+  unifiedAveragePrice: string | null;
+  liquidity: string;
+  spread: string | null;
+  freshnessMs: number | null;
+  venues: MarketBatchQuoteVenueEvidence[];
+  blockers: MarketOrderbookResponse["blockers"];
+};
+
+export type MarketBatchQuoteResponse = {
+  generatedAt: string;
+  quotes: MarketBatchQuoteItem[];
 };
 
 export type ResolutionRiskAssessment = {
@@ -189,12 +237,18 @@ export function listMarketCategories() {
 
 export function listMarkets(input: MarketListInput = {}) {
   const params = buildMarketParams(input);
-  return apiRequest<{ markets: MarketCatalogMarket[]; count: number }>(`/markets${params}`);
+  return staleWhileRevalidate(`markets:${params}`, () =>
+    apiRequest<{ markets: MarketCatalogMarket[]; count: number }>(`/markets${params}`),
+    { ttlMs: 20_000, maxStaleMs: 5 * 60_000 }
+  );
 }
 
 export function listEvents(input: MarketListInput = {}) {
   const params = buildMarketParams(input);
-  return apiRequest<{ events: MarketCatalogEvent[]; count: number }>(`/events${params}`);
+  return staleWhileRevalidate(`events:${params}`, () =>
+    apiRequest<{ events: MarketCatalogEvent[]; count: number }>(`/events${params}`),
+    { ttlMs: 20_000, maxStaleMs: 5 * 60_000 }
+  );
 }
 
 export function getEventMarkets(eventId: string) {
@@ -208,8 +262,10 @@ export function getMarket(marketId: string) {
 }
 
 export function getMarketOutcomes(marketId: string) {
-  return apiRequest<{ canonicalEventId: string; title: string; outcomes: MarketOutcome[] }>(
-    `/markets/${encodeURIComponent(marketId)}/outcomes`
+  const path = `/markets/${encodeURIComponent(marketId)}/outcomes`;
+  return staleWhileRevalidate(`outcomes:${path}`, () =>
+    apiRequest<{ canonicalEventId: string; title: string; outcomes: MarketOutcome[] }>(path),
+    { ttlMs: 30_000, maxStaleMs: 5 * 60_000 }
   );
 }
 
@@ -222,8 +278,10 @@ export function getMarketOrderbook(
   if (input.depth) params.set("depth", String(input.depth));
   if (input.venue) params.set("venue", input.venue);
   const query = params.toString();
-  return apiRequest<MarketOrderbookResponse>(
-    `/markets/${encodeURIComponent(marketId)}/orderbook${query ? `?${query}` : ""}`
+  const path = `/markets/${encodeURIComponent(marketId)}/orderbook${query ? `?${query}` : ""}`;
+  return staleWhileRevalidate(`orderbook:${path}`, () =>
+    apiRequest<MarketOrderbookResponse>(path),
+    { ttlMs: 4_000, maxStaleMs: 60_000 }
   );
 }
 
@@ -235,8 +293,21 @@ export function getMarketChart(
   if (input.outcomeId) params.set("outcomeId", input.outcomeId);
   if (input.timeframe) params.set("timeframe", input.timeframe);
   const query = params.toString();
-  return apiRequest<MarketChartResponse>(
-    `/markets/${encodeURIComponent(marketId)}/chart${query ? `?${query}` : ""}`
+  const path = `/markets/${encodeURIComponent(marketId)}/chart${query ? `?${query}` : ""}`;
+  return staleWhileRevalidate(`chart:${path}`, () =>
+    apiRequest<MarketChartResponse>(path),
+    { ttlMs: 10_000, maxStaleMs: 5 * 60_000 }
+  );
+}
+
+export function getMarketBatchQuotes(input: { items: MarketBatchQuoteRequestItem[] }) {
+  const key = `market-quotes:${JSON.stringify(input.items)}`;
+  return staleWhileRevalidate(key, () =>
+    apiRequest<MarketBatchQuoteResponse>("/markets/quotes/batch", {
+      method: "POST",
+      body: input,
+    }),
+    { ttlMs: 3_000, maxStaleMs: 30_000 }
   );
 }
 

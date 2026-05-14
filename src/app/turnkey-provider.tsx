@@ -38,6 +38,7 @@ export function LotusTurnkeyProvider({
         darkMode: true,
         preferLargeActionButtons: true,
         borderRadius: 12,
+        supressMissingStylesError: true,
         authModal: {
           methodOrder: ["socials", "email"],
           oauthOrder: ["google", "x"],

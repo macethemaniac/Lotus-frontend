@@ -249,6 +249,11 @@ These are not blockers for planning, but they must be resolved before a producti
 - Designs show best routes, spreads, savings, venue count, and fallback.
 - Confirmed market endpoints do not return executable prices by themselves.
 - Current beta behavior: show backend-provided market metadata first, then authenticated dashboard cards/list rows request `POST /execution/live-candidates` for visible Yes/No outcomes. Outcome numbers are unified averages across backend candidate venues; the headline price uses the best Yes venue and shows its venue brand.
+- Quote reliability update: dashboard and terminal quote reads preserve partial success. If Polymarket succeeds while Opinion, Predict.fun, Myriad, or another venue fails, the successful venue quote remains visible and the failed venue row shows a typed blocker.
+- Typed blocker reasons include `QUOTE_PROVIDER_HTTP_<status>`, `QUOTE_PROVIDER_TIMEOUT`, `QUOTE_PROVIDER_EMPTY_BOOK`, `QUOTE_PROVIDER_BAD_PAYLOAD`, `VENUE_OUTCOME_ID_MISSING`, `OPINION_TOKEN_ID_MISSING`, and `QUOTE_SNAPSHOT_STALE`. The frontend maps these to user-safe labels and does not surface raw provider exception text.
+- `POST /markets/quotes/batch` may return `status: "stale"` for last-good backend-observed quote evidence when a fresh read fails. Stale quote data keeps the card readable while background refresh runs, but it does not unlock trading or route submission.
+- Binary No display may be derived as `1 - live Yes` only for display. The trade ticket and quote preview still require backend-returned executable candidates.
+- Opinion uses backend-only builder config (`OPINION_API_KEY` or `OPINION_BUILDER_API_KEY`) for discovery/token enrichment and quote readiness. The key is never exposed to the frontend. Opinion live order submission remains disabled unless separately approved and backend execution mode is explicitly enabled.
 - Savings and order-flow counts remain quote-required/unavailable until backend returns those fields from a quote or analytics contract.
 
 1. Full order book depth in terminal
@@ -543,7 +548,7 @@ Outcomes tab:
 - Outcome rows show a matched venue pair first: `Yes` and `No` for the same best venue. The row dropdown exposes other venues as their own matched Yes/No pairs so the UI reads as venue comparison, not mixed-venue arbitrage.
 - Show all outcomes button expands the loaded outcome list.
 - Outcome Yes/No buttons prefill the trade panel side/outcome.
-- If live quotes fail, keep the outcome visible and show `Quote` plus the backend error/blocker text.
+- If live quotes fail, keep the outcome visible and show `Quote` plus normalized backend blocker copy. Do not show `QUOTE_READER_FAILED` or raw provider exceptions to users when a typed blocker is available.
 
 Positions tab:
 

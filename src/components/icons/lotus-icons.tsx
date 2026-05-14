@@ -2,12 +2,9 @@
 import React from 'react';
 
 export const LotusLogo: React.FC<{ className?: string }> = ({ className = "w-8 h-8" }) => (
-  <svg viewBox="0 0 100 100" fill="currentColor" className={className} xmlns="http://www.w3.org/2000/svg">
-    {/* Simplified geometric lotus - clearer for small sizes and high contrast */}
-    <path d="M50 5 L65 35 L50 65 L35 35 Z" className="opacity-100" />
-    <path d="M50 95 L35 65 L50 35 L65 65 Z" className="opacity-60" />
-    <path d="M5 50 L35 35 L65 50 L35 65 Z" className="opacity-40" />
-    <path d="M95 50 L65 35 L35 50 L65 65 Z" className="opacity-40" />
+  <svg viewBox="0 0 314 314" fill="none" className={className} xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <path d="M108.973 205.016L0 156.983L108.973 108.95L156.991 0L205.044 108.967L314 157L205.044 205.033L156.991 314L108.973 205.016Z" fill="#87A900" />
+    <path d="M156.991 0L108.973 108.95L0 156.983L77.944 148.048C97.1402 145.848 116.049 154.072 127.529 169.613L156.991 209.5L186.484 169.606C197.967 154.073 216.872 145.857 236.062 148.059L314 157L205.044 108.967L156.991 0Z" fill="#CCFF00" />
   </svg>
 );
 
