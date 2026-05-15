@@ -183,6 +183,9 @@ Frontend rule:
 
 - The frontend never chooses the final route. It asks the backend to quote and uses the route returned.
 - The frontend never marks a trade filled or settled without backend confirmation.
+- Staging route coverage policy: backend `STAGING` mode may prefer a real pair route above about `$49.95` notional when two executable venues are available, and may prefer the widest executable pair/tri/strict-all style route above about `$500` notional. This is for proving multi-venue execution paths in staging only; it still requires live quoteable/readiness-passing candidates and minimum real leg size.
+- Production route policy remains economics-first. It does not force a split just to show multiple venues; pair/tri/strict-all routes must pass the backend improvement and readiness rules.
+- If staging selects the coverage route, quote decision reason can be `staging_multi_venue_selected_for_route_coverage`. Frontend copy may show the returned route as backend-selected, but the UI must not override, rebalance, or fabricate legs.
 
 ### Resolution Risk
 
@@ -254,6 +257,7 @@ These are not blockers for planning, but they must be resolved before a producti
 - `POST /markets/quotes/batch` may return `status: "stale"` for last-good backend-observed quote evidence when a fresh read fails. Stale quote data keeps the card readable while background refresh runs, but it does not unlock trading or route submission.
 - Binary No display may be derived as `1 - live Yes` only for display. The trade ticket and quote preview still require backend-returned executable candidates.
 - Opinion uses backend-only builder config (`OPINION_API_KEY` or `OPINION_BUILDER_API_KEY`) for discovery/token enrichment and quote readiness. The key is never exposed to the frontend. Opinion live order submission remains disabled unless separately approved and backend execution mode is explicitly enabled.
+- Staging route labels may show pair, tri, or strict-all style routes more often after quote preview because backend staging policy can prefer multi-venue coverage above the configured notionals. Dashboard/card labels still must come from backend route evidence and venue path length, not client inference from catalog venue count.
 - Savings and order-flow counts remain quote-required/unavailable until backend returns those fields from a quote or analytics contract.
 
 1. Full order book depth in terminal
