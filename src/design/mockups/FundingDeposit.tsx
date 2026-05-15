@@ -14,6 +14,7 @@ import {
     getFundingReceipt,
     getVenueBalances,
     getVenueCapabilities,
+    mergeVenueBalanceSnapshots,
     quoteWithdrawalIntent,
     quoteFundingIntent,
     submitSignedSolanaFundingRouteLeg,
@@ -29,6 +30,7 @@ type WithdrawalIntentResponse
 import {
     ensureDefaultWallets,
     listVenueAccounts,
+    mergeUserWalletBalanceSnapshots,
     prepareVenueSetupBatch,
     type UserVenueAccount,
     type UserWallet
@@ -549,9 +551,9 @@ export const FundingDeposit = ({
         ])
             .then(([walletResponse, _setupResponse, accountResponse, balanceResponse, capabilityResponse]) => {
                 if (cancelled) return;
-                setWallets(walletResponse.wallets ?? []);
+                setWallets((current) => mergeUserWalletBalanceSnapshots(current, walletResponse.wallets ?? []));
                 setVenueAccounts(accountResponse.accounts ?? []);
-                setVenueBalances(balanceResponse.balances ?? balanceResponse.venues ?? []);
+                setVenueBalances((current) => mergeVenueBalanceSnapshots(current, balanceResponse.balances ?? balanceResponse.venues ?? []));
                 const rawCapabilities = capabilityResponse.capabilities;
                 setCapabilities(Array.isArray(rawCapabilities) ? rawCapabilities : Object.values(rawCapabilities ?? {}));
                 setFundingMessage('Lotus account setup checked. Wallets and venue accounts are reused when present.');

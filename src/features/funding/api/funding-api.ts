@@ -1,5 +1,5 @@
 import { apiRequest } from "@/lib/api/http-client";
-import { staleWhileRevalidate } from "@/lib/api/stale-cache";
+import { peekCachedData, staleWhileRevalidate } from "@/lib/api/stale-cache";
 
 export type VenueBalance = {
   venue: string;
@@ -10,6 +10,39 @@ export type VenueBalance = {
   activeWithdrawalAmount?: string;
   updatedAt?: string;
 };
+
+const venueBalanceKey = (balance: VenueBalance) =>
+  `${String(balance.venue).toUpperCase()}:${String(balance.token ?? balance.asset ?? "").toUpperCase()}`;
+
+const hasVenueBalanceAmount = (balance: VenueBalance) =>
+  balance.readyAmount !== undefined || balance.availableAmount !== undefined;
+
+export function mergeVenueBalanceSnapshots(previous: VenueBalance[], next: VenueBalance[]): VenueBalance[] {
+  if (next.length === 0) {
+    return previous;
+  }
+
+  const previousByKey = new Map(previous.map((balance) => [venueBalanceKey(balance), balance]));
+  const seen = new Set<string>();
+  const merged = next.map((balance) => {
+    const key = venueBalanceKey(balance);
+    seen.add(key);
+    const previousBalance = previousByKey.get(key);
+    if (!previousBalance || hasVenueBalanceAmount(balance)) {
+      return balance;
+    }
+    return previousBalance;
+  });
+
+  for (const balance of previous) {
+    const key = venueBalanceKey(balance);
+    if (!seen.has(key)) {
+      merged.push(balance);
+    }
+  }
+
+  return merged.sort((left, right) => venueBalanceKey(left).localeCompare(venueBalanceKey(right)));
+}
 
 export type VenueCapability = {
   venue?: string;
@@ -283,10 +316,17 @@ type FundingReadOptions = {
 };
 
 export function getVenueBalances(token: string, options: FundingReadOptions = {}) {
-  const request = () => apiRequest<{ balances?: VenueBalance[]; venues?: VenueBalance[] }>("/funding/venue-balances", { token });
+  const cacheKey = `funding:balances:${token}`;
+  const request = async () => {
+    const response = await apiRequest<{ balances?: VenueBalance[]; venues?: VenueBalance[] }>("/funding/venue-balances", { token });
+    const rows = response.balances ?? response.venues ?? [];
+    const previous = peekCachedData<{ balances?: VenueBalance[]; venues?: VenueBalance[] }>(cacheKey);
+    const previousRows = previous?.balances ?? previous?.venues ?? [];
+    return previous && rows.length === 0 && previousRows.length > 0 ? previous : response;
+  };
   return options.force
     ? request()
-    : staleWhileRevalidate(`funding:balances:${token}`, request, { ttlMs: 10_000, maxStaleMs: 90_000 });
+    : staleWhileRevalidate(cacheKey, request, { ttlMs: 10_000, maxStaleMs: 90_000 });
 }
 
 export function getVenueCapabilities(token: string) {

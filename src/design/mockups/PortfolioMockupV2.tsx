@@ -20,6 +20,7 @@ import { ChainLogo, CryptoLogo, VenueLogo } from '@/components/icons/asset-logo'
 import type { AuthSession } from '@/features/auth/types';
 import {
   ensureDefaultWallets,
+  mergeUserWalletBalanceSnapshots,
   prepareVenueSetupBatch,
   registerTurnkeyDefaultWallets,
   type TurnkeyWalletAccountRegistration,
@@ -42,6 +43,7 @@ import {
   getVenueActivations,
   getVenueBalances,
   getWithdrawalReceipt,
+  mergeVenueBalanceSnapshots,
   preparePolymarketActivation,
   submitPolymarketActivation,
   type FundingHistoryRow,
@@ -903,18 +905,20 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
         listMarkets({ limit: 250 }),
       ]);
 
-      setData({
+      const nextBalances = balanceResponse.balances ?? balanceResponse.venues ?? [];
+      const nextWallets = walletResponse.wallets ?? [];
+      setData((current) => ({
         summary,
         timeseries,
-        balances: balanceResponse.balances ?? balanceResponse.venues ?? [],
-        activations: activationResponse.activations ?? activationResponse.venues ?? [],
-        wallets: walletResponse.wallets ?? [],
-        venueAccounts: venueAccounts.accounts ?? [],
+        balances: mergeVenueBalanceSnapshots(current.balances, nextBalances),
+        activations: activationResponse.activations ?? activationResponse.venues ?? current.activations,
+        wallets: mergeUserWalletBalanceSnapshots(current.wallets, nextWallets),
+        venueAccounts: venueAccounts.accounts ?? current.venueAccounts,
         openOrders: openOrders.items,
         history: history.items,
         fundingHistory: fundingHistoryItems(fundingHistory),
-        marketCatalog: marketCatalogResponse.markets ?? [],
-      });
+        marketCatalog: marketCatalogResponse.markets ?? current.marketCatalog,
+      }));
     } catch (loadError) {
       setError(userSafeError(loadError));
     } finally {
@@ -1171,7 +1175,7 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
 
         setData((current) => ({
           ...current,
-          balances,
+          balances: mergeVenueBalanceSnapshots(current.balances, balances),
           activations,
         }));
 

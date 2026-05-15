@@ -1,4 +1,5 @@
 import { apiRequest } from "@/lib/api/http-client";
+import { peekCachedData, setCachedData, staleWhileRevalidate } from "@/lib/api/stale-cache";
 
 export type UserWalletBalance = {
   token: string;
@@ -24,6 +25,50 @@ export type UserWallet = {
   balanceStatus?: string | null;
   balanceBlocker?: string | null;
 };
+
+const walletSnapshotKey = (wallet: UserWallet) =>
+  wallet.walletId || `${wallet.chainFamily}:${wallet.chain}:${wallet.address}:${wallet.purpose}`;
+
+const walletHasBalances = (wallet: UserWallet) => (wallet.balances?.length ?? 0) > 0;
+
+const walletBalanceReadIsSynced = (wallet: UserWallet) =>
+  String(wallet.balanceStatus ?? "").toLowerCase() === "synced";
+
+export function mergeUserWalletBalanceSnapshots(previous: UserWallet[], next: UserWallet[]): UserWallet[] {
+  if (next.length === 0) {
+    return previous;
+  }
+
+  const previousByKey = new Map(previous.map((wallet) => [walletSnapshotKey(wallet), wallet]));
+  const seen = new Set<string>();
+  const merged = next.map((wallet) => {
+    const key = walletSnapshotKey(wallet);
+    seen.add(key);
+    const previousWallet = previousByKey.get(key);
+    if (!previousWallet || walletHasBalances(wallet) || walletBalanceReadIsSynced(wallet) || !walletHasBalances(previousWallet)) {
+      return wallet;
+    }
+    return {
+      ...wallet,
+      balances: previousWallet.balances,
+      balanceStatus: "stale",
+      balanceBlocker: wallet.balanceBlocker ?? "Showing the last synced wallet balance while Lotus retries balance sync.",
+    };
+  });
+
+  for (const wallet of previous) {
+    const key = walletSnapshotKey(wallet);
+    if (!seen.has(key) && walletHasBalances(wallet)) {
+      merged.push({
+        ...wallet,
+        balanceStatus: "stale",
+        balanceBlocker: "Showing the last synced wallet balance while Lotus refreshes wallet metadata.",
+      });
+    }
+  }
+
+  return merged;
+}
 
 export type UserVenueAccount = {
   venue: string;
@@ -76,12 +121,26 @@ export type TurnkeyWalletAccountRegistration = {
   addressFormat: "ADDRESS_FORMAT_SOLANA" | "ADDRESS_FORMAT_ETHEREUM";
 };
 
+const walletCacheKey = (token: string) => `wallets:list:${token}`;
+
+const applyWalletCache = (token: string, response: { wallets: UserWallet[] }) => {
+  const previous = peekCachedData<{ wallets: UserWallet[] }>(walletCacheKey(token));
+  const wallets = mergeUserWalletBalanceSnapshots(previous?.wallets ?? [], response.wallets ?? []);
+  const merged = { wallets };
+  setCachedData(walletCacheKey(token), merged);
+  return merged;
+};
+
 export function listWallets(token: string) {
-  return apiRequest<{ wallets: UserWallet[] }>("/user/wallets", { token });
+  return staleWhileRevalidate(walletCacheKey(token), () =>
+    apiRequest<{ wallets: UserWallet[] }>("/user/wallets", { token }).then((response) => applyWalletCache(token, response)),
+    { ttlMs: 10_000, maxStaleMs: 90_000 }
+  );
 }
 
 export function ensureDefaultWallets(token: string) {
-  return apiRequest<{ wallets: UserWallet[] }>("/user/wallets/ensure-defaults", { method: "POST", token });
+  return apiRequest<{ wallets: UserWallet[] }>("/user/wallets/ensure-defaults", { method: "POST", token })
+    .then((response) => applyWalletCache(token, response));
 }
 
 export function registerTurnkeyDefaultWallets(token: string, accounts: TurnkeyWalletAccountRegistration[]) {
@@ -89,7 +148,7 @@ export function registerTurnkeyDefaultWallets(token: string, accounts: TurnkeyWa
     method: "POST",
     token,
     body: { accounts },
-  });
+  }).then((response) => applyWalletCache(token, response));
 }
 
 export function listVenueAccounts(token: string) {

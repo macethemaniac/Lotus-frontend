@@ -15,6 +15,7 @@ import type { AuthSession } from '@/features/auth/types';
 import {
   getVenueActivations,
   getVenueBalances,
+  mergeVenueBalanceSnapshots,
   preparePolymarketActivation,
   submitPolymarketActivation,
   type VenueActivation,
@@ -2522,7 +2523,7 @@ export const InfraTradingTerminal = ({
           getVenueActivations(token, { force: true }),
         ]);
         const nextActivations = activationResponse.activations ?? activationResponse.venues ?? [];
-        setFundingBalances(balanceResponse.balances ?? balanceResponse.venues ?? []);
+        setFundingBalances((current) => mergeVenueBalanceSnapshots(current, balanceResponse.balances ?? balanceResponse.venues ?? []));
         setFundingActivations(nextActivations);
         const polymarket = nextActivations.find((item) => toBackendVenueId(item.venue) === 'POLYMARKET');
         if (polymarketActivationConfirmed(polymarket)) {
@@ -2561,13 +2562,11 @@ export const InfraTradingTerminal = ({
           getVenueActivations(token),
         ]);
         if (!cancelled) {
-          setFundingBalances(response.balances ?? response.venues ?? []);
+          setFundingBalances((current) => mergeVenueBalanceSnapshots(current, response.balances ?? response.venues ?? []));
           setFundingActivations(activationsResponse.activations ?? activationsResponse.venues ?? []);
         }
       } catch (error) {
         if (!cancelled) {
-          setFundingBalances([]);
-          setFundingActivations([]);
           setFundingError(error instanceof Error ? error.message : 'Unable to load venue-ready balances.');
         }
       } finally {

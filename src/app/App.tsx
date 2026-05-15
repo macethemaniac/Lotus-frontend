@@ -29,10 +29,10 @@ import { TurnkeyAuthScreen } from "@/features/auth/components/turnkey-auth-scree
 import { DashboardV2Mockup, type LotusAppPage } from "@/design/mockups/DashboardV2Mockup";
 import { DenseStripFooter } from "@/design/mockups/GlobalFooterVariations";
 import { getPortfolioSummary, type PortfolioSummary } from "@/features/trading/api/execution-api";
-import { getVenueBalances, getVenueCapabilities, type VenueBalance } from "@/features/funding/api/funding-api";
+import { getVenueBalances, getVenueCapabilities, mergeVenueBalanceSnapshots, type VenueBalance } from "@/features/funding/api/funding-api";
 import { getMarketBatchQuotes, listEvents, listMarkets } from "@/features/markets/api/market-api";
 import { getNotifications } from "@/features/notifications/api/notification-api";
-import { listWallets, type UserWallet } from "@/features/wallets/api/wallet-api";
+import { listWallets, mergeUserWalletBalanceSnapshots, type UserWallet } from "@/features/wallets/api/wallet-api";
 
 function formatTurnkeyError(error: unknown): string {
   if (!(error instanceof Error)) {
@@ -199,8 +199,8 @@ function AccountDropdown({
       .then(([summary, balances, walletResponse]) => {
         if (cancelled) return;
         setPortfolioSummary(summary);
-        setVenueBalances(balances.balances ?? balances.venues ?? []);
-        setWallets(walletResponse.wallets ?? []);
+        setVenueBalances((current) => mergeVenueBalanceSnapshots(current, balances.balances ?? balances.venues ?? []));
+        setWallets((current) => mergeUserWalletBalanceSnapshots(current, walletResponse.wallets ?? []));
       })
       .catch((error) => {
         if (cancelled) return;
