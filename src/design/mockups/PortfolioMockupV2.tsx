@@ -375,8 +375,11 @@ const executionFilledValue = (execution: ExecutionStatus): number => {
 const executionStatusLabel = (execution: ExecutionStatus) =>
   String(execution.userStatus ?? execution.status ?? 'UNKNOWN').replace(/_/g, ' ');
 
+const executionDisplayStatus = (execution: ExecutionStatus) =>
+  String(execution.userStatus ?? execution.status ?? '').toUpperCase();
+
 const executionStatusTone = (execution: ExecutionStatus) => {
-  const status = String(execution.userStatus ?? execution.status ?? '').toUpperCase();
+  const status = executionDisplayStatus(execution);
   if (['FILLED', 'SETTLED', 'COMPLETED'].includes(status)) return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300';
   if (['FAILED', 'CANCELLED', 'EXPIRED'].includes(status)) return 'border-red-500/30 bg-red-500/10 text-red-300';
   if (['PARTIAL', 'PARTIAL_FILL'].includes(status)) return 'border-amber-500/30 bg-amber-500/10 text-amber-300';
@@ -641,7 +644,7 @@ const tradeDrivenPerformanceSeries = (
   const now = Date.now();
   const cutoff = rangeMs[range] === null ? null : now - rangeMs[range]!;
   const fills = history
-    .filter((execution) => String(execution.status ?? execution.userStatus ?? '').toUpperCase() === 'FILLED')
+    .filter((execution) => executionDisplayStatus(execution) === 'FILLED')
     .filter((execution) => {
       const timestamp = Date.parse(execution.updatedAt ?? execution.submittedAt ?? '');
       return Number.isFinite(timestamp) && (cutoff === null || timestamp >= cutoff);
@@ -698,7 +701,7 @@ const tradeDrivenPerformanceSeries = (
 };
 
 const hasFilledExecutionHistory = (history: ExecutionStatus[]) =>
-  history.some((execution) => String(execution.status ?? execution.userStatus ?? '').toUpperCase() === 'FILLED');
+  history.some((execution) => executionDisplayStatus(execution) === 'FILLED');
 
 const venueSpecificAddress = (account?: UserVenueAccount): { address?: string; kind?: string } => {
   if (!account?.venueAccountAddress) {
