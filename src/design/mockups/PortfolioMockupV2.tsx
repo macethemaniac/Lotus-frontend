@@ -200,8 +200,7 @@ const fundingWalletBalances = (wallet: UserWallet) =>
       const chain = balance.chain?.trim().toUpperCase();
       return amount && token ? { token, amount, chain } : null;
     })
-    .filter((balance): balance is { token: string; amount: string; chain: string | undefined } => Boolean(balance))
-    .slice(0, 3);
+    .filter((balance): balance is { token: string; amount: string; chain: string | undefined } => Boolean(balance));
 
 const fundingBalanceLogoId = (wallet: UserWallet, balance: { token: string; chain?: string }) =>
   wallet.chainFamily === 'EVM' && balance.chain ? balance.chain.trim() : balance.token;
