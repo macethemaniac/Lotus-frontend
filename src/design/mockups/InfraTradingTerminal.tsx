@@ -13,8 +13,7 @@ import { LotusLogo } from '@/components/icons/lotus-icons';
 import { FundingDeposit } from '@/design/mockups/FundingDeposit';
 import type { AuthSession } from '@/features/auth/types';
 import {
-  getVenueActivations,
-  getVenueBalances,
+  getAccountSnapshot,
   mergeVenueBalanceSnapshots,
   preparePolymarketActivation,
   submitPolymarketActivation,
@@ -162,9 +161,11 @@ const buildUnsignedApprovalTransaction = async (input: {
   ownerAddress: string;
   tokenAddress: string;
   spenderAddress: string;
-  approvalMethod?: "ERC20_APPROVE" | "ERC1155_SET_APPROVAL_FOR_ALL";
+  approvalMethod?: "CLOB_PUSD_APPROVAL" | "ERC20_APPROVE" | "ERC1155_SET_APPROVAL_FOR_ALL";
 }): Promise<{ unsignedTransaction: string; rpcUrl: string }> => {
-  const approvalMethod = input.approvalMethod ?? "ERC20_APPROVE";
+  const approvalMethod = input.approvalMethod === "CLOB_PUSD_APPROVAL"
+    ? "ERC20_APPROVE"
+    : input.approvalMethod ?? "ERC20_APPROVE";
   return buildUnsignedEvmTransaction({
     chainId: input.chainId,
     ownerAddress: input.ownerAddress,
@@ -2518,12 +2519,9 @@ export const InfraTradingTerminal = ({
       setTicketActivationPolling(true);
 
       for (let attempt = 0; attempt < 30; attempt += 1) {
-        const [balanceResponse, activationResponse] = await Promise.all([
-          getVenueBalances(token, { force: true }),
-          getVenueActivations(token, { force: true }),
-        ]);
-        const nextActivations = activationResponse.activations ?? activationResponse.venues ?? [];
-        setFundingBalances((current) => mergeVenueBalanceSnapshots(current, balanceResponse.balances ?? balanceResponse.venues ?? []));
+        const accountSnapshot = await getAccountSnapshot(token, { force: true });
+        const nextActivations = accountSnapshot.activations ?? [];
+        setFundingBalances((current) => mergeVenueBalanceSnapshots(current, accountSnapshot.balances ?? []));
         setFundingActivations(nextActivations);
         const polymarket = nextActivations.find((item) => toBackendVenueId(item.venue) === 'POLYMARKET');
         if (polymarketActivationConfirmed(polymarket)) {
@@ -2557,13 +2555,10 @@ export const InfraTradingTerminal = ({
       setFundingLoading(true);
       setFundingError(null);
       try {
-        const [response, activationsResponse] = await Promise.all([
-          getVenueBalances(token),
-          getVenueActivations(token),
-        ]);
+        const accountSnapshot = await getAccountSnapshot(token);
         if (!cancelled) {
-          setFundingBalances((current) => mergeVenueBalanceSnapshots(current, response.balances ?? response.venues ?? []));
-          setFundingActivations(activationsResponse.activations ?? activationsResponse.venues ?? []);
+          setFundingBalances((current) => mergeVenueBalanceSnapshots(current, accountSnapshot.balances ?? []));
+          setFundingActivations(accountSnapshot.activations ?? []);
         }
       } catch (error) {
         if (!cancelled) {

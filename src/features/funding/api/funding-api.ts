@@ -1,5 +1,7 @@
 import { apiRequest } from "@/lib/api/http-client";
 import { peekCachedData, staleWhileRevalidate } from "@/lib/api/stale-cache";
+import type { ExecutionStatus, OpenOrdersResponse } from "@/features/trading/api/execution-api";
+import type { SetupBatchResponse, UserVenueAccount, UserWallet } from "@/features/wallets/api/wallet-api";
 
 export type VenueBalance = {
   venue: string;
@@ -9,6 +11,11 @@ export type VenueBalance = {
   availableAmount?: string;
   activeWithdrawalAmount?: string;
   updatedAt?: string;
+  balanceSource?: string | null;
+  balanceFreshness?: "live" | "stale" | "unavailable" | string | null;
+  readinessReason?: string | null;
+  usableBalanceSource?: string | null;
+  approvalSpenderSource?: string | null;
 };
 
 const venueBalanceKey = (balance: VenueBalance) =>
@@ -161,6 +168,24 @@ export type FundingHistoryResponse = {
   totalPages?: number;
   hasNextPage?: boolean;
   hasPreviousPage?: boolean;
+};
+
+export type AccountSnapshotResponse = {
+  generatedAt: string;
+  balances: VenueBalance[];
+  activations: VenueActivation[];
+  wallets: UserWallet[];
+  venueAccounts?: SetupBatchResponse["venueAccounts"];
+  accounts?: UserVenueAccount[];
+  setupRequests?: SetupBatchResponse["setupRequests"];
+  signatureRequests?: SetupBatchResponse["signatureRequests"];
+  openOrders: OpenOrdersResponse;
+  history: {
+    generatedAt: string;
+    items: ExecutionStatus[];
+    nextCursor: string | null;
+  };
+  fundingHistory: FundingHistoryResponse;
 };
 
 export type FundingTargetRequest = {
@@ -341,6 +366,13 @@ export function getVenueActivations(token: string, options: FundingReadOptions =
   return options.force
     ? request()
     : staleWhileRevalidate(`funding:activations:${token}`, request, { ttlMs: 10_000, maxStaleMs: 90_000 });
+}
+
+export function getAccountSnapshot(token: string, options: FundingReadOptions = {}) {
+  const request = () => apiRequest<AccountSnapshotResponse>("/account/snapshot", { token });
+  return options.force
+    ? request()
+    : staleWhileRevalidate(`account:snapshot:${token}`, request, { ttlMs: 8_000, maxStaleMs: 90_000 });
 }
 
 export function preparePolymarketActivation(token: string, input: { tokenId?: string } = {}) {

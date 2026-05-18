@@ -193,7 +193,10 @@ export type LiveSubmitVenueReadiness = {
     tokenAddress: string | null;
     spenderAddress: string | null;
     chainId: number | null;
-    approvalMethod?: "ERC20_APPROVE" | "ERC1155_SET_APPROVAL_FOR_ALL";
+    approvalMethod?: "CLOB_PUSD_APPROVAL" | "ERC20_APPROVE" | "ERC1155_SET_APPROVAL_FOR_ALL";
+    usableBalance?: string | null;
+    usableBalanceSource?: string | null;
+    approvalSpenderSource?: string | null;
   };
 };
 

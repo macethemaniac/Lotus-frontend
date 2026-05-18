@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AuthState, useTurnkey, type Wallet as TurnkeyWallet, type WalletAccount } from '@turnkey/react-wallet-kit';
 import {
@@ -19,18 +19,13 @@ import {
 import { ChainLogo, CryptoLogo, VenueLogo } from '@/components/icons/asset-logo';
 import type { AuthSession } from '@/features/auth/types';
 import {
-  ensureDefaultWallets,
   mergeUserWalletBalanceSnapshots,
   prepareVenueSetupBatch,
-  registerTurnkeyDefaultWallets,
-  type TurnkeyWalletAccountRegistration,
   type UserVenueAccount,
   type UserWallet
 } from '@/features/wallets/api/wallet-api';
 import {
-  getExecutionHistory,
   getExecutionReceipt,
-  getOpenOrders,
   getPortfolioSummary,
   getPortfolioTimeSeries,
   type ExecutionStatus,
@@ -38,14 +33,13 @@ import {
   type PortfolioTimeSeriesResponse,
 } from '@/features/trading/api/execution-api';
 import {
-  getFundingHistory,
+  getAccountSnapshot,
   getFundingReceipt,
-  getVenueActivations,
-  getVenueBalances,
   getWithdrawalReceipt,
   mergeVenueBalanceSnapshots,
   preparePolymarketActivation,
   submitPolymarketActivation,
+  type FundingHistoryResponse,
   type FundingHistoryRow,
   type FundingReceipt,
   type PolymarketActivationPreparation,
@@ -413,8 +407,8 @@ const executionReceiptText = (receipt: ExecutionStatus) => {
 const fundingDirectionLabel = (row: FundingHistoryRow) =>
   row.direction?.toUpperCase() === 'WITHDRAWAL' ? 'Withdrawal' : 'Deposit';
 
-const fundingHistoryItems = (response: Awaited<ReturnType<typeof getFundingHistory>>) =>
-  response.items ?? response.rows ?? response.history ?? [];
+const fundingHistoryItems = (response: FundingHistoryResponse | null | undefined) =>
+  response?.items ?? response?.rows ?? response?.history ?? [];
 
 const fundingReceiptText = (direction: string, receipt: FundingReceipt | WithdrawalReceipt) => {
   const isWithdrawal = direction.toUpperCase() === 'WITHDRAWAL';
@@ -502,41 +496,6 @@ const findTurnkeyWalletAccount = (wallets: TurnkeyWallet[], ownerAddress: string
   }
   return null;
 };
-
-const turnkeyDefaultAccountParams = [
-  {
-    curve: 'CURVE_ED25519',
-    pathFormat: 'PATH_FORMAT_BIP32',
-    path: "m/44'/501'/0'/0'",
-    addressFormat: 'ADDRESS_FORMAT_SOLANA',
-  },
-  {
-    curve: 'CURVE_SECP256K1',
-    pathFormat: 'PATH_FORMAT_BIP32',
-    path: "m/44'/60'/0'/0/0",
-    addressFormat: 'ADDRESS_FORMAT_ETHEREUM',
-  },
-] as const;
-
-const turnkeyWalletRegistrations = (wallets: TurnkeyWallet[]): TurnkeyWalletAccountRegistration[] =>
-  wallets.flatMap((wallet) =>
-    (wallet.accounts ?? [])
-      .filter((account) =>
-        account.addressFormat === 'ADDRESS_FORMAT_SOLANA' ||
-        account.addressFormat === 'ADDRESS_FORMAT_ETHEREUM'
-      )
-      .map((account) => ({
-        providerWalletId: account.walletId ?? wallet.walletId,
-        providerWalletAccountId: account.walletAccountId,
-        address: account.address,
-        addressFormat: account.addressFormat as TurnkeyWalletAccountRegistration['addressFormat'],
-      }))
-  ).filter((account) =>
-    Boolean(account.providerWalletId && account.providerWalletAccountId && account.address)
-  );
-
-const isWalletProvisioningUnavailable = (error: unknown) =>
-  error instanceof ApiClientError && error.code === 'USER_WALLET_UNAVAILABLE';
 
 const normalizeHexPart = (value: string, bytes: number) => {
   const stripped = value.startsWith('0x') ? value.slice(2) : value;
@@ -786,7 +745,6 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
     session: turnkeySession,
     wallets: turnkeyWallets,
     refreshWallets,
-    createWallet,
     handleLogin,
     signMessage,
   } = useTurnkey();
@@ -821,6 +779,7 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
   const [receiptLoadingId, setReceiptLoadingId] = useState<string | null>(null);
   const [copiedExecutionId, setCopiedExecutionId] = useState<string | null>(null);
   const token = session?.userJwt ?? null;
+  const portfolioRefreshSeq = useRef(0);
 
   useEffect(() => {
     const updateSettings = () => setNotificationSettings(loadPortfolioNotificationSettings());
@@ -841,95 +800,62 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
     return () => window.clearTimeout(timeout);
   }, [activationMessage, notificationSettings.notificationsEnabled]);
 
-  const ensureTurnkeySessionWallets = useCallback(async (): Promise<TurnkeyWallet[]> => {
-    if (turnkeyAuthState !== AuthState.Authenticated) {
-      throw new Error(turnkeySessionRequiredMessage);
-    }
-
-    let activeWallets = turnkeyWallets;
-    if (activeWallets.length === 0) {
-      activeWallets = await refreshWallets();
-    }
-
-    if (turnkeyWalletRegistrations(activeWallets).length === 0) {
-      await createWallet({
-        walletName: 'Lotus Wallet',
-        accounts: [...turnkeyDefaultAccountParams],
-        ...(turnkeySession?.organizationId ? { organizationId: turnkeySession.organizationId } : {}),
-      });
-      activeWallets = await refreshWallets();
-    }
-
-    return activeWallets;
-  }, [createWallet, refreshWallets, turnkeyAuthState, turnkeySession?.organizationId, turnkeyWallets]);
-
-  const ensureBackendWallets = useCallback(async () => {
-    if (!token) {
-      return { wallets: [] as UserWallet[] };
-    }
-    try {
-      return await ensureDefaultWallets(token);
-    } catch (walletError) {
-      if (!isWalletProvisioningUnavailable(walletError)) {
-        throw walletError;
-      }
-      const activeWallets = await ensureTurnkeySessionWallets();
-      const registrations = turnkeyWalletRegistrations(activeWallets);
-      if (registrations.length === 0) {
-        throw new Error('Turnkey wallet session did not return a usable Solana or EVM wallet.');
-      }
-      return registerTurnkeyDefaultWallets(token, registrations);
-    }
-  }, [ensureTurnkeySessionWallets, token]);
-
-  const loadPortfolio = useCallback(async () => {
+  const loadPortfolio = useCallback(async (options: { force?: boolean; silent?: boolean } = {}) => {
     if (!token) {
       setData({ summary: null, timeseries: null, balances: [], activations: [], wallets: [], venueAccounts: [], openOrders: [], history: [], fundingHistory: [], marketCatalog: [] });
       setError(null);
       return;
     }
 
-    setLoading(true);
+    const requestSeq = portfolioRefreshSeq.current + 1;
+    portfolioRefreshSeq.current = requestSeq;
+    if (!options.silent) {
+      setLoading(true);
+    }
     setError(null);
     try {
-      const [summary, timeseries, balanceResponse, activationResponse, walletResponse, venueAccounts, openOrders, history, fundingHistory, marketCatalogResponse] = await Promise.all([
+      const [summary, timeseries, accountSnapshot, marketCatalogResponse] = await Promise.all([
         getPortfolioSummary(token),
         getPortfolioTimeSeries(token, { range: performanceRange }),
-        getVenueBalances(token),
-        getVenueActivations(token),
-        ensureBackendWallets(),
-        prepareVenueSetupBatch(token),
-        getOpenOrders(token, { limit: 50 }),
-        getExecutionHistory(token, { limit: 50 }),
-        getFundingHistory(token, { pageSize: 50 }),
+        getAccountSnapshot(token, { force: options.force }),
         listMarkets({ limit: 250 }),
       ]);
+      if (portfolioRefreshSeq.current !== requestSeq) {
+        return;
+      }
 
-      const nextBalances = balanceResponse.balances ?? balanceResponse.venues ?? [];
-      const nextWallets = walletResponse.wallets ?? [];
+      const nextBalances = accountSnapshot.balances ?? [];
+      const nextWallets = accountSnapshot.wallets ?? [];
+      const nextAccounts = accountSnapshot.accounts ??
+        accountSnapshot.venueAccounts?.map((item) => item.venueAccount) ??
+        [];
       setData((current) => ({
         summary,
         timeseries,
         balances: mergeVenueBalanceSnapshots(current.balances, nextBalances),
-        activations: activationResponse.activations ?? activationResponse.venues ?? current.activations,
+        activations: accountSnapshot.activations ?? current.activations,
         wallets: mergeUserWalletBalanceSnapshots(current.wallets, nextWallets),
-        venueAccounts: venueAccounts.accounts ?? current.venueAccounts,
-        openOrders: openOrders.items,
-        history: history.items,
-        fundingHistory: fundingHistoryItems(fundingHistory),
+        venueAccounts: nextAccounts.length > 0 ? nextAccounts : current.venueAccounts,
+        openOrders: accountSnapshot.openOrders?.items ?? current.openOrders,
+        history: accountSnapshot.history?.items ?? current.history,
+        fundingHistory: fundingHistoryItems(accountSnapshot.fundingHistory),
         marketCatalog: marketCatalogResponse.markets ?? current.marketCatalog,
       }));
     } catch (loadError) {
-      setError(userSafeError(loadError));
+      if (portfolioRefreshSeq.current === requestSeq && !options.silent) {
+        setError(userSafeError(loadError));
+      }
     } finally {
-      setLoading(false);
+      if (portfolioRefreshSeq.current === requestSeq && !options.silent) {
+        setLoading(false);
+      }
     }
-  }, [ensureBackendWallets, performanceRange, token]);
+  }, [performanceRange, token]);
 
   useEffect(() => {
     void loadPortfolio();
     const interval = window.setInterval(() => {
-      void loadPortfolio();
+      void loadPortfolio({ silent: true });
     }, 30_000);
     return () => window.clearInterval(interval);
   }, [loadPortfolio]);
@@ -955,7 +881,7 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
           event.type === 'EXECUTION_STATUS_UPDATE' ||
           event.type === 'EXECUTION_BALANCE_UPDATE'
         ) {
-          void loadPortfolio();
+          void loadPortfolio({ silent: true, force: true });
         }
       },
       onStateChange: () => undefined,
@@ -1165,24 +1091,28 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
 
     for (let attempt = 0; attempt < 30; attempt += 1) {
       try {
-        const [balanceResponse, activationResponse] = await Promise.all([
-          getVenueBalances(token, { force: true }),
-          getVenueActivations(token, { force: true }),
-        ]);
-        const balances = balanceResponse.balances ?? balanceResponse.venues ?? [];
-        const activations = activationResponse.activations ?? activationResponse.venues ?? [];
+        const accountSnapshot = await getAccountSnapshot(token, { force: true });
+        const balances = accountSnapshot.balances ?? [];
+        const activations = accountSnapshot.activations ?? [];
         const polymarketActivation = activations.find((item) => venueKey(item.venue) === 'POLYMARKET');
 
         setData((current) => ({
           ...current,
           balances: mergeVenueBalanceSnapshots(current.balances, balances),
           activations,
+          wallets: mergeUserWalletBalanceSnapshots(current.wallets, accountSnapshot.wallets ?? []),
+          venueAccounts: accountSnapshot.accounts ??
+            accountSnapshot.venueAccounts?.map((item) => item.venueAccount) ??
+            current.venueAccounts,
+          openOrders: accountSnapshot.openOrders?.items ?? current.openOrders,
+          history: accountSnapshot.history?.items ?? current.history,
+          fundingHistory: fundingHistoryItems(accountSnapshot.fundingHistory),
         }));
 
         setActivationMessage(polymarketActivationPollingMessage(polymarketActivation, relayerState, relayerReference));
 
         if (polymarketActivationConfirmed(polymarketActivation)) {
-          await loadPortfolio();
+          await loadPortfolio({ silent: true, force: true });
           return true;
         }
       } catch (pollError) {
@@ -1197,7 +1127,7 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
     setActivationMessage(
       'Polymarket activation was submitted and Lotus is still waiting for CLOB balance/allowance readiness. Keep this page open or return later; portfolio refresh will continue checking.'
     );
-    await loadPortfolio();
+    await loadPortfolio({ silent: true, force: true });
     return false;
   }, [loadPortfolio, token]);
 
