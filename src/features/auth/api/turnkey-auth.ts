@@ -20,16 +20,32 @@ export async function exchangeTurnkeySessionForLotusJwt(input: {
     throw new Error("Lotus JWT exchange endpoint is not configured yet.");
   }
 
-  return retryTurnkeyExchange(() =>
-    apiRequest<TurnkeyLoginResult>(env.lotusAuthExchangePath, {
-      method: "POST",
-      body: {
-        turnkeySessionToken: input.turnkeySessionToken,
-        turnkeyUserId: input.turnkeyUserId,
-        turnkeyOrganizationId: input.turnkeyOrganizationId,
-      },
-    }),
-  );
+  const payload = {
+    turnkeySessionToken: input.turnkeySessionToken,
+    turnkeyUserId: input.turnkeyUserId,
+    turnkeyOrganizationId: input.turnkeyOrganizationId,
+  };
+
+  try {
+    return await retryTurnkeyExchange(() =>
+      apiRequest<TurnkeyLoginResult>(env.lotusAuthExchangePath, {
+        method: "POST",
+        body: payload,
+      }),
+    );
+  } catch (error) {
+    if (!isRetryableLotusExchangeError(error)) {
+      throw error;
+    }
+
+    return retryTurnkeyExchange(() =>
+      apiRequest<TurnkeyLoginResult>(env.lotusAuthExchangePath, {
+        baseUrl: "/api",
+        method: "POST",
+        body: payload,
+      }),
+    );
+  }
 }
 
 export function assertTurnkeyConfigured(): void {

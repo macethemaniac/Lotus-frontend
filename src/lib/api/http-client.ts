@@ -4,6 +4,7 @@ export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 export type ApiOptions = {
   method?: HttpMethod;
+  baseUrl?: string;
   token?: string;
   body?: unknown;
   signal?: AbortSignal;
@@ -28,7 +29,8 @@ export async function apiRequest<T>(path: string, options: ApiOptions = {}): Pro
   if (options.body !== undefined) headers.set("Content-Type", "application/json");
   if (options.token) headers.set("Authorization", `Bearer ${options.token}`);
 
-  const response = await fetch(`${env.lotusApiBaseUrl}${path}`, {
+  const baseUrl = options.baseUrl ?? env.lotusApiBaseUrl;
+  const response = await fetch(`${baseUrl}${path}`, {
     method: options.method ?? "GET",
     headers,
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
