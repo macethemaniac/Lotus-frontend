@@ -158,7 +158,7 @@ const sleep = (ms: number) => new Promise<void>((resolve) => window.setTimeout(r
 
 const polymarketActivationConfirmed = (activation: VenueActivation | null | undefined) => {
   const readinessReason = String(activation?.readinessReason ?? '').toUpperCase();
-  return activation?.activationRequired === false || readinessReason === 'POLYMARKET_CLOB_COLLATERAL_CONFIRMED';
+  return readinessReason === 'POLYMARKET_CLOB_COLLATERAL_CONFIRMED';
 };
 
 const polymarketActivationPollingMessage = (
@@ -181,6 +181,9 @@ const polymarketActivationPollingMessage = (
   }
   if (readinessReason === 'POLYMARKET_USDCE_ACTIVATION_REQUIRED' || (parseMoney(activation?.bridgedUsdcBalance) ?? 0) > 0) {
     return `Polymarket activation submitted. USDC.e is delivered (${bridged ?? 'detected'}), and Lotus is polling until it becomes spendable CLOB collateral. ${relayer}`.trim();
+  }
+  if (readinessReason === 'POLYMARKET_CLOB_SYNC_PENDING') {
+    return `Polymarket pUSD approval is confirmed on-chain (${pUsd ?? 'detected'}), and Lotus is polling until Polymarket CLOB confirms spendable collateral. ${relayer}`.trim();
   }
   if (readinessReason === 'POLYMARKET_CLOB_APPROVAL_REQUIRED' || (parseMoney(activation?.onchainPusdBalance) ?? 0) > 0) {
     return `Polymarket pUSD is detected (${pUsd ?? 'detected'}), and Lotus is polling until CLOB approval is confirmed. ${relayer}`.trim();
@@ -915,6 +918,8 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
       const bridgedUsdcBalance = parseMoney(activation?.bridgedUsdcBalance ?? null) ?? 0;
       const inactiveStatus = readinessReason === 'POLYMARKET_USDCE_ACTIVATION_REQUIRED' || bridgedUsdcBalance > 0
         ? 'USDC.e delivered, activation required'
+        : readinessReason === 'POLYMARKET_CLOB_SYNC_PENDING'
+          ? 'pUSD approved, CLOB sync pending'
         : readinessReason === 'POLYMARKET_CLOB_APPROVAL_REQUIRED'
           ? 'pUSD approval required'
           : activationRequired && activationStatus === 'READY'

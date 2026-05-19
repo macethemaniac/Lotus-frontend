@@ -203,7 +203,7 @@ const sleep = (ms: number) => new Promise<void>((resolve) => window.setTimeout(r
 
 const polymarketActivationConfirmed = (activation: VenueActivation | null | undefined) => {
   const reason = String(activation?.readinessReason ?? '').toUpperCase();
-  return activation?.activationRequired === false || reason === 'POLYMARKET_CLOB_COLLATERAL_CONFIRMED';
+  return reason === 'POLYMARKET_CLOB_COLLATERAL_CONFIRMED';
 };
 
 const isTurnkeyMissingSessionError = (error: unknown): boolean =>
@@ -1625,6 +1625,11 @@ export const InfraTradingTerminal = ({
         reason === 'POLYMARKET_CLOB_APPROVAL_REQUIRED' ||
         bridgedUsdc > 0);
   }, [backendVenueList, fundingActivations]);
+  const polymarketClobSyncPending = useMemo(() => {
+    if (!backendVenueList.includes('POLYMARKET')) return false;
+    const activation = fundingActivations.find((item) => toBackendVenueId(item.venue) === 'POLYMARKET');
+    return String(activation?.readinessReason ?? '').toUpperCase() === 'POLYMARKET_CLOB_SYNC_PENDING';
+  }, [backendVenueList, fundingActivations]);
   const visibleOutcomeRows = showAllOutcomes ? terminalOutcomes : terminalOutcomes.slice(0, 5);
   const selectedOutcome = terminalOutcomes.find((outcome) => outcome.id === selectedOutcomeId) ?? terminalOutcomes[0] ?? null;
   const selectedOutcomeMarketId = selectedOutcome?.marketId ?? terminalMarketId;
@@ -2744,6 +2749,8 @@ export const InfraTradingTerminal = ({
     ? 'checking...'
     : fundingError
       ? 'unavailable'
+      : polymarketClobSyncPending
+        ? 'CLOB sync pending'
       : ticketActivationRequired
         ? 'activation required'
       : venueReadyBalance > 0
@@ -2764,7 +2771,7 @@ export const InfraTradingTerminal = ({
   ));
   const ticketEstimatedPayout = side === 'buy' ? ticketEstimatedShares : ticketReceiveEstimate;
   const ticketNeedsFundingAction = ticketActivationRequired || ticketDepositRequired || ticketLimitlessSetupRequired || ticketPredictFunAuthRequired || ticketRouteApprovalRequired || ticketLimitlessBalanceBlocked;
-  const ticketActionDisabled = !token || !terminalMarketId || !selectedTicketOutcomeId || ticketLoading || ticketActivationPolling ||
+  const ticketActionDisabled = !token || !terminalMarketId || !selectedTicketOutcomeId || ticketLoading || ticketActivationPolling || polymarketClobSyncPending ||
     Boolean(ticketExecutionId && ticketQuote && !ticketRequiresSignature && !ticketNeedsFundingAction) ||
     Boolean(side === 'buy' && !ticketQuote && fundingLoading);
   const ticketActionLabel = ticketActivationPolling
@@ -2781,6 +2788,8 @@ export const InfraTradingTerminal = ({
           : 'Checking live route...'
     : side === 'buy' && !ticketQuote && fundingLoading
       ? 'Checking balance...'
+    : polymarketClobSyncPending
+      ? 'Waiting for CLOB sync'
     : ticketActivationRequired
       ? side === 'sell' ? 'Approve Polymarket shares' : 'Activate Polymarket funds'
     : ticketRouteApprovalRequired
