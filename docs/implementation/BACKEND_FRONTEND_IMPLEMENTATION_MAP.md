@@ -638,6 +638,7 @@ Activate funds button:
   - `POST /funding/venue-activations/polymarket/prepare`
   - user signs required transaction/message
   - `POST /funding/venue-activations/polymarket/submit`
+- If Polymarket returns `readinessReason: POLYMARKET_CLOB_SYNC_PENDING`, the frontend shows `pUSD approved, CLOB sync pending` and does not show an Activate CTA. That state means backend/on-chain evidence is present but CLOB has not confirmed spendable collateral yet.
 - For other venues:
   - show backend-provided setup/readiness action only.
 

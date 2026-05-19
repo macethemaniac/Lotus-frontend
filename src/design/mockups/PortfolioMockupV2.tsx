@@ -689,7 +689,7 @@ type VenueCashRow = {
   label: string;
   balance: number;
   status: string;
-  activation: 'ready' | 'required' | 'blocked';
+  activation: 'ready' | 'required' | 'blocked' | 'pending';
   blockers: string[];
   venueAddress?: string;
   venueAddressKind?: string;
@@ -915,10 +915,11 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
       const blockers = activation?.blockers ?? [];
       const copyAddress = venueSpecificAddress(account);
       const readinessReason = String(activation?.readinessReason ?? '').toUpperCase();
+      const clobSyncPending = readinessReason === 'POLYMARKET_CLOB_SYNC_PENDING' || activationStatus === 'SYNC_PENDING';
       const bridgedUsdcBalance = parseMoney(activation?.bridgedUsdcBalance ?? null) ?? 0;
       const inactiveStatus = readinessReason === 'POLYMARKET_USDCE_ACTIVATION_REQUIRED' || bridgedUsdcBalance > 0
         ? 'USDC.e delivered, activation required'
-        : readinessReason === 'POLYMARKET_CLOB_SYNC_PENDING'
+        : clobSyncPending
           ? 'pUSD approved, CLOB sync pending'
         : readinessReason === 'POLYMARKET_CLOB_APPROVAL_REQUIRED'
           ? 'pUSD approval required'
@@ -929,7 +930,7 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
         ...venue,
         balance,
         status: balance > 0 ? 'Ready to trade' : inactiveStatus,
-        activation: blockers.length > 0 ? 'blocked' : activationRequired ? 'required' : 'ready',
+        activation: blockers.length > 0 ? 'blocked' : clobSyncPending ? 'pending' : activationRequired ? 'required' : 'ready',
         blockers,
         venueAddress: copyAddress.address,
         venueAddressKind: copyAddress.kind,
@@ -1016,7 +1017,7 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
     : hasTradePerformanceHistory
       ? 'Trade-driven portfolio movement'
       : 'Waiting for filled trades';
-  const activationRequiredVenues = venueRows.filter((venue) => venue.activation !== 'ready');
+  const activationRequiredVenues = venueRows.filter((venue) => venue.activation === 'required' || venue.activation === 'blocked');
   const fundingWallets = useMemo(() => {
     return data.wallets
       .filter((wallet) => wallet.status === 'ACTIVE' && wallet.purpose === 'DEFAULT_FUNDING')
@@ -1396,7 +1397,7 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
                             </button>
                           )}
                         </div>
-                        <div className={`text-[10px] font-semibold ${venue.balance > 0 ? 'text-emerald-400' : venue.activation === 'blocked' ? 'text-amber-300' : 'text-zinc-500'}`}>
+                        <div className={`text-[10px] font-semibold ${venue.balance > 0 ? 'text-emerald-400' : venue.activation === 'blocked' || venue.activation === 'pending' ? 'text-amber-300' : 'text-zinc-500'}`}>
                           {venue.status}
                         </div>
                         {venue.venueAddress && (
@@ -1406,7 +1407,7 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
                     </div>
                     <div className="text-right font-mono text-sm font-bold text-white">
                       {formatCurrency(venue.balance)}
-                      {venue.activation !== 'ready' && (
+                      {(venue.activation === 'required' || venue.activation === 'blocked') && (
                         <button
                           type="button"
                           onClick={() => void activateVenue(venue)}
