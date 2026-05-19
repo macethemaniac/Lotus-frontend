@@ -215,6 +215,27 @@ const fundingBalanceTitle = (balance: { token: string; chain?: string }) =>
 
 const venueKey = (venue: string) => venue.toUpperCase().replace(/[\s.-]+/g, '_');
 
+const venueReadyBalanceAmount = (balance: VenueBalance): number => {
+  const asset = String(balance.asset ?? balance.token ?? 'USDC')
+    .toUpperCase()
+    .replace(/[^A-Z0-9.]/g, '');
+  const stableAsset = asset === 'USDC' || asset === 'USDCE' || asset === 'USDC.E' || asset === 'USDT' || asset === 'PUSD' || asset === 'USD';
+  if (!stableAsset) return 0;
+  return parseMoney(balance.readyAmount ?? balance.availableAmount) ?? 0;
+};
+
+const polymarketBalanceConfirmsTradeReadiness = (balance: VenueBalance): boolean => {
+  if (venueKey(balance.venue) !== 'POLYMARKET') return false;
+  if (venueReadyBalanceAmount(balance) <= 0) return false;
+  const readinessReason = String(balance.readinessReason ?? '').toUpperCase();
+  const balanceSource = String(balance.balanceSource ?? '').toUpperCase();
+  const usableSource = String(balance.usableBalanceSource ?? '').toUpperCase();
+  return readinessReason === 'POLYMARKET_CLOB_COLLATERAL_CONFIRMED' ||
+    balanceSource === 'POLYMARKET_CLOB_SYNC_CONFIRMED' ||
+    usableSource === 'USER_CLOB_SYNC_CONFIRMED' ||
+    usableSource === 'CLOB_COLLATERAL_ALLOWANCE';
+};
+
 const venueLabel = (venue: string) =>
   trackedVenues.find((item) => item.backend === venueKey(venue) || item.id === venue.toLowerCase())?.label ??
   venue.replace(/[_-]+/g, ' ').toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase());
@@ -951,17 +972,20 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
   const venueRows = useMemo<VenueCashRow[]>(() => {
     return trackedVenues.map((venue) => {
       const balances = data.balances.filter((balance) => venueKey(balance.venue) === venue.backend);
-      const balance = balances.reduce((sum, item) => sum + (parseMoney(item.readyAmount ?? item.availableAmount) ?? 0), 0);
+      const balance = balances.reduce((sum, item) => sum + venueReadyBalanceAmount(item), 0);
+      const balanceConfirmsReady = venue.backend === 'POLYMARKET' && balances.some(polymarketBalanceConfirmsTradeReadiness);
       const activation = data.activations.find((item) => venueKey(item.venue) === venue.backend);
       const account = data.venueAccounts.find((item) => venueKey(item.venue) === venue.backend);
       const activationStatus = String(activation?.status ?? '').toUpperCase();
-      const activationRequired = activation?.activationRequired === true ||
+      const activationRequired = !balanceConfirmsReady && (
+        activation?.activationRequired === true ||
         activation?.required === true ||
-        ['REQUIRED', 'ACTION_REQUIRED', 'PENDING', 'CONFIG_REQUIRED', 'ACCOUNT_REQUIRED'].includes(activationStatus);
+        ['REQUIRED', 'ACTION_REQUIRED', 'PENDING', 'CONFIG_REQUIRED', 'ACCOUNT_REQUIRED'].includes(activationStatus)
+      );
       const blockers = activation?.blockers ?? [];
       const copyAddress = venueSpecificAddress(account);
       const readinessReason = String(activation?.readinessReason ?? '').toUpperCase();
-      const clobSyncPending = readinessReason === 'POLYMARKET_CLOB_SYNC_PENDING' || activationStatus === 'SYNC_PENDING';
+      const clobSyncPending = !balanceConfirmsReady && (readinessReason === 'POLYMARKET_CLOB_SYNC_PENDING' || activationStatus === 'SYNC_PENDING');
       const bridgedUsdcBalance = parseMoney(activation?.bridgedUsdcBalance ?? null) ?? 0;
       const inactiveStatus = readinessReason === 'POLYMARKET_USDCE_ACTIVATION_REQUIRED' || bridgedUsdcBalance > 0
         ? 'USDC.e delivered, activation required'
@@ -1241,7 +1265,7 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
 
         setActivationMessage(polymarketActivationPollingMessage(polymarketActivation, relayerState, relayerReference));
 
-        if (polymarketActivationConfirmed(polymarketActivation)) {
+        if (polymarketActivationConfirmed(polymarketActivation) || balances.some(polymarketBalanceConfirmsTradeReadiness)) {
           await loadPortfolio({ silent: true, force: true });
           return true;
         }

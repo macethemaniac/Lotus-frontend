@@ -629,6 +629,18 @@ const venueReadyBalanceAmount = (balance: VenueBalance): number => {
   return parsePositiveNumber(balance.readyAmount ?? balance.availableAmount) ?? 0;
 };
 
+const polymarketBalanceConfirmsTradeReadiness = (balance: VenueBalance): boolean => {
+  if (toBackendVenueId(balance.venue) !== 'POLYMARKET') return false;
+  if (venueReadyBalanceAmount(balance) <= 0) return false;
+  const readinessReason = String(balance.readinessReason ?? '').toUpperCase();
+  const balanceSource = String(balance.balanceSource ?? '').toUpperCase();
+  const usableSource = String(balance.usableBalanceSource ?? '').toUpperCase();
+  return readinessReason === 'POLYMARKET_CLOB_COLLATERAL_CONFIRMED' ||
+    balanceSource === 'POLYMARKET_CLOB_SYNC_CONFIRMED' ||
+    usableSource === 'USER_CLOB_SYNC_CONFIRMED' ||
+    usableSource === 'CLOB_COLLATERAL_ALLOWANCE';
+};
+
 const formatSignedShares = (value: number | null | undefined): string => {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return '0 shares';
   return `${value.toLocaleString(undefined, { maximumFractionDigits: value >= 100 ? 0 : 2 })} shares`;
@@ -1614,8 +1626,13 @@ export const InfraTradingTerminal = ({
       return sum + venueReadyBalanceAmount(balance);
     }, 0);
   }, [backendVenueList, fundingBalances]);
+  const polymarketBalanceReady = useMemo(() => {
+    if (!backendVenueList.includes('POLYMARKET')) return false;
+    return fundingBalances.some(polymarketBalanceConfirmsTradeReadiness);
+  }, [backendVenueList, fundingBalances]);
   const polymarketActivationRequired = useMemo(() => {
     if (!backendVenueList.includes('POLYMARKET')) return false;
+    if (polymarketBalanceReady) return false;
     const activation = fundingActivations.find((item) => toBackendVenueId(item.venue) === 'POLYMARKET');
     if (!activation) return false;
     const reason = String(activation.readinessReason ?? '').toUpperCase();
@@ -1624,12 +1641,13 @@ export const InfraTradingTerminal = ({
       (reason === 'POLYMARKET_USDCE_ACTIVATION_REQUIRED' ||
         reason === 'POLYMARKET_CLOB_APPROVAL_REQUIRED' ||
         bridgedUsdc > 0);
-  }, [backendVenueList, fundingActivations]);
+  }, [backendVenueList, fundingActivations, polymarketBalanceReady]);
   const polymarketClobSyncPending = useMemo(() => {
     if (!backendVenueList.includes('POLYMARKET')) return false;
+    if (polymarketBalanceReady) return false;
     const activation = fundingActivations.find((item) => toBackendVenueId(item.venue) === 'POLYMARKET');
     return String(activation?.readinessReason ?? '').toUpperCase() === 'POLYMARKET_CLOB_SYNC_PENDING';
-  }, [backendVenueList, fundingActivations]);
+  }, [backendVenueList, fundingActivations, polymarketBalanceReady]);
   const visibleOutcomeRows = showAllOutcomes ? terminalOutcomes : terminalOutcomes.slice(0, 5);
   const selectedOutcome = terminalOutcomes.find((outcome) => outcome.id === selectedOutcomeId) ?? terminalOutcomes[0] ?? null;
   const selectedOutcomeMarketId = selectedOutcome?.marketId ?? terminalMarketId;
@@ -2525,11 +2543,12 @@ export const InfraTradingTerminal = ({
 
       for (let attempt = 0; attempt < 30; attempt += 1) {
         const accountSnapshot = await getAccountSnapshot(token, { force: true });
+        const nextBalances = accountSnapshot.balances ?? [];
         const nextActivations = accountSnapshot.activations ?? [];
-        setFundingBalances((current) => mergeVenueBalanceSnapshots(current, accountSnapshot.balances ?? []));
+        setFundingBalances((current) => mergeVenueBalanceSnapshots(current, nextBalances));
         setFundingActivations(nextActivations);
         const polymarket = nextActivations.find((item) => toBackendVenueId(item.venue) === 'POLYMARKET');
-        if (polymarketActivationConfirmed(polymarket)) {
+        if (polymarketActivationConfirmed(polymarket) || nextBalances.some(polymarketBalanceConfirmsTradeReadiness)) {
           setTicketStatusMessage('Polymarket funds are active. Preview the route again before placing the market order.');
           setTicketQuote(null);
           setTicketQuoteAmount(null);
