@@ -29,7 +29,7 @@ export async function apiRequest<T>(path: string, options: ApiOptions = {}): Pro
   if (options.body !== undefined) headers.set("Content-Type", "application/json");
   if (options.token) headers.set("Authorization", `Bearer ${options.token}`);
 
-  const baseUrl = options.baseUrl ?? env.lotusApiBaseUrl;
+  const baseUrl = resolveApiBaseUrl(options.baseUrl);
   const response = await fetch(`${baseUrl}${path}`, {
     method: options.method ?? "GET",
     headers,
@@ -47,6 +47,21 @@ export async function apiRequest<T>(path: string, options: ApiOptions = {}): Pro
   }
 
   return payload as T;
+}
+
+function resolveApiBaseUrl(baseUrlOverride?: string): string {
+  if (baseUrlOverride !== undefined) return baseUrlOverride.replace(/\/$/, "");
+  if (shouldUseSameOriginApiProxy()) return "/api";
+  return env.lotusApiBaseUrl;
+}
+
+function shouldUseSameOriginApiProxy(): boolean {
+  if (typeof window === "undefined") return false;
+
+  const hostname = window.location.hostname.toLowerCase();
+  if (hostname === "localhost" || hostname === "127.0.0.1") return false;
+
+  return hostname.endsWith(".vercel.app") || hostname === "staging.uselotus.xyz" || hostname === "app.uselotus.xyz";
 }
 
 function parseJson(text: string): unknown {
