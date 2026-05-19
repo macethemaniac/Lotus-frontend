@@ -1,4 +1,5 @@
 import { apiRequest } from "@/lib/api/http-client";
+import { staleWhileRevalidate } from "@/lib/api/stale-cache";
 
 export type TradeSide = "buy" | "sell";
 
@@ -262,15 +263,26 @@ export function getPositions(token: string, input: { marketId?: string; outcomeI
   );
 }
 
-export function getPortfolioSummary(token: string) {
-  return apiRequest<PortfolioSummary>("/execution/portfolio/summary", { token });
+type PortfolioReadOptions = {
+  force?: boolean;
+};
+
+export function getPortfolioSummary(token: string, options: PortfolioReadOptions = {}) {
+  const request = () => apiRequest<PortfolioSummary>("/execution/portfolio/summary", { token });
+  return options.force
+    ? request()
+    : staleWhileRevalidate(`execution:portfolio:summary:${token}`, request, { ttlMs: 8_000, maxStaleMs: 90_000 });
 }
 
-export function getPortfolioTimeSeries(token: string, input: { range?: PortfolioTimeSeriesResponse["range"] } = {}) {
+export function getPortfolioTimeSeries(token: string, input: { range?: PortfolioTimeSeriesResponse["range"]; force?: boolean } = {}) {
   const params = new URLSearchParams();
   if (input.range) params.set("range", input.range);
   const query = params.toString();
-  return apiRequest<PortfolioTimeSeriesResponse>(`/execution/portfolio/timeseries${query ? `?${query}` : ""}`, { token });
+  const path = `/execution/portfolio/timeseries${query ? `?${query}` : ""}`;
+  const request = () => apiRequest<PortfolioTimeSeriesResponse>(path, { token });
+  return input.force
+    ? request()
+    : staleWhileRevalidate(`execution:portfolio:timeseries:${token}:${path}`, request, { ttlMs: 12_000, maxStaleMs: 2 * 60_000 });
 }
 
 export function getExecutionHistory(token: string, input: { status?: string; limit?: number; cursor?: string } = {}) {

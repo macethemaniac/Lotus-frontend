@@ -780,6 +780,7 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
   const [copiedExecutionId, setCopiedExecutionId] = useState<string | null>(null);
   const token = session?.userJwt ?? null;
   const portfolioRefreshSeq = useRef(0);
+  const portfolioRefreshInFlight = useRef(false);
 
   useEffect(() => {
     const updateSettings = () => setNotificationSettings(loadPortfolioNotificationSettings());
@@ -806,6 +807,10 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
       setError(null);
       return;
     }
+    if (portfolioRefreshInFlight.current) {
+      return;
+    }
+    portfolioRefreshInFlight.current = true;
 
     const requestSeq = portfolioRefreshSeq.current + 1;
     portfolioRefreshSeq.current = requestSeq;
@@ -815,8 +820,8 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
     setError(null);
     try {
       const [summary, timeseries, accountSnapshot, marketCatalogResponse] = await Promise.all([
-        getPortfolioSummary(token),
-        getPortfolioTimeSeries(token, { range: performanceRange }),
+        getPortfolioSummary(token, { force: options.force }),
+        getPortfolioTimeSeries(token, { range: performanceRange, force: options.force }),
         getAccountSnapshot(token, { force: options.force }),
         listMarkets({ limit: 250 }),
       ]);
@@ -846,6 +851,7 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
         setError(userSafeError(loadError));
       }
     } finally {
+      portfolioRefreshInFlight.current = false;
       if (portfolioRefreshSeq.current === requestSeq && !options.silent) {
         setLoading(false);
       }
