@@ -132,6 +132,35 @@ export type PolymarketActivationSubmitResult = {
   transactionHash?: string | null;
 };
 
+export type PolymarketClobSyncPreparation = {
+  signer: string;
+  account: string;
+  expiresAt: string;
+  typedData: Record<string, unknown>;
+  signedPayloadHint: Record<string, unknown>;
+};
+
+export type PolymarketClobSyncSubmission = {
+  signedPayload: {
+    signer: string;
+    account: string;
+    signature: string;
+    typedData: Record<string, unknown>;
+    data?: Record<string, unknown>;
+  };
+};
+
+export type PolymarketClobSyncResult = {
+  status: "READY" | "SYNC_PENDING";
+  readinessReason: string;
+  clobCollateralBalance: string;
+  clobCollateralAllowance: string;
+  readyAmount: string;
+  ownerAddress: string;
+  signerAddress: string;
+  clobAllowanceSpenders?: Array<{ spenderAddress: string; allowance: string }>;
+};
+
 export type FundingHistoryRow = {
   id: string;
   direction: "FUNDING" | "WITHDRAWAL" | string;
@@ -385,6 +414,22 @@ export function preparePolymarketActivation(token: string, input: { tokenId?: st
 
 export function submitPolymarketActivation(token: string, input: PolymarketActivationSubmission) {
   return apiRequest<{ activation: PolymarketActivationSubmitResult }>("/funding/venue-activations/polymarket/submit", {
+    method: "POST",
+    token,
+    body: input,
+  });
+}
+
+export function preparePolymarketClobSync(token: string) {
+  return apiRequest<{ sync: PolymarketClobSyncPreparation }>("/funding/venue-activations/polymarket/clob-sync/prepare", {
+    method: "POST",
+    token,
+    body: {},
+  });
+}
+
+export function submitPolymarketClobSync(token: string, input: PolymarketClobSyncSubmission) {
+  return apiRequest<{ sync: PolymarketClobSyncResult }>("/funding/venue-activations/polymarket/clob-sync/submit", {
     method: "POST",
     token,
     body: input,

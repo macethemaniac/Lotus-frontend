@@ -37,11 +37,14 @@ import {
   getFundingReceipt,
   getWithdrawalReceipt,
   mergeVenueBalanceSnapshots,
+  preparePolymarketClobSync,
   preparePolymarketActivation,
+  submitPolymarketClobSync,
   submitPolymarketActivation,
   type FundingHistoryResponse,
   type FundingHistoryRow,
   type FundingReceipt,
+  type PolymarketClobSyncPreparation,
   type PolymarketActivationPreparation,
   type VenueActivation,
   type VenueBalance,
@@ -529,6 +532,49 @@ const activationTypedDataPayload = (activation: PolymarketActivationPreparation)
     ...activation.typedData.types,
   },
 });
+
+const eip712TypedDataPayload = (typedData: Record<string, unknown>) => {
+  const types = typedData.types && typeof typedData.types === 'object' && !Array.isArray(typedData.types)
+    ? typedData.types as Record<string, unknown>
+    : {};
+  return JSON.stringify({
+    ...typedData,
+    types: {
+      EIP712Domain: [
+        { name: 'name', type: 'string' },
+        { name: 'version', type: 'string' },
+        { name: 'chainId', type: 'uint256' },
+        { name: 'verifyingContract', type: 'address' },
+      ],
+      ...types,
+    },
+  });
+};
+
+const clobSyncSignedPayload = (
+  sync: PolymarketClobSyncPreparation,
+  signature: string
+): {
+  signer: string;
+  account: string;
+  signature: string;
+  typedData: Record<string, unknown>;
+  data?: Record<string, unknown>;
+} => {
+  const hint = sync.signedPayloadHint && typeof sync.signedPayloadHint === 'object'
+    ? sync.signedPayloadHint
+    : {};
+  const data = hint.data && typeof hint.data === 'object' && !Array.isArray(hint.data)
+    ? hint.data as Record<string, unknown>
+    : undefined;
+  return {
+    signer: sync.signer,
+    account: sync.account,
+    signature,
+    typedData: sync.typedData,
+    ...(data ? { data } : {}),
+  };
+};
 
 const isTurnkeyMissingSessionError = (error: unknown) =>
   error instanceof Error && /No active session found|valid session|Fetching embedded wallets/i.test(error.message);
@@ -1092,6 +1138,78 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
     }
   }, [fundingReceipt]);
 
+  const syncPolymarketClobReadiness = useCallback(async (venue?: VenueCashRow) => {
+    if (!token) {
+      setActivationMessage('Log in before syncing Polymarket CLOB readiness.');
+      return false;
+    }
+    const venueId = venue?.id ?? 'polymarket';
+    setActivatingVenueId(venueId);
+    setError(null);
+    try {
+      const prepared = await preparePolymarketClobSync(token);
+      const sync = prepared.sync;
+      if (!turnkeySession || turnkeyAuthState !== AuthState.Authenticated) {
+        setActivationMessage('Reconnect your Turnkey wallet session to sync Polymarket CLOB readiness.');
+        await handleLogin();
+      }
+
+      let activeTurnkeyWallets = turnkeyWallets;
+      if (activeTurnkeyWallets.length === 0) {
+        try {
+          activeTurnkeyWallets = await refreshWallets();
+        } catch (walletError) {
+          if (isTurnkeyMissingSessionError(walletError)) {
+            setActivationMessage(turnkeySessionRequiredMessage);
+            await loadPortfolio({ silent: true, force: true });
+            return false;
+          }
+          throw walletError;
+        }
+      }
+
+      const signerAccount = findTurnkeyWalletAccount(activeTurnkeyWallets, sync.signer);
+      if (!signerAccount) {
+        setActivationMessage('Polymarket pUSD is approved, but the matching Turnkey EVM signer is not loaded. Refresh wallets and retry CLOB sync.');
+        await loadPortfolio({ silent: true, force: true });
+        return false;
+      }
+
+      const signerOrganizationId = turnkeySession?.organizationId ?? session?.turnkeyOrganizationId;
+      setActivationMessage('Polymarket pUSD is approved. Sign once to sync Polymarket CLOB readiness.');
+      const signatureResult = await signMessage({
+        message: eip712TypedDataPayload(sync.typedData),
+        walletAccount: signerAccount,
+        encoding: 'PAYLOAD_ENCODING_EIP712',
+        hashFunction: 'HASH_FUNCTION_NO_OP',
+        addEthereumPrefix: false,
+        ...(signerOrganizationId ? { organizationId: signerOrganizationId } : {}),
+      });
+
+      setActivationMessage('Refreshing Polymarket CLOB balance and allowance...');
+      const submitted = await submitPolymarketClobSync(token, {
+        signedPayload: clobSyncSignedPayload(sync, signatureFromTurnkeyResult(signatureResult)),
+      });
+      const confirmed = submitted.sync.status === 'READY';
+      setActivationMessage(
+        confirmed
+          ? `Polymarket CLOB readiness confirmed. ${submitted.sync.readyAmount} USDC is ready to trade.`
+          : 'Polymarket pUSD is approved, but CLOB is still syncing spendable collateral. Lotus will keep polling readiness.'
+      );
+      await loadPortfolio({ silent: true, force: true });
+      return confirmed;
+    } catch (syncError) {
+      const message = isTurnkeyMissingSessionError(syncError)
+        ? turnkeySessionRequiredMessage
+        : syncError instanceof Error ? syncError.message : 'Polymarket CLOB readiness sync failed.';
+      setActivationMessage(/cancel/i.test(message) ? 'Polymarket CLOB sync signature cancelled.' : message);
+      await loadPortfolio({ silent: true, force: true });
+      return false;
+    } finally {
+      setActivatingVenueId(null);
+    }
+  }, [handleLogin, loadPortfolio, refreshWallets, session?.turnkeyOrganizationId, signMessage, token, turnkeyAuthState, turnkeySession, turnkeyWallets]);
+
   const pollPolymarketActivationReadiness = useCallback(async (submittedActivation: {
     relayerState?: string;
     relayerTransactionId?: string;
@@ -1220,6 +1338,7 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
         calls: activation.calls,
         signature: signatureFromTurnkeyResult(signatureResult),
       });
+      await syncPolymarketClobReadiness(venue);
       await pollPolymarketActivationReadiness(submitted.activation);
     } catch (activationError) {
       const message = isTurnkeyMissingSessionError(activationError)
@@ -1229,7 +1348,7 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
     } finally {
       setActivatingVenueId(null);
     }
-  }, [handleLogin, loadPortfolio, pollPolymarketActivationReadiness, refreshWallets, session?.turnkeyOrganizationId, signMessage, token, turnkeyAuthState, turnkeySession, turnkeyWallets]);
+  }, [handleLogin, loadPortfolio, pollPolymarketActivationReadiness, refreshWallets, session?.turnkeyOrganizationId, signMessage, syncPolymarketClobReadiness, token, turnkeyAuthState, turnkeySession, turnkeyWallets]);
 
   return (
     <div className="min-h-screen bg-[#09090b] text-white p-6 font-sans antialiased space-y-6 animate-fade-in relative">
@@ -1415,6 +1534,16 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
                           className="mt-1.5 flex min-h-8 items-center justify-center rounded-md border border-[#ccff00]/25 bg-[#ccff00]/10 px-2.5 text-[10px] font-bold uppercase tracking-[0.08em] text-[#ccff00] transition-colors hover:bg-[#ccff00]/15 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
                         >
                           {activatingVenueId === venue.id ? 'Activating' : 'Activate'}
+                        </button>
+                      )}
+                      {venue.activation === 'pending' && (
+                        <button
+                          type="button"
+                          onClick={() => void syncPolymarketClobReadiness(venue)}
+                          disabled={activatingVenueId === venue.id || !token}
+                          className="mt-1.5 flex min-h-8 items-center justify-center rounded-md border border-amber-300/25 bg-amber-300/10 px-2.5 text-[10px] font-bold uppercase tracking-[0.08em] text-amber-200 transition-colors hover:bg-amber-300/15 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/70"
+                        >
+                          {activatingVenueId === venue.id ? 'Syncing' : 'Sync CLOB'}
                         </button>
                       )}
                     </div>

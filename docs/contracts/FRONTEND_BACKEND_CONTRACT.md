@@ -86,6 +86,8 @@ Frontend rules:
 - `GET /funding/intents/{id}/status`
 - `GET /funding/venue-balances`
 - `GET /funding/venue-activations`
+- `POST /funding/venue-activations/polymarket/clob-sync/prepare`
+- `POST /funding/venue-activations/polymarket/clob-sync/submit`
 - `GET /funding/history`
 - `GET /funding/intents/{id}/receipt`
 - `GET /funding/withdrawals/{id}/receipt`
@@ -101,7 +103,7 @@ Frontend rules:
 - Funding and withdrawal are non-custodial.
 - Do not enable trading based on a wallet balance, bridge receipt, or destination received state alone.
 - Only backend readiness and execution preflight can mark capital usable for execution.
-- Polymarket `POLYMARKET_CLOB_SYNC_PENDING` means pUSD and on-chain approvals are visible, but CLOB has not confirmed spendable collateral. Treat it as a waiting state, not as ready-to-trade and not as a new activation requirement.
+- Polymarket `POLYMARKET_CLOB_SYNC_PENDING` means pUSD and on-chain approvals are visible, but CLOB has not confirmed spendable collateral. Treat it as a CLOB-auth sync state, not as ready-to-trade and not as a new on-chain activation requirement. The frontend may call the CLOB sync prepare/submit endpoints, collect the Turnkey EIP-712 `ClobAuth` signature, then refresh balances.
 
 #### RFQ and Execution
 
