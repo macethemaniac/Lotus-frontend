@@ -3025,20 +3025,21 @@ export const InfraTradingTerminal = ({
   ) ?? null;
   const ticketPolymarketClobSource = String(ticketPolymarketReadinessVenue?.collateral.usableBalanceSource ?? '').toUpperCase();
   const ticketPolymarketReadinessBlockerText = (ticketPolymarketReadinessVenue?.blockers.join(' ') ?? '').toUpperCase();
+  const ticketPolymarketErrorText = String(ticketError ?? '').toUpperCase();
   const ticketPolymarketStatusText = String(ticketStatusMessage ?? '').toUpperCase();
   const ticketPolymarketSyncSignal = [
     ticketPolymarketReadinessBlockerText,
-    ticketError ?? '',
+    ticketPolymarketErrorText,
   ].join(' ').toUpperCase();
   const ticketPolymarketClobPropagationPending = Boolean(token && (ticketRouteUsesPolymarket || backendVenueList.includes('POLYMARKET')) && (
     ticketPolymarketClobSource === 'USER_CLOB_SYNC_CONFIRMED' ||
     /SYNC WAS CONFIRMED LOCALLY|LIVE CLOB SPENDABLE|SYNC PROPAGAT|PROPAGATION/.test(ticketPolymarketReadinessBlockerText) ||
+    /SYNC WAS CONFIRMED LOCALLY|LIVE CLOB SPENDABLE|SYNC PROPAGAT|PROPAGATION/.test(ticketPolymarketErrorText) ||
     /CLOB SYNC SUBMITTED|CLOB SYNC CONFIRMED/.test(ticketPolymarketStatusText)
   ));
   const ticketPolymarketClobSyncRequired = Boolean(token && (ticketRouteUsesPolymarket || backendVenueList.includes('POLYMARKET')) && !ticketPolymarketClobPropagationPending && (
     polymarketClobSyncPending ||
-    ticketPolymarketClobSource === 'USER_CLOB_SYNC_CONFIRMED' ||
-    /CLOB SYNC|SYNC PROPAGATION|PROPAGATION|SYNC_REJECTED|CLOB SPENDABLE|USER_CLOB_SYNC_CONFIRMED/.test(ticketPolymarketSyncSignal)
+    /POLYMARKET_CLOB_SYNC_PENDING|CLOB SYNC PENDING|SYNC_REJECTED_BY_VENUE|REFRESH CLOB SYNC/.test(ticketPolymarketSyncSignal)
   ));
   const ticketActivationRequired = Boolean(token) && (
     (side === 'buy' && polymarketActivationRequired && (ticketRouteUsesPolymarket || ticketHasFundingBlocker || venueReadyBalance <= 0)) ||
