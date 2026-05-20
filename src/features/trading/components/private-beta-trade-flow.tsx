@@ -14,6 +14,7 @@ import {
   submitSignedBundle,
   type ExecutionStatus,
   type LiveCandidatesResponse,
+  type LiveSubmitReadinessSnapshot,
   type RouteQuote,
   type SignatureBundle,
   type TradeSide,
@@ -22,6 +23,20 @@ import { formatDateTime, formatNumber, formatUsd } from "@/lib/formatting/format
 import { openExecutionSocket, type ExecutionWsState, type ExecutionWsEvent } from "@/lib/ws/execution-ws-client";
 
 const defaultMarketId = "FRONTEND_CURATED:CRYPTO|FDV_THRESHOLD_AFTER_LAUNCH|EXTENDED|ONE_DAY_AFTER_LAUNCH|ABOVE|300000000|300M";
+
+const isLiveReadinessBlocked = (readiness: LiveSubmitReadinessSnapshot | null): boolean =>
+  Boolean(readiness && (
+    readiness.status !== "fresh" ||
+    readiness.venues.some((venue) => venue.status !== "fresh" || venue.blockers.length > 0)
+  ));
+
+const liveReadinessBlockerMessage = (readiness: LiveSubmitReadinessSnapshot | null): string => {
+  const venue = readiness?.venues.find((item) => item.status !== "fresh" || item.blockers.length > 0);
+  if (venue) {
+    return `${venue.venue}: ${venue.blockers[0] ?? "Live submit readiness is stale. Refresh balances and retry."}`;
+  }
+  return readiness?.blockers[0] ?? "Live submit readiness is blocked. Refresh balances and retry.";
+};
 
 export function PrivateBetaTradeFlow({ session }: { session: AuthSession | null }) {
   const [side, setSide] = useState<TradeSide>("buy");
@@ -34,7 +49,7 @@ export function PrivateBetaTradeFlow({ session }: { session: AuthSession | null 
   const [signatureBundle, setSignatureBundle] = useState<SignatureBundle | null>(null);
   const [signedLegsJson, setSignedLegsJson] = useState("");
   const [executionStatus, setExecutionStatus] = useState<ExecutionStatus | null>(null);
-  const [liveReadiness, setLiveReadiness] = useState<unknown>(null);
+  const [liveReadiness, setLiveReadiness] = useState<LiveSubmitReadinessSnapshot | null>(null);
   const [positions, setPositions] = useState<unknown[]>([]);
   const [dryRun, setDryRun] = useState(true);
   const [message, setMessage] = useState("Load live candidates to begin.");
@@ -127,6 +142,12 @@ export function PrivateBetaTradeFlow({ session }: { session: AuthSession | null 
     if (!session || !executionId) return;
     setLoading(true);
     try {
+      const readiness = await getLiveReadiness(session.userJwt, executionId);
+      setLiveReadiness(readiness);
+      if (isLiveReadinessBlocked(readiness)) {
+        setMessage(liveReadinessBlockerMessage(readiness));
+        return;
+      }
       const result = await prepareSignatures(session.userJwt, executionId);
       setSignatureBundle(result);
       setMessage(`Prepared ${result.signatureRequests.length} signature request(s). Sign with the user's Turnkey wallet, then paste signed legs JSON.`);
@@ -152,6 +173,12 @@ export function PrivateBetaTradeFlow({ session }: { session: AuthSession | null 
     if (!session || !executionId) return;
     setLoading(true);
     try {
+      const readiness = await getLiveReadiness(session.userJwt, executionId);
+      setLiveReadiness(readiness);
+      if (isLiveReadinessBlocked(readiness)) {
+        setMessage(liveReadinessBlockerMessage(readiness));
+        return;
+      }
       const parsed = JSON.parse(signedLegsJson) as unknown[];
       const result = await submitSignedBundle(session.userJwt, executionId, parsed, dryRun);
       setExecutionStatus(result);

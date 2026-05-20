@@ -876,14 +876,24 @@ const apiErrorCode = (error: unknown): string | null =>
 const isApiNotFound = (error: unknown, code: string): boolean =>
   error instanceof ApiClientError && error.status === 404 && apiErrorCode(error) === code;
 
+const isApiNotFoundStatus = (error: unknown): boolean =>
+  error instanceof ApiClientError && error.status === 404;
+
 const isReadinessBlocked = (readiness: LiveSubmitReadinessSnapshot | null): boolean =>
-  readiness?.status === 'blocked' || Boolean(readiness?.venues.some((venue) => venue.status === 'blocked' && venue.blockers.length > 0));
+  Boolean(readiness && (
+    readiness.status !== 'fresh' ||
+    readiness.venues.some((venue) => venue.status !== 'fresh' || venue.blockers.length > 0)
+  ));
 
 const firstReadinessBlocker = (readiness: LiveSubmitReadinessSnapshot | null): { venue: string; blocker: string } | null => {
   const venue = readiness?.venues.find((item) => item.status === 'blocked' && item.blockers.length > 0);
   if (venue) return { venue: venue.venue, blocker: venue.blockers[0] ?? 'Live submit readiness is blocked.' };
+  const stale = readiness?.venues.find((item) => item.status !== 'fresh');
+  if (stale) return { venue: stale.venue, blocker: stale.blockers[0] ?? 'Live submit readiness is stale. Refresh balances and preview the route again.' };
   const blocker = readiness?.blockers[0];
-  return blocker ? { venue: 'Venue', blocker } : null;
+  return blocker ? { venue: 'Venue', blocker } : readiness && readiness.status !== 'fresh'
+    ? { venue: 'Venue', blocker: 'Live submit readiness is stale. Refresh balances and preview the route again.' }
+    : null;
 };
 
 const describeOutcomeSchema = (schema: Record<string, unknown> | null | undefined): string => {
@@ -1549,7 +1559,7 @@ export const InfraTradingTerminal = ({
   const [orderbookError, setOrderbookError] = useState<string | null>(null);
   const [orderbookVenue, setOrderbookVenue] = useState<string>('ALL');
   const [orderbookNotFoundKey, setOrderbookNotFoundKey] = useState<string | null>(null);
-  const [missingRiskProfileKeys, setMissingRiskProfileKeys] = useState<Set<string>>(() => new Set());
+  const missingRiskProfileKeysRef = React.useRef<Set<string>>(new Set());
   const [localSelectedMarket, setLocalSelectedMarket] = useState<TerminalMarketSelection | null>(null);
 
   React.useEffect(() => {
@@ -2235,6 +2245,14 @@ export const InfraTradingTerminal = ({
     try {
       const executionId = ticketExecutionId ?? (await submitExecutionQuote(token, ticketQuote.quoteId)).executionId;
       setTicketExecutionId(executionId);
+      const readiness = await getLiveReadiness(token, executionId);
+      setTicketLiveReadiness(readiness);
+      if (isReadinessBlocked(readiness)) {
+        const blocked = firstReadinessBlocker(readiness);
+        setTicketError(`${formatVenueLabel(blocked?.venue ?? 'Venue')}: ${blocked?.blocker ?? 'Live submit readiness is blocked.'}`);
+        setTicketStatusMessage('This route must clear live readiness before wallet signing.');
+        return;
+      }
       const signatures = await prepareSignatures(token, executionId);
       setTicketSignatureBundle(signatures);
       setTicketStatusMessage(`Prepared ${signatures.signatureRequests.length} wallet signature request(s).`);
@@ -2760,7 +2778,7 @@ export const InfraTradingTerminal = ({
             venue: venueMarket.venue,
             venueMarketId: venueMarket.venueMarketId,
           }))
-          .filter((request) => !missingRiskProfileKeys.has(request.key));
+          .filter((request) => !missingRiskProfileKeysRef.current.has(request.key));
         const profilePromises = profileRequests
           .map((request) => getVenueMarketResolutionRisk(request.venue, request.venueMarketId));
         const [canonicalResult, ...profileResults] = await Promise.allSettled([canonicalPromise, ...profilePromises]);
@@ -2777,13 +2795,15 @@ export const InfraTradingTerminal = ({
           if (result.status === 'fulfilled') {
             profiles.push(result.value.profile);
             selectedMarketAssessments.push(...result.value.assessments);
-          } else if (isApiNotFound(result.reason, 'PROFILE_NOT_FOUND')) {
+          } else if (isApiNotFound(result.reason, 'PROFILE_NOT_FOUND') || isApiNotFoundStatus(result.reason)) {
             const request = profileRequests[index];
             if (request) missingProfileKeys.add(request.key);
           }
         }
         if (missingProfileKeys.size > 0) {
-          setMissingRiskProfileKeys((current) => new Set([...current, ...missingProfileKeys]));
+          for (const key of missingProfileKeys) {
+            missingRiskProfileKeysRef.current.add(key);
+          }
         }
         const assessments = selectedMarketAssessments.length > 0 ? selectedMarketAssessments : canonicalAssessments;
         setRiskState({ loading: false, error: null, assessments, profiles });
@@ -2798,7 +2818,7 @@ export const InfraTradingTerminal = ({
     return () => {
       cancelled = true;
     };
-  }, [missingRiskProfileKeys, selectedVenueMarkets, terminalCanonicalEventId]);
+  }, [selectedVenueMarkets, terminalCanonicalEventId]);
 
   const ticketAmountValue = ticketAmountNumber(ticketAmount);
   const ticketHasExecutableQuote = Boolean(ticketQuote && ticketRoutePath.length > 0);
@@ -2819,7 +2839,7 @@ export const InfraTradingTerminal = ({
   const ticketRouteApprovalTokenLabel = ticketRouteApprovalVenue?.collateral.approvalMethod === 'ERC1155_SET_APPROVAL_FOR_ALL'
     ? 'shares'
     : ticketRouteApprovalVenue?.collateral.tokenSymbol ?? 'collateral';
-  const ticketLiveReadinessBlocked = Boolean(ticketLiveReadiness?.venues.some((venue) => venue.status === 'blocked' && venue.blockers.length > 0));
+  const ticketLiveReadinessBlocked = isReadinessBlocked(ticketLiveReadiness);
   const ticketLimitlessBalanceBlocked = Boolean(ticketLiveReadiness?.venues.some((venue) =>
     venue.venue.toUpperCase() === 'LIMITLESS' &&
     venue.status === 'blocked' &&
