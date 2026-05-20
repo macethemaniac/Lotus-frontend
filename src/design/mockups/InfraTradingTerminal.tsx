@@ -879,6 +879,9 @@ const isApiNotFound = (error: unknown, code: string): boolean =>
 const isApiNotFoundStatus = (error: unknown): boolean =>
   error instanceof ApiClientError && error.status === 404;
 
+const isReadinessVenueBlocked = (venue: LiveSubmitReadinessSnapshot['venues'][number] | null | undefined): boolean =>
+  Boolean(venue && venue.status === 'blocked' && venue.blockers.length > 0);
+
 const isReadinessBlocked = (readiness: LiveSubmitReadinessSnapshot | null): boolean =>
   Boolean(readiness && (
     readiness.status !== 'fresh' ||
@@ -886,7 +889,7 @@ const isReadinessBlocked = (readiness: LiveSubmitReadinessSnapshot | null): bool
   ));
 
 const firstReadinessBlocker = (readiness: LiveSubmitReadinessSnapshot | null): { venue: string; blocker: string } | null => {
-  const venue = readiness?.venues.find((item) => item.status === 'blocked' && item.blockers.length > 0);
+  const venue = readiness?.venues.find((item) => isReadinessVenueBlocked(item));
   if (venue) return { venue: venue.venue, blocker: venue.blockers[0] ?? 'Live submit readiness is blocked.' };
   const stale = readiness?.venues.find((item) => item.status !== 'fresh');
   if (stale) return { venue: stale.venue, blocker: stale.blockers[0] ?? 'Live submit readiness is stale. Refresh balances and preview the route again.' };
@@ -894,6 +897,14 @@ const firstReadinessBlocker = (readiness: LiveSubmitReadinessSnapshot | null): {
   return blocker ? { venue: 'Venue', blocker } : readiness && readiness.status !== 'fresh'
     ? { venue: 'Venue', blocker: 'Live submit readiness is stale. Refresh balances and preview the route again.' }
     : null;
+};
+
+const executionFailureMessage = (submitted: ExecutionStatus): string => {
+  const failedLeg = submitted.submittedLegs?.find((leg) => leg.reasonCode || leg.reason);
+  if (failedLeg?.reasonCode === 'POLYMARKET_CLOB_SYNC_REJECTED_BY_VENUE') {
+    return 'Polymarket rejected this order after CLOB readiness was confirmed. Refresh Polymarket CLOB sync or retry after propagation completes.';
+  }
+  return failedLeg?.reason ? `Execution failed: ${failedLeg.reason}` : 'Execution failed after backend submit.';
 };
 
 const describeOutcomeSchema = (schema: Record<string, unknown> | null | undefined): string => {
@@ -2011,9 +2022,9 @@ export const InfraTradingTerminal = ({
       try {
         const readiness = await getLiveReadiness(token, response.quote.quoteId);
         setTicketLiveReadiness(readiness);
-        const readinessBlocker = readiness.venues.find((venue) => venue.status === 'blocked' && venue.blockers.length > 0);
+        const readinessBlocker = firstReadinessBlocker(readiness);
         if (readinessBlocker) {
-          const blockerCopy = readinessBlocker.blockers[0] ?? 'Live submit readiness is blocked.';
+          const blockerCopy = readinessBlocker.blocker;
           const venueLabel = formatVenueLabel(readinessBlocker.venue);
           setTicketError(`${venueLabel}: ${blockerCopy}`);
           setTicketStatusMessage(/ALLOWANCE|APPROVE/i.test(blockerCopy)
@@ -2041,9 +2052,9 @@ export const InfraTradingTerminal = ({
       setTicketExecutionId(null);
       return;
     }
-    if (ticketLiveReadiness?.venues.some((venue) => venue.status === 'blocked' && venue.blockers.length > 0)) {
-      const blocked = ticketLiveReadiness.venues.find((venue) => venue.status === 'blocked' && venue.blockers.length > 0);
-      setTicketError(`${formatVenueLabel(blocked?.venue ?? 'Venue')}: ${blocked?.blockers[0] ?? 'Live submit readiness is blocked.'}`);
+    if (isReadinessBlocked(ticketLiveReadiness)) {
+      const blocked = firstReadinessBlocker(ticketLiveReadiness);
+      setTicketError(`${formatVenueLabel(blocked?.venue ?? 'Venue')}: ${blocked?.blocker ?? 'Live submit readiness is blocked.'}`);
       setTicketStatusMessage('This route must clear live readiness before wallet signing.');
       return;
     }
@@ -2122,9 +2133,8 @@ export const InfraTradingTerminal = ({
         .catch(() => undefined);
       const submittedStatus = (submitted.status ?? submitted.userStatus ?? 'SUBMITTED').toUpperCase();
       if (submittedStatus === 'FAILED') {
-        const reason = submitted.submittedLegs?.find((leg) => leg.reason)?.reason;
         setTicketStatusMessage('Market order failed at venue submit.');
-        setTicketError(reason ? `Execution failed: ${reason}` : 'Execution failed after backend submit.');
+        setTicketError(executionFailureMessage(submitted));
         setBottomTab('Trade History');
         return;
       }
@@ -2198,9 +2208,8 @@ export const InfraTradingTerminal = ({
         .catch(() => undefined);
       const submittedStatus = (submitted.status ?? submitted.userStatus ?? 'SUBMITTED').toUpperCase();
       if (submittedStatus === 'FAILED') {
-        const reason = submitted.submittedLegs?.find((leg) => leg.reason)?.reason;
         setTicketStatusMessage('Market order failed at venue submit.');
-        setTicketError(reason ? `Execution failed: ${reason}` : 'Execution failed after backend submit.');
+        setTicketError(executionFailureMessage(submitted));
         setBottomTab('Trade History');
         return;
       }
@@ -2234,9 +2243,9 @@ export const InfraTradingTerminal = ({
       setTicketExecutionId(null);
       return;
     }
-    if (ticketLiveReadiness?.venues.some((venue) => venue.status === 'blocked' && venue.blockers.length > 0)) {
-      const blocked = ticketLiveReadiness.venues.find((venue) => venue.status === 'blocked' && venue.blockers.length > 0);
-      setTicketError(`${formatVenueLabel(blocked?.venue ?? 'Venue')}: ${blocked?.blockers[0] ?? 'Live submit readiness is blocked.'}`);
+    if (isReadinessBlocked(ticketLiveReadiness)) {
+      const blocked = firstReadinessBlocker(ticketLiveReadiness);
+      setTicketError(`${formatVenueLabel(blocked?.venue ?? 'Venue')}: ${blocked?.blocker ?? 'Live submit readiness is blocked.'}`);
       setTicketStatusMessage('This route must clear live readiness before wallet signing.');
       return;
     }
@@ -2455,7 +2464,7 @@ export const InfraTradingTerminal = ({
 
   const approveRouteCollateral = useCallback(async () => {
     const readinessVenue = ticketLiveReadiness?.venues.find((venue) =>
-      venue.status === 'blocked' &&
+      isReadinessVenueBlocked(venue) &&
       venue.blockers.some((blocker) => /ALLOWANCE|APPROVE/i.test(blocker)) &&
       Boolean(venue.collateral.tokenAddress && venue.collateral.spenderAddress && venue.collateral.chainId && venue.account.ownerAddress)
     ) ?? null;
@@ -2829,7 +2838,7 @@ export const InfraTradingTerminal = ({
   const ticketSellApprovalRequired = side === 'sell' && Boolean(token) && ticketRouteUsesPolymarket && Boolean(ticketPolymarketTokenId) &&
     /ALLOWANCE|SPENDER|BALANCE|APPROVAL/i.test(ticketError ?? '');
   const ticketRouteApprovalVenue = ticketLiveReadiness?.venues.find((venue) =>
-    venue.status === 'blocked' &&
+    isReadinessVenueBlocked(venue) &&
     venue.blockers.some((blocker) => /ALLOWANCE|APPROVE|APPROVAL/i.test(blocker)) &&
     Boolean(venue.collateral.tokenAddress && venue.collateral.spenderAddress && venue.collateral.chainId && venue.account.ownerAddress)
   ) ?? null;
@@ -2842,7 +2851,7 @@ export const InfraTradingTerminal = ({
   const ticketLiveReadinessBlocked = isReadinessBlocked(ticketLiveReadiness);
   const ticketLimitlessBalanceBlocked = Boolean(ticketLiveReadiness?.venues.some((venue) =>
     venue.venue.toUpperCase() === 'LIMITLESS' &&
-    venue.status === 'blocked' &&
+    isReadinessVenueBlocked(venue) &&
     venue.blockers.some((blocker) => /BALANCE|TOTAL BID/i.test(blocker))
   ));
   const ticketLimitlessSetupRequired = Boolean(token) && /LIMITLESS/i.test(ticketError ?? '') &&

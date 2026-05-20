@@ -95,6 +95,7 @@ export type ExecutionStatus = {
     venue: string;
     status: string;
     venueOrderId?: string;
+    reasonCode?: string;
     reason?: string;
     fillState?: unknown;
   }>;
