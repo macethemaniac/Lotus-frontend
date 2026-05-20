@@ -24,6 +24,42 @@ const venueBalanceKey = (balance: VenueBalance) =>
 const hasVenueBalanceAmount = (balance: VenueBalance) =>
   balance.readyAmount !== undefined || balance.availableAmount !== undefined;
 
+const parsePositiveVenueAmount = (balance: VenueBalance) => {
+  const parsed = Number(balance.readyAmount ?? balance.availableAmount ?? 0);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+};
+
+const isPolymarketStablecoinBalance = (balance: VenueBalance) => {
+  const venue = String(balance.venue).toUpperCase();
+  const token = String(balance.token ?? balance.asset ?? "USDC").toUpperCase();
+  return venue === "POLYMARKET" && (token === "USDC" || token === "PUSD" || token === "USD");
+};
+
+const confirmsPolymarketTradeReadiness = (balance: VenueBalance) => {
+  if (!isPolymarketStablecoinBalance(balance) || parsePositiveVenueAmount(balance) <= 0) {
+    return false;
+  }
+  const readinessReason = String(balance.readinessReason ?? "").toUpperCase();
+  const balanceSource = String(balance.balanceSource ?? "").toUpperCase();
+  const usableSource = String(balance.usableBalanceSource ?? "").toUpperCase();
+  return readinessReason === "POLYMARKET_CLOB_COLLATERAL_CONFIRMED" ||
+    balanceSource === "POLYMARKET_CLOB_SYNC_CONFIRMED" ||
+    usableSource === "USER_CLOB_SYNC_CONFIRMED" ||
+    usableSource === "CLOB_COLLATERAL_ALLOWANCE";
+};
+
+const isTransientPolymarketZeroRefresh = (previous: VenueBalance | undefined, next: VenueBalance) => {
+  if (!previous || !confirmsPolymarketTradeReadiness(previous) || !isPolymarketStablecoinBalance(next)) {
+    return false;
+  }
+  if (confirmsPolymarketTradeReadiness(next) || parsePositiveVenueAmount(next) > 0) {
+    return false;
+  }
+  const readinessReason = String(next.readinessReason ?? "").toUpperCase();
+  const freshness = String(next.balanceFreshness ?? "").toUpperCase();
+  return readinessReason === "POLYMARKET_CLOB_SYNC_PENDING" || freshness === "STALE" || freshness === "UNAVAILABLE";
+};
+
 export function mergeVenueBalanceSnapshots(previous: VenueBalance[], next: VenueBalance[]): VenueBalance[] {
   if (next.length === 0) {
     return previous;
@@ -35,6 +71,9 @@ export function mergeVenueBalanceSnapshots(previous: VenueBalance[], next: Venue
     const key = venueBalanceKey(balance);
     seen.add(key);
     const previousBalance = previousByKey.get(key);
+    if (isTransientPolymarketZeroRefresh(previousBalance, balance)) {
+      return previousBalance ?? balance;
+    }
     if (!previousBalance || hasVenueBalanceAmount(balance)) {
       return balance;
     }
