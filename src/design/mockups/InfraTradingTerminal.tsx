@@ -915,6 +915,15 @@ const firstReadinessBlocker = (readiness: LiveSubmitReadinessSnapshot | null): {
     : null;
 };
 
+const isPolymarketClobPropagationReadiness = (readiness: LiveSubmitReadinessSnapshot | null): boolean => {
+  const venue = readiness?.venues.find((item) => toBackendVenueId(item.venue) === 'POLYMARKET');
+  if (!venue) return false;
+  const blockerText = venue.blockers.join(' ').toUpperCase();
+  const source = String(venue.collateral.usableBalanceSource ?? '').toUpperCase();
+  return source === 'USER_CLOB_SYNC_CONFIRMED' ||
+    /SYNC WAS CONFIRMED LOCALLY|LIVE CLOB SPENDABLE|SYNC PROPAGAT|PROPAGATION/.test(blockerText);
+};
+
 const executionFailureMessage = (submitted: ExecutionStatus): string => {
   const failedLeg = submitted.submittedLegs?.find((leg) => leg.reasonCode || leg.reason);
   if (failedLeg?.reasonCode === 'POLYMARKET_CLOB_SYNC_REJECTED_BY_VENUE') {
@@ -2573,6 +2582,50 @@ export const InfraTradingTerminal = ({
     turnkeyWallets,
   ]);
 
+  const refreshPolymarketClobReadiness = useCallback(async (options: { poll?: boolean } = {}) => {
+    if (!token) {
+      setTicketError('Log in before refreshing Polymarket CLOB readiness.');
+      return;
+    }
+    const readinessId = ticketQuote?.quoteId ?? ticketExecutionId;
+    if (!readinessId) {
+      await previewMarketOrder();
+      return;
+    }
+    const attempts = options.poll ? 6 : 1;
+    setTicketLoading(true);
+    setTicketError(null);
+    try {
+      for (let attempt = 0; attempt < attempts; attempt += 1) {
+        setTicketStatusMessage(attempt === 0
+          ? 'Checking Polymarket CLOB propagation.'
+          : 'Still waiting for Polymarket live collateral propagation.');
+        const readiness = await getLiveReadiness(token, readinessId);
+        setTicketLiveReadiness(readiness);
+        const blocked = firstReadinessBlocker(readiness);
+        if (!blocked) {
+          setTicketError(null);
+          setTicketStatusMessage('Polymarket live collateral is ready. Continue with submit.');
+          return;
+        }
+        setTicketError(`${formatVenueLabel(blocked.venue)}: ${blocked.blocker}`);
+        if (!isPolymarketClobPropagationReadiness(readiness)) {
+          setTicketStatusMessage('Live submit is still blocked by venue readiness.');
+          return;
+        }
+        if (attempt < attempts - 1) {
+          await sleep(4_000);
+        }
+      }
+      setTicketStatusMessage('Polymarket CLOB sync is confirmed locally. Retry readiness after Polymarket propagation completes.');
+    } catch (error) {
+      setTicketError(error instanceof Error ? error.message : 'Polymarket CLOB readiness refresh failed.');
+      setTicketStatusMessage(null);
+    } finally {
+      setTicketLoading(false);
+    }
+  }, [previewMarketOrder, ticketExecutionId, ticketQuote?.quoteId, token]);
+
   const syncPolymarketClobReadiness = useCallback(async () => {
     if (!token) {
       setTicketError('Log in before syncing Polymarket CLOB readiness.');
@@ -2622,23 +2675,28 @@ export const InfraTradingTerminal = ({
       setFundingBalances((current) => mergeVenueBalanceSnapshots(current, accountSnapshot.balances ?? []));
       setFundingActivations(accountSnapshot.activations ?? []);
 
-      if (ticketExecutionId) {
+      const readinessId = ticketQuote?.quoteId ?? ticketExecutionId;
+      if (readinessId) {
         try {
-          setTicketLiveReadiness(await getLiveReadiness(token, ticketExecutionId));
+          setTicketLiveReadiness(await getLiveReadiness(token, readinessId));
         } catch {
           setTicketLiveReadiness(null);
         }
       }
 
-      setTicketQuote(null);
-      setTicketQuoteAmount(null);
       setTicketExecutionId(null);
       setTicketSignatureBundle(null);
       setTicketLiveCandidates(null);
-      setTicketLiveReadiness(null);
       if (submitted.sync.status === 'READY') {
-        setTicketStatusMessage('Polymarket CLOB sync confirmed. Refreshing the live route.');
-        await previewMarketOrder();
+        setTicketStatusMessage('Polymarket CLOB sync confirmed. Checking live collateral propagation.');
+        if (readinessId) {
+          await refreshPolymarketClobReadiness({ poll: true });
+        } else {
+          setTicketQuote(null);
+          setTicketQuoteAmount(null);
+          setTicketLiveReadiness(null);
+          await previewMarketOrder();
+        }
       } else {
         setTicketStatusMessage('Polymarket CLOB sync submitted. Retry preview after propagation completes.');
       }
@@ -2651,9 +2709,11 @@ export const InfraTradingTerminal = ({
     handleLogin,
     previewMarketOrder,
     refreshWallets,
+    refreshPolymarketClobReadiness,
     session?.turnkeyOrganizationId,
     signMessage,
     ticketExecutionId,
+    ticketQuote?.quoteId,
     token,
     turnkeySession?.organizationId,
     turnkeyWallets,
@@ -4227,7 +4287,7 @@ export const InfraTradingTerminal = ({
                       {!ticketPolymarketClobSyncRequired && ticketPolymarketClobPropagationPending && (
                         <button
                           type="button"
-                          onClick={() => void previewMarketOrder()}
+                          onClick={() => void refreshPolymarketClobReadiness()}
                           disabled={ticketLoading}
                           className="flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-zinc-700 bg-zinc-900 px-3 text-[11px] font-bold uppercase tracking-wide text-zinc-200 transition-colors hover:border-zinc-600 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
                         >
@@ -4332,7 +4392,7 @@ export const InfraTradingTerminal = ({
                       } else if (ticketPolymarketClobSyncRequired) {
                         void syncPolymarketClobReadiness();
                       } else if (ticketPolymarketClobPropagationPending) {
-                        void previewMarketOrder();
+                        void refreshPolymarketClobReadiness();
                       } else if (ticketLimitlessBalanceBlocked) {
                         setTicketStatusMessage('Lower the order amount or add Base USDC to your Limitless wallet, then preview the route again.');
                       } else if (ticketLimitlessSetupRequired) {
