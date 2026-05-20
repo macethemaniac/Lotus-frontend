@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import {
   AlertTriangle, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, History, Lock, ShieldAlert, ShieldCheck, Info,
   Clock, BarChart2, Layers, Share2, Bookmark, Search, Maximize2, Activity, Zap, Ghost,
-  Home, Terminal, PieChart, Volleyball, Settings
+  Home, Terminal, PieChart, Volleyball, Settings, RefreshCw
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceDot } from 'recharts';
 import { useTurnkey, type Wallet as TurnkeyWallet, type WalletAccount } from '@turnkey/react-wallet-kit';
@@ -16,7 +16,11 @@ import {
   getAccountSnapshot,
   mergeVenueBalanceSnapshots,
   preparePolymarketActivation,
+  preparePolymarketClobSync,
   submitPolymarketActivation,
+  submitPolymarketClobSync,
+  type PolymarketClobSyncPreparation,
+  type PolymarketClobSyncSubmission,
   type VenueActivation,
   type VenueBalance,
 } from '@/features/funding/api/funding-api';
@@ -198,6 +202,18 @@ const eip712PayloadForTurnkey = (typedData: unknown) => {
 
 const recordValue = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' ? value as Record<string, unknown> : {};
+
+const clobSyncSignedPayload = (
+  sync: PolymarketClobSyncPreparation,
+  signature: string
+): PolymarketClobSyncSubmission['signedPayload'] => ({
+  ...recordValue(sync.signedPayloadHint),
+  purpose: 'POLYMARKET_CLOB_AUTH',
+  signer: sync.signer,
+  account: sync.account,
+  signature,
+  typedData: sync.typedData,
+}) as PolymarketClobSyncSubmission['signedPayload'];
 
 const sleep = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
 
@@ -2557,6 +2573,91 @@ export const InfraTradingTerminal = ({
     turnkeyWallets,
   ]);
 
+  const syncPolymarketClobReadiness = useCallback(async () => {
+    if (!token) {
+      setTicketError('Log in before syncing Polymarket CLOB readiness.');
+      return;
+    }
+    setTicketLoading(true);
+    setTicketError(null);
+    setTicketStatusMessage('Preparing Polymarket CLOB sync signature.');
+    try {
+      const prepared = await preparePolymarketClobSync(token);
+      const sync = prepared.sync;
+      let activeWallets = turnkeyWallets;
+      if (activeWallets.length === 0) {
+        try {
+          activeWallets = await refreshWallets();
+        } catch (walletError) {
+          if (!isTurnkeyMissingSessionError(walletError)) {
+            throw walletError;
+          }
+          setTicketStatusMessage('Reconnect your Turnkey wallet session to sync Polymarket CLOB readiness.');
+          await handleLogin();
+          activeWallets = await refreshWallets();
+        }
+      }
+
+      const signerAccount = findTurnkeyWalletAccount(activeWallets, sync.signer);
+      if (!signerAccount) {
+        throw new Error(`Polymarket CLOB sync needs your Turnkey EVM wallet ${sync.signer.slice(0, 6)}...${sync.signer.slice(-4)}, but it is not loaded in this session.`);
+      }
+
+      const organizationId = turnkeySession?.organizationId ?? session?.turnkeyOrganizationId;
+      setTicketStatusMessage('Sign the Polymarket CLOB sync challenge with Turnkey.');
+      const signatureResult = await signMessage({
+        message: eip712PayloadForTurnkey(sync.typedData),
+        walletAccount: signerAccount,
+        encoding: 'PAYLOAD_ENCODING_EIP712',
+        hashFunction: 'HASH_FUNCTION_NO_OP',
+        addEthereumPrefix: false,
+        ...(organizationId ? { organizationId } : {}),
+      });
+
+      setTicketStatusMessage('Submitting Polymarket CLOB sync to Lotus.');
+      const submitted = await submitPolymarketClobSync(token, {
+        signedPayload: clobSyncSignedPayload(sync, signatureFromTurnkeyResult(signatureResult)),
+      });
+      const accountSnapshot = await getAccountSnapshot(token, { force: true });
+      setFundingBalances((current) => mergeVenueBalanceSnapshots(current, accountSnapshot.balances ?? []));
+      setFundingActivations(accountSnapshot.activations ?? []);
+
+      if (ticketExecutionId) {
+        try {
+          setTicketLiveReadiness(await getLiveReadiness(token, ticketExecutionId));
+        } catch {
+          setTicketLiveReadiness(null);
+        }
+      }
+
+      setTicketQuote(null);
+      setTicketQuoteAmount(null);
+      setTicketExecutionId(null);
+      setTicketSignatureBundle(null);
+      setTicketLiveCandidates(null);
+      if (submitted.sync.status === 'READY') {
+        setTicketStatusMessage('Polymarket CLOB sync confirmed. Refreshing the live route.');
+        await previewMarketOrder();
+      } else {
+        setTicketStatusMessage('Polymarket CLOB sync submitted. Retry preview after propagation completes.');
+      }
+    } catch (error) {
+      setTicketError(error instanceof Error ? error.message : 'Polymarket CLOB sync failed.');
+    } finally {
+      setTicketLoading(false);
+    }
+  }, [
+    handleLogin,
+    previewMarketOrder,
+    refreshWallets,
+    session?.turnkeyOrganizationId,
+    signMessage,
+    ticketExecutionId,
+    token,
+    turnkeySession?.organizationId,
+    turnkeyWallets,
+  ]);
+
   const activatePolymarketFunds = useCallback(async () => {
     if (!token) {
       setTicketError('Log in before activating Polymarket funds.');
@@ -2858,6 +2959,20 @@ export const InfraTradingTerminal = ({
     /ACTIVE LINKED VENUE ACCOUNT|LINKED VENUE ACCOUNT|PROFILE|PROFILE_SETUP|PARTNER ACCOUNT|OWNERSHIP/i.test(ticketError ?? '');
   const ticketPredictFunAuthRequired = Boolean(token) && /PREDICT/i.test(ticketError ?? '') &&
     /AUTH JWT|USER AUTH|VENUE SETUP SIGNATURE|AUTH MESSAGE|JWT/i.test(ticketError ?? '');
+  const ticketPolymarketReadinessVenue = ticketLiveReadiness?.venues.find((venue) =>
+    toBackendVenueId(venue.venue) === 'POLYMARKET'
+  ) ?? null;
+  const ticketPolymarketClobSource = String(ticketPolymarketReadinessVenue?.collateral.usableBalanceSource ?? '').toUpperCase();
+  const ticketPolymarketSyncSignal = [
+    ticketPolymarketReadinessVenue?.blockers.join(' ') ?? '',
+    ticketError ?? '',
+    ticketStatusMessage ?? '',
+  ].join(' ').toUpperCase();
+  const ticketPolymarketClobSyncRequired = Boolean(token && (ticketRouteUsesPolymarket || backendVenueList.includes('POLYMARKET')) && (
+    polymarketClobSyncPending ||
+    ticketPolymarketClobSource === 'USER_CLOB_SYNC_CONFIRMED' ||
+    /CLOB SYNC|SYNC PROPAGATION|PROPAGATION|SYNC_REJECTED|CLOB SPENDABLE|USER_CLOB_SYNC_CONFIRMED/.test(ticketPolymarketSyncSignal)
+  ));
   const ticketActivationRequired = Boolean(token) && (
     (side === 'buy' && polymarketActivationRequired && (ticketRouteUsesPolymarket || ticketHasFundingBlocker || venueReadyBalance <= 0)) ||
     ticketSellApprovalRequired
@@ -2888,8 +3003,8 @@ export const InfraTradingTerminal = ({
     ticketQuote.legs.some((leg) => leg.requiresUserSignature === true)
   ));
   const ticketEstimatedPayout = side === 'buy' ? ticketEstimatedShares : ticketReceiveEstimate;
-  const ticketNeedsFundingAction = ticketActivationRequired || ticketDepositRequired || ticketLimitlessSetupRequired || ticketPredictFunAuthRequired || ticketRouteApprovalRequired || ticketLimitlessBalanceBlocked;
-  const ticketActionDisabled = !token || !terminalMarketId || !selectedTicketOutcomeId || ticketLoading || ticketActivationPolling || polymarketClobSyncPending ||
+  const ticketNeedsFundingAction = ticketActivationRequired || ticketDepositRequired || ticketLimitlessSetupRequired || ticketPredictFunAuthRequired || ticketRouteApprovalRequired || ticketPolymarketClobSyncRequired || ticketLimitlessBalanceBlocked;
+  const ticketActionDisabled = !token || !terminalMarketId || !selectedTicketOutcomeId || ticketLoading || ticketActivationPolling ||
     Boolean(ticketExecutionId && ticketQuote && !ticketRequiresSignature && !ticketNeedsFundingAction) ||
     Boolean(side === 'buy' && !ticketQuote && fundingLoading);
   const ticketActionLabel = ticketActivationPolling
@@ -2906,12 +3021,12 @@ export const InfraTradingTerminal = ({
           : 'Checking live route...'
     : side === 'buy' && !ticketQuote && fundingLoading
       ? 'Checking balance...'
-    : polymarketClobSyncPending
-      ? 'Waiting for CLOB sync'
     : ticketActivationRequired
       ? side === 'sell' ? 'Approve Polymarket shares' : 'Activate Polymarket funds'
     : ticketRouteApprovalRequired
       ? `Approve ${ticketRouteApprovalVenueLabel} ${ticketRouteApprovalTokenLabel}`
+    : ticketPolymarketClobSyncRequired || polymarketClobSyncPending
+      ? 'Sync Polymarket CLOB'
     : ticketLimitlessBalanceBlocked
       ? 'Reduce amount or fund Limitless'
     : ticketLimitlessSetupRequired
@@ -4089,6 +4204,17 @@ export const InfraTradingTerminal = ({
                           {ticketStatusMessage}{ticketExecutionId ? ` ${ticketExecutionId}` : ''}
                         </div>
                       )}
+                      {ticketPolymarketClobSyncRequired && (
+                        <button
+                          type="button"
+                          onClick={() => void syncPolymarketClobReadiness()}
+                          disabled={ticketLoading}
+                          className="flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-[#ccff00]/30 bg-[#ccff00]/10 px-3 text-[11px] font-bold uppercase tracking-wide text-[#ccff00] transition-colors hover:bg-[#ccff00]/15 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
+                        >
+                          <RefreshCw className={`h-3.5 w-3.5 ${ticketLoading ? 'animate-spin' : ''}`} />
+                          Sync CLOB
+                        </button>
+                      )}
                       {ticketBlockedRoutes.slice(0, 3).map((blocked) => (
                         <div key={`${blocked.venue}-${blocked.venueMarketId ?? blocked.reason}`} className="rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2 text-[10px] font-semibold text-zinc-400">
                           {formatVenueLabel(blocked.venue)} unavailable: {readableQuoteBlocker(blocked.reason) ?? blocked.reason}
@@ -4183,6 +4309,8 @@ export const InfraTradingTerminal = ({
                         void activatePolymarketFunds();
                       } else if (ticketRouteApprovalRequired) {
                         void approveRouteCollateral();
+                      } else if (ticketPolymarketClobSyncRequired || polymarketClobSyncPending) {
+                        void syncPolymarketClobReadiness();
                       } else if (ticketLimitlessBalanceBlocked) {
                         setTicketStatusMessage('Lower the order amount or add Base USDC to your Limitless wallet, then preview the route again.');
                       } else if (ticketLimitlessSetupRequired) {
