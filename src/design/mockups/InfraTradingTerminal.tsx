@@ -1562,6 +1562,7 @@ export const InfraTradingTerminal = ({
   const [ticketQuoteAmount, setTicketQuoteAmount] = useState<string | null>(null);
   const [ticketExecutionId, setTicketExecutionId] = useState<string | null>(null);
   const [ticketSignatureBundle, setTicketSignatureBundle] = useState<SignatureBundle | null>(null);
+  const [ticketPolymarketClobSyncConfirmed, setTicketPolymarketClobSyncConfirmed] = useState(false);
   const [ticketStatusMessage, setTicketStatusMessage] = useState<string | null>(null);
   const [ticketLoading, setTicketLoading] = useState(false);
   const [ticketActivationPolling, setTicketActivationPolling] = useState(false);
@@ -1685,6 +1686,11 @@ export const InfraTradingTerminal = ({
   const terminalCanonicalEventId = selectedMarket?.canonicalEventId ?? selectedMarket?.eventId ?? null;
   const selectedVenueMarkets = selectedMarket?.venueMarkets ?? EMPTY_VENUE_MARKETS;
   const token = session?.userJwt ?? null;
+
+  React.useEffect(() => {
+    setTicketPolymarketClobSyncConfirmed(false);
+  }, [token]);
+
   const marketVenueList = useMemo(() => {
     const venues = terminalMarket.venues?.length
       ? terminalMarket.venues
@@ -1707,9 +1713,10 @@ export const InfraTradingTerminal = ({
     if (!backendVenueList.includes('POLYMARKET')) return false;
     return fundingBalances.some(polymarketBalanceConfirmsTradeReadiness);
   }, [backendVenueList, fundingBalances]);
+  const polymarketClobConfirmed = polymarketBalanceReady || ticketPolymarketClobSyncConfirmed;
   const polymarketActivationRequired = useMemo(() => {
     if (!backendVenueList.includes('POLYMARKET')) return false;
-    if (polymarketBalanceReady) return false;
+    if (polymarketClobConfirmed) return false;
     const activation = fundingActivations.find((item) => toBackendVenueId(item.venue) === 'POLYMARKET');
     if (!activation) return false;
     const reason = String(activation.readinessReason ?? '').toUpperCase();
@@ -1718,13 +1725,13 @@ export const InfraTradingTerminal = ({
       (reason === 'POLYMARKET_USDCE_ACTIVATION_REQUIRED' ||
         reason === 'POLYMARKET_CLOB_APPROVAL_REQUIRED' ||
         bridgedUsdc > 0);
-  }, [backendVenueList, fundingActivations, polymarketBalanceReady]);
+  }, [backendVenueList, fundingActivations, polymarketClobConfirmed]);
   const polymarketClobSyncPending = useMemo(() => {
     if (!backendVenueList.includes('POLYMARKET')) return false;
-    if (polymarketBalanceReady) return false;
+    if (polymarketClobConfirmed) return false;
     const activation = fundingActivations.find((item) => toBackendVenueId(item.venue) === 'POLYMARKET');
     return String(activation?.readinessReason ?? '').toUpperCase() === 'POLYMARKET_CLOB_SYNC_PENDING';
-  }, [backendVenueList, fundingActivations, polymarketBalanceReady]);
+  }, [backendVenueList, fundingActivations, polymarketClobConfirmed]);
   const visibleOutcomeRows = showAllOutcomes ? terminalOutcomes : terminalOutcomes.slice(0, 5);
   const selectedOutcome = terminalOutcomes.find((outcome) => outcome.id === selectedOutcomeId) ?? terminalOutcomes[0] ?? null;
   const selectedOutcomeMarketId = selectedOutcome?.marketId ?? terminalMarketId;
@@ -2688,6 +2695,7 @@ export const InfraTradingTerminal = ({
       setTicketSignatureBundle(null);
       setTicketLiveCandidates(null);
       if (submitted.sync.status === 'READY') {
+        setTicketPolymarketClobSyncConfirmed(true);
         setTicketStatusMessage('Polymarket CLOB sync confirmed. Checking live collateral propagation.');
         if (readinessId) {
           await refreshPolymarketClobReadiness({ poll: true });
@@ -3032,12 +3040,13 @@ export const InfraTradingTerminal = ({
     ticketPolymarketErrorText,
   ].join(' ').toUpperCase();
   const ticketPolymarketClobPropagationPending = Boolean(token && (ticketRouteUsesPolymarket || backendVenueList.includes('POLYMARKET')) && (
+    polymarketClobConfirmed && /POLYMARKET CLOB SYNC|CLOB SYNC|CLOB SPENDABLE|SYNC PROPAGAT|PROPAGATION/.test(ticketPolymarketSyncSignal) ||
     ticketPolymarketClobSource === 'USER_CLOB_SYNC_CONFIRMED' ||
     /SYNC WAS CONFIRMED LOCALLY|LIVE CLOB SPENDABLE|SYNC PROPAGAT|PROPAGATION/.test(ticketPolymarketReadinessBlockerText) ||
     /SYNC WAS CONFIRMED LOCALLY|LIVE CLOB SPENDABLE|SYNC PROPAGAT|PROPAGATION/.test(ticketPolymarketErrorText) ||
     /CLOB SYNC SUBMITTED|CLOB SYNC CONFIRMED/.test(ticketPolymarketStatusText)
   ));
-  const ticketPolymarketClobSyncRequired = Boolean(token && (ticketRouteUsesPolymarket || backendVenueList.includes('POLYMARKET')) && !ticketPolymarketClobPropagationPending && (
+  const ticketPolymarketClobSyncRequired = Boolean(token && (ticketRouteUsesPolymarket || backendVenueList.includes('POLYMARKET')) && !polymarketClobConfirmed && !ticketPolymarketClobPropagationPending && (
     polymarketClobSyncPending ||
     /POLYMARKET_CLOB_SYNC_PENDING|CLOB SYNC PENDING|SYNC_REJECTED_BY_VENUE|REFRESH CLOB SYNC/.test(ticketPolymarketSyncSignal)
   ));
