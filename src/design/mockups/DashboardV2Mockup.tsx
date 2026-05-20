@@ -6,9 +6,6 @@ import { PortfolioMockupV2 } from '@/design/mockups/PortfolioMockupV2';
 import type { AuthSession } from '@/features/auth/types';
 import {
   getMarketBatchQuotes,
-  getMarketChart,
-  getMarketOrderbook,
-  getMarketOutcomes,
   listMarkets,
   type MarketBatchQuoteItem,
   type MarketCatalogMarket,
@@ -1304,30 +1301,6 @@ export const DashboardV2Mockup = ({
       window.clearInterval(interval);
     };
   }, [activePage, homeMarketLimit, isMarketSurface, marketRows]);
-
-  const terminalPrefetchKey = useMemo(
-    () => displayedMarkets
-      .slice(0, 12)
-      .map((market) => `${market.marketId}:${market.outcomes[0]?.quoteOutcomeId ?? 'YES'}`)
-      .join('|'),
-    [displayedMarkets]
-  );
-
-  useEffect(() => {
-    if (!isMarketSurface || displayedMarkets.length === 0) return;
-    const marketsToWarm = displayedMarkets.slice(0, 12);
-    const timer = window.setTimeout(() => {
-      for (const market of marketsToWarm) {
-        const quoteOutcomeId = market.outcomes.find((outcome) => outcome.quoteOutcomeId === 'YES')?.quoteOutcomeId
-          ?? market.outcomes[0]?.quoteOutcomeId
-          ?? 'YES';
-        void getMarketOutcomes(market.marketId).catch(() => undefined);
-        void getMarketOrderbook(market.marketId, { outcomeId: quoteOutcomeId, depth: 20 }).catch(() => undefined);
-        void getMarketChart(market.marketId, { outcomeId: quoteOutcomeId, timeframe: '1H' }).catch(() => undefined);
-      }
-    }, 350);
-    return () => window.clearTimeout(timer);
-  }, [isMarketSurface, terminalPrefetchKey]);
 
   useEffect(() => {
     if (!session?.userJwt) return;

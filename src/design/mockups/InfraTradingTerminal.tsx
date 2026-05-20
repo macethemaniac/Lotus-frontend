@@ -870,6 +870,22 @@ const safeMarketDataError = (error: unknown, surface: 'chart' | 'orderbook'): st
   return fallback;
 };
 
+const apiErrorCode = (error: unknown): string | null =>
+  error instanceof ApiClientError && typeof error.code === 'string' ? error.code : null;
+
+const isApiNotFound = (error: unknown, code: string): boolean =>
+  error instanceof ApiClientError && error.status === 404 && apiErrorCode(error) === code;
+
+const isReadinessBlocked = (readiness: LiveSubmitReadinessSnapshot | null): boolean =>
+  readiness?.status === 'blocked' || Boolean(readiness?.venues.some((venue) => venue.status === 'blocked' && venue.blockers.length > 0));
+
+const firstReadinessBlocker = (readiness: LiveSubmitReadinessSnapshot | null): { venue: string; blocker: string } | null => {
+  const venue = readiness?.venues.find((item) => item.status === 'blocked' && item.blockers.length > 0);
+  if (venue) return { venue: venue.venue, blocker: venue.blockers[0] ?? 'Live submit readiness is blocked.' };
+  const blocker = readiness?.blockers[0];
+  return blocker ? { venue: 'Venue', blocker } : null;
+};
+
 const describeOutcomeSchema = (schema: Record<string, unknown> | null | undefined): string => {
   if (!schema) return 'Outcome schema not specified';
   const yes = typeof schema.yesLabel === 'string' ? schema.yesLabel : 'Yes';
@@ -1260,7 +1276,9 @@ const LiveCanonicalChart = ({
   const [outcomeCharts, setOutcomeCharts] = useState<Array<{ chart: MarketChartResponse; key: string; label: string; color: string }>>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notFoundKey, setNotFoundKey] = useState<string | null>(null);
   const tabs: MarketChartTimeframe[] = ['1H', '6H', '1D', '1W', '1M', 'ALL'];
+  const requestKey = `${marketId ?? 'none'}:${outcomeId ?? 'none'}`;
   const binaryOutcomeInputs = useMemo(() => {
     if (marketType !== 'binary') return [];
     const source = outcomes.length > 0
@@ -1294,6 +1312,7 @@ const LiveCanonicalChart = ({
         setError(null);
         return;
       }
+      if (notFoundKey === requestKey) return;
       setLoading(true);
       setError(null);
       try {
@@ -1308,8 +1327,14 @@ const LiveCanonicalChart = ({
           if (!cancelled) {
             setVenueChart(null);
             setOutcomeCharts(fulfilled);
+            if (fulfilled.length > 0) {
+              setNotFoundKey(null);
+            }
             if (fulfilled.length === 0) {
               const rejected = results.find((result) => result.status === 'rejected');
+              if (rejected?.reason && isApiNotFound(rejected.reason, 'MARKET_NOT_FOUND')) {
+                setNotFoundKey(requestKey);
+              }
               setError(safeMarketDataError(rejected?.reason, 'chart'));
             }
           }
@@ -1320,11 +1345,15 @@ const LiveCanonicalChart = ({
         if (!cancelled) {
           setOutcomeCharts([]);
           setVenueChart(response);
+          setNotFoundKey(null);
         }
       } catch (err) {
         if (!cancelled) {
           setVenueChart(null);
           setOutcomeCharts([]);
+          if (isApiNotFound(err, 'MARKET_NOT_FOUND')) {
+            setNotFoundKey(requestKey);
+          }
           setError(safeMarketDataError(err, 'chart'));
         }
       } finally {
@@ -1339,7 +1368,7 @@ const LiveCanonicalChart = ({
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [activeTab, binaryOutcomeInputs, marketId, marketType, outcomeId]);
+  }, [activeTab, binaryOutcomeInputs, marketId, marketType, notFoundKey, outcomeId, requestKey]);
 
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (!active || !payload?.length) return null;
@@ -1519,6 +1548,8 @@ export const InfraTradingTerminal = ({
   const [orderbookLoading, setOrderbookLoading] = useState(false);
   const [orderbookError, setOrderbookError] = useState<string | null>(null);
   const [orderbookVenue, setOrderbookVenue] = useState<string>('ALL');
+  const [orderbookNotFoundKey, setOrderbookNotFoundKey] = useState<string | null>(null);
+  const [missingRiskProfileKeys, setMissingRiskProfileKeys] = useState<Set<string>>(() => new Set());
   const [localSelectedMarket, setLocalSelectedMarket] = useState<TerminalMarketSelection | null>(null);
 
   React.useEffect(() => {
@@ -2006,6 +2037,14 @@ export const InfraTradingTerminal = ({
       setTicketStatusMessage('This route must clear live readiness before wallet signing.');
       return;
     }
+    const latestReadiness = await getLiveReadiness(token, executionId);
+    setTicketLiveReadiness(latestReadiness);
+    if (isReadinessBlocked(latestReadiness)) {
+      const blocked = firstReadinessBlocker(latestReadiness);
+      setTicketError(`${formatVenueLabel(blocked?.venue ?? 'Venue')}: ${blocked?.blocker ?? 'Live submit readiness is blocked.'}`);
+      setTicketStatusMessage('This route must clear live readiness before wallet signing.');
+      return;
+    }
     if (bundle.signatureRequests.length === 0) {
       setTicketError('This route requires a wallet signature, but no signature request was returned.');
       return;
@@ -2109,6 +2148,15 @@ export const InfraTradingTerminal = ({
     try {
       const response = await submitExecutionQuote(token, ticketQuote.quoteId);
       const executionId = response.executionId || ticketQuote.quoteId;
+      const readiness = await getLiveReadiness(token, executionId);
+      setTicketLiveReadiness(readiness);
+      if (isReadinessBlocked(readiness)) {
+        const blocked = firstReadinessBlocker(readiness);
+        setTicketExecutionId(executionId);
+        setTicketError(`${formatVenueLabel(blocked?.venue ?? 'Venue')}: ${blocked?.blocker ?? 'Live submit readiness is blocked.'}`);
+        setTicketStatusMessage('This route must clear live readiness before live submit.');
+        return;
+      }
 
       const signatureRequired = ticketQuote.requiredUserSignatureSteps.length > 0 ||
         ticketQuote.legs.some((leg) => leg.requiresUserSignature === true);
@@ -2611,11 +2659,13 @@ export const InfraTradingTerminal = ({
     let cancelled = false;
     const refreshOrderbook = async () => {
       const orderbookMarketId = selectedOutcomeMarketId ?? terminalMarketId;
+      const requestKey = `${orderbookMarketId ?? 'none'}:${selectedQuoteOutcomeId ?? 'none'}:${orderbookVenue}`;
       if (!orderbookMarketId) {
         setOrderbook(null);
         setOrderbookError(null);
         return;
       }
+      if (orderbookNotFoundKey === requestKey) return;
       setOrderbookLoading(true);
       setOrderbookError(null);
       try {
@@ -2624,10 +2674,16 @@ export const InfraTradingTerminal = ({
           depth: 20,
           venue: orderbookVenue === 'ALL' ? null : orderbookVenue
         });
-        if (!cancelled) setOrderbook(response);
+        if (!cancelled) {
+          setOrderbook(response);
+          setOrderbookNotFoundKey(null);
+        }
       } catch (error) {
         if (!cancelled) {
           setOrderbook(null);
+          if (isApiNotFound(error, 'MARKET_NOT_FOUND')) {
+            setOrderbookNotFoundKey(requestKey);
+          }
           setOrderbookError(safeMarketDataError(error, 'orderbook'));
         }
       } finally {
@@ -2642,7 +2698,7 @@ export const InfraTradingTerminal = ({
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [orderbookVenue, selectedOutcomeMarketId, selectedQuoteOutcomeId, terminalMarketId]);
+  }, [orderbookNotFoundKey, orderbookVenue, selectedOutcomeMarketId, selectedQuoteOutcomeId, terminalMarketId]);
 
   const refreshAccountData = useCallback(async () => {
     if (!token) {
@@ -2696,10 +2752,17 @@ export const InfraTradingTerminal = ({
         const canonicalPromise = terminalCanonicalEventId && isUuid(terminalCanonicalEventId)
           ? getCanonicalResolutionRisk(terminalCanonicalEventId)
           : Promise.resolve(null);
-        const profilePromises = selectedVenueMarkets
+        const profileRequests = selectedVenueMarkets
           .filter((venueMarket) => venueMarket.venue && venueMarket.venueMarketId)
           .slice(0, 6)
-          .map((venueMarket) => getVenueMarketResolutionRisk(venueMarket.venue, venueMarket.venueMarketId));
+          .map((venueMarket) => ({
+            key: `${venueMarket.venue}:${venueMarket.venueMarketId}`,
+            venue: venueMarket.venue,
+            venueMarketId: venueMarket.venueMarketId,
+          }))
+          .filter((request) => !missingRiskProfileKeys.has(request.key));
+        const profilePromises = profileRequests
+          .map((request) => getVenueMarketResolutionRisk(request.venue, request.venueMarketId));
         const [canonicalResult, ...profileResults] = await Promise.allSettled([canonicalPromise, ...profilePromises]);
         if (cancelled) return;
 
@@ -2709,11 +2772,18 @@ export const InfraTradingTerminal = ({
         if (canonicalResult.status === 'fulfilled' && canonicalResult.value) {
           canonicalAssessments.push(...canonicalResult.value.assessments);
         }
-        for (const result of profileResults) {
+        const missingProfileKeys = new Set<string>();
+        for (const [index, result] of profileResults.entries()) {
           if (result.status === 'fulfilled') {
             profiles.push(result.value.profile);
             selectedMarketAssessments.push(...result.value.assessments);
+          } else if (isApiNotFound(result.reason, 'PROFILE_NOT_FOUND')) {
+            const request = profileRequests[index];
+            if (request) missingProfileKeys.add(request.key);
           }
+        }
+        if (missingProfileKeys.size > 0) {
+          setMissingRiskProfileKeys((current) => new Set([...current, ...missingProfileKeys]));
         }
         const assessments = selectedMarketAssessments.length > 0 ? selectedMarketAssessments : canonicalAssessments;
         setRiskState({ loading: false, error: null, assessments, profiles });
@@ -2728,7 +2798,7 @@ export const InfraTradingTerminal = ({
     return () => {
       cancelled = true;
     };
-  }, [selectedVenueMarkets, terminalCanonicalEventId]);
+  }, [missingRiskProfileKeys, selectedVenueMarkets, terminalCanonicalEventId]);
 
   const ticketAmountValue = ticketAmountNumber(ticketAmount);
   const ticketHasExecutableQuote = Boolean(ticketQuote && ticketRoutePath.length > 0);
