@@ -2635,6 +2635,7 @@ export const InfraTradingTerminal = ({
       setTicketExecutionId(null);
       setTicketSignatureBundle(null);
       setTicketLiveCandidates(null);
+      setTicketLiveReadiness(null);
       if (submitted.sync.status === 'READY') {
         setTicketStatusMessage('Polymarket CLOB sync confirmed. Refreshing the live route.');
         await previewMarketOrder();
@@ -2966,7 +2967,6 @@ export const InfraTradingTerminal = ({
   const ticketPolymarketSyncSignal = [
     ticketPolymarketReadinessVenue?.blockers.join(' ') ?? '',
     ticketError ?? '',
-    ticketStatusMessage ?? '',
   ].join(' ').toUpperCase();
   const ticketPolymarketClobSyncRequired = Boolean(token && (ticketRouteUsesPolymarket || backendVenueList.includes('POLYMARKET')) && (
     polymarketClobSyncPending ||
