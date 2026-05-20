@@ -182,6 +182,11 @@ export type LiveSubmitVenueReadiness = {
   status: "fresh" | "stale" | "blocked";
   checkedAt: string;
   blockers: string[];
+  readinessCode?: string | null;
+  nextAction?: string | null;
+  retryable?: boolean;
+  requiresUserSync?: boolean;
+  liveSubmitSpendableBalance?: string | null;
   account: {
     walletAddress: string | null;
     venueAccountAddress: string | null;

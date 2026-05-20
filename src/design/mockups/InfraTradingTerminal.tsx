@@ -904,6 +904,12 @@ const isReadinessBlocked = (readiness: LiveSubmitReadinessSnapshot | null): bool
     readiness.venues.some((venue) => venue.status !== 'fresh' || venue.blockers.length > 0)
   ));
 
+const POLYMARKET_PENDING_SUBMIT_READINESS_CODE = 'POLYMARKET_CLOB_SYNC_PENDING_FOR_SUBMIT';
+const POLYMARKET_LIVE_READINESS_POLL_MS = 5_000;
+
+const findPolymarketReadinessVenue = (readiness: LiveSubmitReadinessSnapshot | null) =>
+  readiness?.venues.find((item) => toBackendVenueId(item.venue) === 'POLYMARKET') ?? null;
+
 const firstReadinessBlocker = (readiness: LiveSubmitReadinessSnapshot | null): { venue: string; blocker: string } | null => {
   const venue = readiness?.venues.find((item) => isReadinessVenueBlocked(item));
   if (venue) return { venue: venue.venue, blocker: venue.blockers[0] ?? 'Live submit readiness is blocked.' };
@@ -917,8 +923,10 @@ const firstReadinessBlocker = (readiness: LiveSubmitReadinessSnapshot | null): {
 
 const isPolymarketClobPropagationReadiness = (readiness: LiveSubmitReadinessSnapshot | null): boolean => {
   if (polymarketReadinessConfirmsTradeReadiness(readiness)) return false;
-  const venue = readiness?.venues.find((item) => toBackendVenueId(item.venue) === 'POLYMARKET');
+  const venue = findPolymarketReadinessVenue(readiness);
   if (!venue) return false;
+  const readinessCode = String(venue.readinessCode ?? '').toUpperCase();
+  if (readinessCode === POLYMARKET_PENDING_SUBMIT_READINESS_CODE) return true;
   const blockerText = venue.blockers.join(' ').toUpperCase();
   const source = String(venue.collateral.usableBalanceSource ?? '').toUpperCase();
   return source === 'USER_CLOB_SYNC_CONFIRMED' ||
@@ -927,10 +935,17 @@ const isPolymarketClobPropagationReadiness = (readiness: LiveSubmitReadinessSnap
 
 const polymarketReadinessConfirmsTradeReadiness = (readiness: LiveSubmitReadinessSnapshot | null): boolean => {
   if (!readiness || readiness.status !== 'fresh' || readiness.blockers.length > 0) return false;
-  const venue = readiness.venues.find((item) => toBackendVenueId(item.venue) === 'POLYMARKET');
+  const venue = findPolymarketReadinessVenue(readiness);
   if (!venue || venue.status !== 'fresh' || venue.blockers.length > 0) return false;
   const source = String(venue.collateral.usableBalanceSource ?? '').toUpperCase();
   return source === 'CLOB_COLLATERAL_ALLOWANCE';
+};
+
+const formatReadinessTime = (value: string | number | null | undefined): string => {
+  if (!value) return 'pending';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'pending';
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 };
 
 const shouldLoadVenueRiskProfile = (marketId: string): boolean => {
@@ -1585,6 +1600,8 @@ export const InfraTradingTerminal = ({
   const [ticketStatusMessage, setTicketStatusMessage] = useState<string | null>(null);
   const [ticketLoading, setTicketLoading] = useState(false);
   const [ticketActivationPolling, setTicketActivationPolling] = useState(false);
+  const [ticketReadinessPolling, setTicketReadinessPolling] = useState(false);
+  const [ticketReadinessNextCheckAt, setTicketReadinessNextCheckAt] = useState<number | null>(null);
   const [ticketError, setTicketError] = useState<string | null>(null);
   const [rulesInnerTab, setRulesInnerTab] = useState<'rules' | 'aggregation'>('rules');
   const [orderAction, setOrderAction] = useState<'setup' | 'preview'>('setup');
@@ -1617,7 +1634,6 @@ export const InfraTradingTerminal = ({
   const [orderbookNotFoundKey, setOrderbookNotFoundKey] = useState<string | null>(null);
   const missingRiskProfileKeysRef = React.useRef<Set<string>>(new Set());
   const autoPolymarketClobSyncKeyRef = React.useRef<string | null>(null);
-  const autoPolymarketClobRefreshKeyRef = React.useRef<string | null>(null);
   const [localSelectedMarket, setLocalSelectedMarket] = useState<TerminalMarketSelection | null>(null);
 
   React.useEffect(() => {
@@ -2049,6 +2065,7 @@ export const InfraTradingTerminal = ({
     setTicketStatusMessage(null);
     setTicketQuote(null);
     setTicketLiveReadiness(null);
+    setTicketReadinessNextCheckAt(null);
     setTicketExecutionId(null);
     setTicketSignatureBundle(null);
     try {
@@ -2083,10 +2100,13 @@ export const InfraTradingTerminal = ({
         if (readinessBlocker) {
           const blockerCopy = readinessBlocker.blocker;
           const venueLabel = formatVenueLabel(readinessBlocker.venue);
+          const pendingPolymarketReadiness = isPolymarketClobPropagationReadiness(readiness);
           setTicketError(`${venueLabel}: ${blockerCopy}`);
-          setTicketStatusMessage(/ALLOWANCE|APPROVE/i.test(blockerCopy)
-            ? `${venueLabel} route is priced, but collateral approval is required before signing.`
-            : `${venueLabel} route is priced, but live submit is blocked until collateral readiness clears.`);
+          setTicketStatusMessage(pendingPolymarketReadiness
+            ? 'Polymarket CLOB sync is confirmed locally. Rechecking live submit readiness automatically.'
+            : /ALLOWANCE|APPROVE/i.test(blockerCopy)
+              ? `${venueLabel} route is priced, but collateral approval is required before signing.`
+              : `${venueLabel} route is priced, but live submit is blocked until collateral readiness clears.`);
           return;
         }
       } catch {
@@ -2112,7 +2132,9 @@ export const InfraTradingTerminal = ({
     if (isReadinessBlocked(ticketLiveReadiness)) {
       const blocked = firstReadinessBlocker(ticketLiveReadiness);
       setTicketError(`${formatVenueLabel(blocked?.venue ?? 'Venue')}: ${blocked?.blocker ?? 'Live submit readiness is blocked.'}`);
-      setTicketStatusMessage('This route must clear live readiness before wallet signing.');
+      setTicketStatusMessage(isPolymarketClobPropagationReadiness(ticketLiveReadiness)
+        ? 'Polymarket CLOB sync is confirmed locally. Rechecking live submit readiness automatically.'
+        : 'This route must clear live readiness before wallet signing.');
       return;
     }
     const latestReadiness = await getLiveReadiness(token, executionId);
@@ -2120,7 +2142,9 @@ export const InfraTradingTerminal = ({
     if (isReadinessBlocked(latestReadiness)) {
       const blocked = firstReadinessBlocker(latestReadiness);
       setTicketError(`${formatVenueLabel(blocked?.venue ?? 'Venue')}: ${blocked?.blocker ?? 'Live submit readiness is blocked.'}`);
-      setTicketStatusMessage('This route must clear live readiness before wallet signing.');
+      setTicketStatusMessage(isPolymarketClobPropagationReadiness(latestReadiness)
+        ? 'Polymarket CLOB sync is confirmed locally. Rechecking live submit readiness automatically.'
+        : 'This route must clear live readiness before wallet signing.');
       return;
     }
     if (bundle.signatureRequests.length === 0) {
@@ -2231,7 +2255,9 @@ export const InfraTradingTerminal = ({
         const blocked = firstReadinessBlocker(readiness);
         setTicketExecutionId(executionId);
         setTicketError(`${formatVenueLabel(blocked?.venue ?? 'Venue')}: ${blocked?.blocker ?? 'Live submit readiness is blocked.'}`);
-        setTicketStatusMessage('This route must clear live readiness before live submit.');
+        setTicketStatusMessage(isPolymarketClobPropagationReadiness(readiness)
+          ? 'Polymarket CLOB sync is confirmed locally. Rechecking live submit readiness automatically.'
+          : 'This route must clear live readiness before live submit.');
         return;
       }
 
@@ -2303,7 +2329,9 @@ export const InfraTradingTerminal = ({
     if (isReadinessBlocked(ticketLiveReadiness)) {
       const blocked = firstReadinessBlocker(ticketLiveReadiness);
       setTicketError(`${formatVenueLabel(blocked?.venue ?? 'Venue')}: ${blocked?.blocker ?? 'Live submit readiness is blocked.'}`);
-      setTicketStatusMessage('This route must clear live readiness before wallet signing.');
+      setTicketStatusMessage(isPolymarketClobPropagationReadiness(ticketLiveReadiness)
+        ? 'Polymarket CLOB sync is confirmed locally. Rechecking live submit readiness automatically.'
+        : 'This route must clear live readiness before wallet signing.');
       return;
     }
     setTicketLoading(true);
@@ -2316,7 +2344,9 @@ export const InfraTradingTerminal = ({
       if (isReadinessBlocked(readiness)) {
         const blocked = firstReadinessBlocker(readiness);
         setTicketError(`${formatVenueLabel(blocked?.venue ?? 'Venue')}: ${blocked?.blocker ?? 'Live submit readiness is blocked.'}`);
-        setTicketStatusMessage('This route must clear live readiness before wallet signing.');
+        setTicketStatusMessage(isPolymarketClobPropagationReadiness(readiness)
+          ? 'Polymarket CLOB sync is confirmed locally. Rechecking live submit readiness automatically.'
+          : 'This route must clear live readiness before wallet signing.');
         return;
       }
       const signatures = await prepareSignatures(token, executionId);
@@ -2614,7 +2644,7 @@ export const InfraTradingTerminal = ({
     turnkeyWallets,
   ]);
 
-  const refreshPolymarketClobReadiness = useCallback(async (options: { poll?: boolean } = {}) => {
+  const refreshPolymarketClobReadiness = useCallback(async (options: { quiet?: boolean; poll?: boolean } = {}) => {
     if (!token) {
       setTicketError('Log in before refreshing Polymarket CLOB readiness.');
       return;
@@ -2624,37 +2654,36 @@ export const InfraTradingTerminal = ({
       await previewMarketOrder();
       return;
     }
-    const attempts = options.poll ? 6 : 1;
-    setTicketLoading(true);
-    setTicketError(null);
+    const quiet = options.quiet === true;
+    if (!quiet) setTicketLoading(true);
+    setTicketReadinessPolling(true);
+    setTicketReadinessNextCheckAt(null);
+    if (!quiet) setTicketError(null);
     try {
-      for (let attempt = 0; attempt < attempts; attempt += 1) {
-        setTicketStatusMessage(attempt === 0
-          ? 'Checking Polymarket CLOB propagation.'
-          : 'Still waiting for Polymarket live collateral propagation.');
-        const readiness = await getLiveReadiness(token, readinessId);
-        setTicketLiveReadiness(readiness);
-        const blocked = firstReadinessBlocker(readiness);
-        if (!blocked) {
-          setTicketError(null);
-          setTicketStatusMessage('Polymarket live collateral is ready. Continue with submit.');
-          return;
-        }
-        setTicketError(`${formatVenueLabel(blocked.venue)}: ${blocked.blocker}`);
-        if (!isPolymarketClobPropagationReadiness(readiness)) {
-          setTicketStatusMessage('Live submit is still blocked by venue readiness.');
-          return;
-        }
-        if (attempt < attempts - 1) {
-          await sleep(4_000);
-        }
+      setTicketStatusMessage('Checking Polymarket live submit readiness.');
+      const readiness = await getLiveReadiness(token, readinessId);
+      setTicketLiveReadiness(readiness);
+      const blocked = firstReadinessBlocker(readiness);
+      if (!blocked) {
+        setTicketError(null);
+        setTicketReadinessNextCheckAt(null);
+        setTicketStatusMessage('Polymarket live collateral is ready. Continue with submit.');
+        return;
       }
-      setTicketStatusMessage('Polymarket CLOB sync is confirmed locally. Retry readiness after Polymarket propagation completes.');
+      setTicketError(`${formatVenueLabel(blocked.venue)}: ${blocked.blocker}`);
+      if (!isPolymarketClobPropagationReadiness(readiness)) {
+        setTicketReadinessNextCheckAt(null);
+        setTicketStatusMessage('Live submit is still blocked by venue readiness.');
+        return;
+      }
+      setTicketReadinessNextCheckAt(Date.now() + POLYMARKET_LIVE_READINESS_POLL_MS);
+      setTicketStatusMessage('Polymarket CLOB sync is confirmed locally. Rechecking live submit readiness automatically.');
     } catch (error) {
       setTicketError(error instanceof Error ? error.message : 'Polymarket CLOB readiness refresh failed.');
       setTicketStatusMessage(null);
     } finally {
-      setTicketLoading(false);
+      if (!quiet) setTicketLoading(false);
+      setTicketReadinessPolling(false);
     }
   }, [previewMarketOrder, ticketExecutionId, ticketQuote?.quoteId, token]);
 
@@ -3068,10 +3097,20 @@ export const InfraTradingTerminal = ({
   const ticketPolymarketClobPropagationPending = Boolean(token && (ticketRouteUsesPolymarket || backendVenueList.includes('POLYMARKET')) && !polymarketLiveReadinessReady && (
     polymarketClobConfirmed && /POLYMARKET CLOB SYNC|CLOB SYNC|CLOB SPENDABLE|SYNC PROPAGAT|PROPAGATION/.test(ticketPolymarketSyncSignal) ||
     ticketPolymarketClobSource === 'USER_CLOB_SYNC_CONFIRMED' ||
+    String(ticketPolymarketReadinessVenue?.readinessCode ?? '').toUpperCase() === POLYMARKET_PENDING_SUBMIT_READINESS_CODE ||
     /SYNC WAS CONFIRMED LOCALLY|LIVE CLOB SPENDABLE|SYNC PROPAGAT|PROPAGATION/.test(ticketPolymarketReadinessBlockerText) ||
     /SYNC WAS CONFIRMED LOCALLY|LIVE CLOB SPENDABLE|SYNC PROPAGAT|PROPAGATION/.test(ticketPolymarketErrorText) ||
     /CLOB SYNC SUBMITTED|CLOB SYNC CONFIRMED/.test(ticketPolymarketStatusText)
   ));
+  const ticketPolymarketLiveSubmitSpendable = parsePositiveNumber(ticketPolymarketReadinessVenue?.liveSubmitSpendableBalance ?? undefined);
+  const ticketPolymarketLiveSubmitSpendableLabel = ticketPolymarketLiveSubmitSpendable !== null
+    ? `${ticketPolymarketLiveSubmitSpendable.toLocaleString(undefined, { maximumFractionDigits: 4 })} pUSD`
+    : 'Pending';
+  const ticketPolymarketLocalBalanceLabel = ticketPolymarketReadinessVenue?.collateral.usableBalance
+    ? `${ticketPolymarketReadinessVenue.collateral.usableBalance} pUSD`
+    : 'Confirmed';
+  const ticketReadinessLastCheckedLabel = formatReadinessTime(ticketPolymarketReadinessVenue?.checkedAt);
+  const ticketReadinessNextCheckLabel = formatReadinessTime(ticketReadinessNextCheckAt);
   const ticketPolymarketClobSyncRequired = Boolean(token && (ticketRouteUsesPolymarket || backendVenueList.includes('POLYMARKET')) && !polymarketClobConfirmed && !ticketPolymarketClobPropagationPending && (
     polymarketClobSyncPending ||
     /POLYMARKET_CLOB_SYNC_PENDING|CLOB SYNC PENDING|SYNC_REJECTED_BY_VENUE|REFRESH CLOB SYNC/.test(ticketPolymarketSyncSignal)
@@ -3106,10 +3145,13 @@ export const InfraTradingTerminal = ({
     ticketQuote.legs.some((leg) => leg.requiresUserSignature === true)
   ));
   const ticketEstimatedPayout = side === 'buy' ? ticketEstimatedShares : ticketReceiveEstimate;
+  const ticketReadinessExpiresAt = ticketQuote?.expiresAt ?? ticketLiveReadiness?.expiresAt ?? null;
+  const ticketReadinessExpiryMs = ticketReadinessExpiresAt ? new Date(ticketReadinessExpiresAt).getTime() : null;
+  const ticketReadinessQuoteExpired = Boolean(ticketReadinessExpiryMs && Number.isFinite(ticketReadinessExpiryMs) && Date.now() >= ticketReadinessExpiryMs);
   const ticketNeedsFundingAction = ticketActivationRequired || ticketDepositRequired || ticketLimitlessSetupRequired || ticketPredictFunAuthRequired || ticketRouteApprovalRequired || ticketPolymarketClobSyncRequired || ticketPolymarketClobPropagationPending || ticketLimitlessBalanceBlocked;
   const ticketActionDisabled = !token || !terminalMarketId || !selectedTicketOutcomeId || ticketLoading || ticketActivationPolling ||
     ticketPolymarketClobSyncRequired ||
-    ticketPolymarketClobPropagationPending ||
+    (ticketPolymarketClobPropagationPending && ticketReadinessPolling) ||
     Boolean(ticketExecutionId && ticketQuote && !ticketRequiresSignature && !ticketNeedsFundingAction) ||
     Boolean(side === 'buy' && !ticketQuote && fundingLoading);
   const ticketActionLabel = ticketActivationPolling
@@ -3133,7 +3175,11 @@ export const InfraTradingTerminal = ({
     : ticketPolymarketClobSyncRequired
       ? 'Checking Polymarket readiness...'
     : ticketPolymarketClobPropagationPending
-      ? 'Waiting for Polymarket readiness...'
+      ? ticketReadinessPolling
+        ? 'Checking Polymarket readiness...'
+        : ticketReadinessQuoteExpired
+          ? 'Preview new route'
+          : 'Recheck readiness'
     : ticketLimitlessBalanceBlocked
       ? 'Reduce amount or fund Limitless'
     : ticketLimitlessSetupRequired
@@ -3177,16 +3223,71 @@ export const InfraTradingTerminal = ({
 
   React.useEffect(() => {
     if (!token || !ticketPolymarketClobPropagationPending || ticketLoading || ticketActivationPolling) return;
-    const key = `${ticketPolymarketClobReadinessKey}:refresh`;
-    if (autoPolymarketClobRefreshKeyRef.current === key) return;
-    autoPolymarketClobRefreshKeyRef.current = key;
-    void refreshPolymarketClobReadiness({ poll: true });
+    const readinessId = ticketQuote?.quoteId ?? ticketExecutionId;
+    if (!readinessId) return;
+    let cancelled = false;
+    let timeoutId: number | undefined;
+
+    const pollReadiness = async () => {
+      const expiresAt = ticketQuote?.expiresAt ?? ticketLiveReadiness?.expiresAt ?? null;
+      const expiryMs = expiresAt ? new Date(expiresAt).getTime() : null;
+      if (expiryMs && Number.isFinite(expiryMs) && Date.now() >= expiryMs) {
+        if (!cancelled) {
+          setTicketReadinessNextCheckAt(null);
+          setTicketStatusMessage('This route expired before Polymarket live submit readiness cleared. Preview a new route.');
+        }
+        return;
+      }
+
+      setTicketReadinessPolling(true);
+      try {
+        const readiness = await getLiveReadiness(token, readinessId);
+        if (cancelled) return;
+        setTicketLiveReadiness(readiness);
+        const blocked = firstReadinessBlocker(readiness);
+        if (!blocked) {
+          setTicketError(null);
+          setTicketReadinessNextCheckAt(null);
+          setTicketStatusMessage('Polymarket live collateral is ready. Continue with submit.');
+          return;
+        }
+        setTicketError(`${formatVenueLabel(blocked.venue)}: ${blocked.blocker}`);
+        if (!isPolymarketClobPropagationReadiness(readiness)) {
+          setTicketReadinessNextCheckAt(null);
+          setTicketStatusMessage('Live submit is still blocked by venue readiness.');
+          return;
+        }
+        const nextCheckAt = Date.now() + POLYMARKET_LIVE_READINESS_POLL_MS;
+        setTicketReadinessNextCheckAt(nextCheckAt);
+        setTicketStatusMessage('Polymarket CLOB sync is confirmed locally. Rechecking live submit readiness automatically.');
+        timeoutId = window.setTimeout(pollReadiness, POLYMARKET_LIVE_READINESS_POLL_MS);
+      } catch (error) {
+        if (!cancelled) {
+          setTicketError(error instanceof Error ? error.message : 'Polymarket CLOB readiness refresh failed.');
+          const nextCheckAt = Date.now() + POLYMARKET_LIVE_READINESS_POLL_MS;
+          setTicketReadinessNextCheckAt(nextCheckAt);
+          timeoutId = window.setTimeout(pollReadiness, POLYMARKET_LIVE_READINESS_POLL_MS);
+        }
+      } finally {
+        if (!cancelled) setTicketReadinessPolling(false);
+      }
+    };
+
+    void pollReadiness();
+    return () => {
+      cancelled = true;
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+      setTicketReadinessPolling(false);
+      setTicketReadinessNextCheckAt(null);
+    };
   }, [
-    refreshPolymarketClobReadiness,
     ticketActivationPolling,
+    ticketExecutionId,
+    ticketLiveReadiness?.expiresAt,
     ticketLoading,
     ticketPolymarketClobPropagationPending,
-    ticketPolymarketClobReadinessKey,
+    ticketQuote?.expiresAt,
+    ticketQuote?.quoteId,
     token,
   ]);
 
@@ -4345,6 +4446,39 @@ export const InfraTradingTerminal = ({
                           {ticketStatusMessage}{ticketExecutionId ? ` ${ticketExecutionId}` : ''}
                         </div>
                       )}
+                      {ticketPolymarketClobPropagationPending && (
+                        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[10px] font-semibold text-amber-100">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="flex items-center gap-1.5 text-[11px] font-bold text-amber-100">
+                              <Clock className="h-3.5 w-3.5" aria-hidden />
+                              Polymarket readiness
+                            </span>
+                            <span className="rounded-md border border-amber-400/30 bg-amber-400/10 px-1.5 py-0.5 font-mono text-[8px] uppercase tracking-widest text-amber-100">
+                              {ticketReadinessPolling ? 'checking' : 'pending'}
+                            </span>
+                          </div>
+                          <div className="mt-2 grid grid-cols-1 gap-1.5 text-amber-100/90">
+                            <div className="flex items-center justify-between gap-3">
+                              <span>CLOB sync confirmed locally</span>
+                              <span className="shrink-0 font-mono text-amber-50">{ticketPolymarketLocalBalanceLabel}</span>
+                            </div>
+                            <div className="flex items-center justify-between gap-3">
+                              <span>Live submit spendable</span>
+                              <span className="shrink-0 font-mono text-amber-50">{ticketPolymarketLiveSubmitSpendableLabel}</span>
+                            </div>
+                            <div className="flex items-center justify-between gap-3">
+                              <span>Last checked</span>
+                              <span className="shrink-0 font-mono text-amber-50">{ticketReadinessLastCheckedLabel}</span>
+                            </div>
+                            <div className="flex items-center justify-between gap-3">
+                              <span>{ticketReadinessQuoteExpired ? 'Quote status' : 'Next check'}</span>
+                              <span className="shrink-0 font-mono text-amber-50">
+                                {ticketReadinessQuoteExpired ? 'Expired' : ticketReadinessNextCheckLabel}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
                       {ticketBlockedRoutes.slice(0, 3).map((blocked) => (
                         <div key={`${blocked.venue}-${blocked.venueMarketId ?? blocked.reason}`} className="rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2 text-[10px] font-semibold text-zinc-400">
                           {formatVenueLabel(blocked.venue)} unavailable: {readableQuoteBlocker(blocked.reason) ?? blocked.reason}
@@ -4447,6 +4581,12 @@ export const InfraTradingTerminal = ({
                         void refreshPredictFunAuth();
                       } else if (ticketDepositRequired) {
                         setFundingModalOpen(true);
+                      } else if (ticketPolymarketClobPropagationPending) {
+                        if (ticketReadinessQuoteExpired) {
+                          void previewMarketOrder();
+                        } else {
+                          void refreshPolymarketClobReadiness();
+                        }
                       } else if (ticketRequiresSignature && !ticketSignatureBundle) {
                         void prepareTicketSignature();
                       } else if (ticketSignatureBundle && ticketExecutionId) {
@@ -4458,15 +4598,26 @@ export const InfraTradingTerminal = ({
                       }
                     }}
                     disabled={ticketActionDisabled}
-                    className={`w-full font-bold py-3.5 rounded-lg text-sm transition-colors mt-2 ${ticketPrimaryButtonClass} ${ticketPrimaryDisabledClass}`}
+                    className={`w-full font-bold py-3.5 rounded-lg text-sm transition-colors mt-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 focus-visible:ring-offset-2 focus-visible:ring-offset-[#09090b] ${ticketPrimaryButtonClass} ${ticketPrimaryDisabledClass}`}
                   >
                       {ticketActionLabel}
                   </button>
 
                   <div className="grid grid-cols-2 gap-2 pt-1">
-                      <button type="button" disabled className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg border text-[10px] uppercase font-bold transition-all bg-[#0c0c0e] border-zinc-800 text-zinc-500 cursor-not-allowed">
-                          <Ghost className="w-3 h-3" /> BACKEND PROTECTION
-                      </button>
+                      {ticketPolymarketClobPropagationPending ? (
+                        <button
+                          type="button"
+                          onClick={() => void previewMarketOrder()}
+                          disabled={ticketLoading || ticketReadinessPolling}
+                          className="flex h-10 items-center justify-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 text-[10px] font-bold uppercase text-amber-100 transition-colors hover:bg-amber-500/20 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 focus-visible:ring-offset-2 focus-visible:ring-offset-[#09090b]"
+                        >
+                          <ChevronRight className="h-3 w-3" aria-hidden /> Preview new route
+                        </button>
+                      ) : (
+                        <button type="button" disabled className="flex h-10 items-center justify-center gap-2 rounded-lg border border-zinc-800 bg-[#0c0c0e] px-3 text-[10px] font-bold uppercase text-zinc-500 transition-all cursor-not-allowed">
+                            <Ghost className="w-3 h-3" /> BACKEND PROTECTION
+                        </button>
+                      )}
                       <button type="button" disabled className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg border text-[10px] uppercase font-bold transition-all bg-[#0c0c0e] border-zinc-800 text-zinc-500 cursor-not-allowed">
                           <Zap className="w-3 h-3" /> ROUTE CONTROLLED
                       </button>
