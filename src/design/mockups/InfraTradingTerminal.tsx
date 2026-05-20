@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import {
   AlertTriangle, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, History, Lock, ShieldAlert, ShieldCheck, Info,
   Clock, BarChart2, Layers, Share2, Bookmark, Search, Maximize2, Activity, Zap, Ghost,
-  Home, Terminal, PieChart, Volleyball, Settings, RefreshCw
+  Home, Terminal, PieChart, Volleyball, Settings
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceDot } from 'recharts';
 import { useTurnkey, type Wallet as TurnkeyWallet, type WalletAccount } from '@turnkey/react-wallet-kit';
@@ -935,6 +935,13 @@ const polymarketReadinessConfirmsTradeReadiness = (readiness: LiveSubmitReadines
     venue.collateral.approvalMethod === 'CLOB_PUSD_APPROVAL';
 };
 
+const shouldLoadVenueRiskProfile = (marketId: string): boolean => {
+  const normalized = marketId.trim().toUpperCase();
+  return normalized.length > 0 &&
+    !normalized.includes('|') &&
+    !normalized.startsWith('FRONTEND_CURATED:');
+};
+
 const executionFailureMessage = (submitted: ExecutionStatus): string => {
   const failedLeg = submitted.submittedLegs?.find((leg) => leg.reasonCode || leg.reason);
   if (failedLeg?.reasonCode === 'POLYMARKET_CLOB_SYNC_REJECTED_BY_VENUE') {
@@ -1608,6 +1615,8 @@ export const InfraTradingTerminal = ({
   const [orderbookVenue, setOrderbookVenue] = useState<string>('ALL');
   const [orderbookNotFoundKey, setOrderbookNotFoundKey] = useState<string | null>(null);
   const missingRiskProfileKeysRef = React.useRef<Set<string>>(new Set());
+  const autoPolymarketClobSyncKeyRef = React.useRef<string | null>(null);
+  const autoPolymarketClobRefreshKeyRef = React.useRef<string | null>(null);
   const [localSelectedMarket, setLocalSelectedMarket] = useState<TerminalMarketSelection | null>(null);
 
   React.useEffect(() => {
@@ -2966,6 +2975,7 @@ export const InfraTradingTerminal = ({
           : Promise.resolve(null);
         const profileRequests = selectedVenueMarkets
           .filter((venueMarket) => venueMarket.venue && venueMarket.venueMarketId)
+          .filter((venueMarket) => shouldLoadVenueRiskProfile(venueMarket.venueMarketId))
           .slice(0, 6)
           .map((venueMarket) => ({
             key: `${venueMarket.venue}:${venueMarket.venueMarketId}`,
@@ -3097,6 +3107,8 @@ export const InfraTradingTerminal = ({
   const ticketEstimatedPayout = side === 'buy' ? ticketEstimatedShares : ticketReceiveEstimate;
   const ticketNeedsFundingAction = ticketActivationRequired || ticketDepositRequired || ticketLimitlessSetupRequired || ticketPredictFunAuthRequired || ticketRouteApprovalRequired || ticketPolymarketClobSyncRequired || ticketPolymarketClobPropagationPending || ticketLimitlessBalanceBlocked;
   const ticketActionDisabled = !token || !terminalMarketId || !selectedTicketOutcomeId || ticketLoading || ticketActivationPolling ||
+    ticketPolymarketClobSyncRequired ||
+    ticketPolymarketClobPropagationPending ||
     Boolean(ticketExecutionId && ticketQuote && !ticketRequiresSignature && !ticketNeedsFundingAction) ||
     Boolean(side === 'buy' && !ticketQuote && fundingLoading);
   const ticketActionLabel = ticketActivationPolling
@@ -3118,9 +3130,9 @@ export const InfraTradingTerminal = ({
     : ticketRouteApprovalRequired
       ? `Approve ${ticketRouteApprovalVenueLabel} ${ticketRouteApprovalTokenLabel}`
     : ticketPolymarketClobSyncRequired
-      ? 'Sync Polymarket CLOB'
+      ? 'Checking Polymarket readiness...'
     : ticketPolymarketClobPropagationPending
-      ? 'Refresh CLOB readiness'
+      ? 'Waiting for Polymarket readiness...'
     : ticketLimitlessBalanceBlocked
       ? 'Reduce amount or fund Limitless'
     : ticketLimitlessSetupRequired
@@ -3143,6 +3155,40 @@ export const InfraTradingTerminal = ({
       ? side === 'buy' ? 'Place market order' : 'Place sell order'
       : 'Preview market order';
   const ticketRouteReady = Boolean(ticketQuote && ticketRoutePath.length > 0);
+  const ticketPolymarketClobReadinessKey = ticketQuote?.quoteId
+    ?? ticketExecutionId
+    ?? `${selectedTicketMarketId}:${selectedTicketQuoteOutcomeId}:${ticketAmount.trim() || 'empty'}`;
+
+  React.useEffect(() => {
+    if (!token || !ticketPolymarketClobSyncRequired || ticketLoading || ticketActivationPolling) return;
+    const key = `${ticketPolymarketClobReadinessKey}:sync`;
+    if (autoPolymarketClobSyncKeyRef.current === key) return;
+    autoPolymarketClobSyncKeyRef.current = key;
+    void syncPolymarketClobReadiness();
+  }, [
+    syncPolymarketClobReadiness,
+    ticketActivationPolling,
+    ticketLoading,
+    ticketPolymarketClobReadinessKey,
+    ticketPolymarketClobSyncRequired,
+    token,
+  ]);
+
+  React.useEffect(() => {
+    if (!token || !ticketPolymarketClobPropagationPending || ticketLoading || ticketActivationPolling) return;
+    const key = `${ticketPolymarketClobReadinessKey}:refresh`;
+    if (autoPolymarketClobRefreshKeyRef.current === key) return;
+    autoPolymarketClobRefreshKeyRef.current = key;
+    void refreshPolymarketClobReadiness({ poll: true });
+  }, [
+    refreshPolymarketClobReadiness,
+    ticketActivationPolling,
+    ticketLoading,
+    ticketPolymarketClobPropagationPending,
+    ticketPolymarketClobReadinessKey,
+    token,
+  ]);
+
   const ticketBlockedRoutes = ticketLiveCandidates?.blocked ?? [];
   const ticketAmountLabel = side === 'buy' ? 'Amount' : 'Shares to Sell';
   const ticketAmountUnit = side === 'buy' ? 'USDC' : 'Shares';
@@ -4298,28 +4344,6 @@ export const InfraTradingTerminal = ({
                           {ticketStatusMessage}{ticketExecutionId ? ` ${ticketExecutionId}` : ''}
                         </div>
                       )}
-                      {ticketPolymarketClobSyncRequired && (
-                        <button
-                          type="button"
-                          onClick={() => void syncPolymarketClobReadiness()}
-                          disabled={ticketLoading}
-                          className="flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-[#ccff00]/30 bg-[#ccff00]/10 px-3 text-[11px] font-bold uppercase tracking-wide text-[#ccff00] transition-colors hover:bg-[#ccff00]/15 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
-                        >
-                          <RefreshCw className={`h-3.5 w-3.5 ${ticketLoading ? 'animate-spin' : ''}`} />
-                          Sync CLOB
-                        </button>
-                      )}
-                      {!ticketPolymarketClobSyncRequired && ticketPolymarketClobPropagationPending && (
-                        <button
-                          type="button"
-                          onClick={() => void refreshPolymarketClobReadiness()}
-                          disabled={ticketLoading}
-                          className="flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-zinc-700 bg-zinc-900 px-3 text-[11px] font-bold uppercase tracking-wide text-zinc-200 transition-colors hover:border-zinc-600 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
-                        >
-                          <RefreshCw className={`h-3.5 w-3.5 ${ticketLoading ? 'animate-spin' : ''}`} />
-                          Refresh Readiness
-                        </button>
-                      )}
                       {ticketBlockedRoutes.slice(0, 3).map((blocked) => (
                         <div key={`${blocked.venue}-${blocked.venueMarketId ?? blocked.reason}`} className="rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2 text-[10px] font-semibold text-zinc-400">
                           {formatVenueLabel(blocked.venue)} unavailable: {readableQuoteBlocker(blocked.reason) ?? blocked.reason}
@@ -4414,10 +4438,6 @@ export const InfraTradingTerminal = ({
                         void activatePolymarketFunds();
                       } else if (ticketRouteApprovalRequired) {
                         void approveRouteCollateral();
-                      } else if (ticketPolymarketClobSyncRequired) {
-                        void syncPolymarketClobReadiness();
-                      } else if (ticketPolymarketClobPropagationPending) {
-                        void refreshPolymarketClobReadiness();
                       } else if (ticketLimitlessBalanceBlocked) {
                         setTicketStatusMessage('Lower the order amount or add Base USDC to your Limitless wallet, then preview the route again.');
                       } else if (ticketLimitlessSetupRequired) {
