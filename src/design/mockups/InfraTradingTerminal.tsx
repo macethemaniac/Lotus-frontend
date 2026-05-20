@@ -930,9 +930,7 @@ const polymarketReadinessConfirmsTradeReadiness = (readiness: LiveSubmitReadines
   const venue = readiness.venues.find((item) => toBackendVenueId(item.venue) === 'POLYMARKET');
   if (!venue || venue.status !== 'fresh' || venue.blockers.length > 0) return false;
   const source = String(venue.collateral.usableBalanceSource ?? '').toUpperCase();
-  return source === 'USER_CLOB_SYNC_CONFIRMED' ||
-    source === 'CLOB_COLLATERAL_ALLOWANCE' ||
-    venue.collateral.approvalMethod === 'CLOB_PUSD_APPROVAL';
+  return source === 'CLOB_COLLATERAL_ALLOWANCE';
 };
 
 const shouldLoadVenueRiskProfile = (marketId: string): boolean => {
@@ -945,7 +943,10 @@ const shouldLoadVenueRiskProfile = (marketId: string): boolean => {
 const executionFailureMessage = (submitted: ExecutionStatus): string => {
   const failedLeg = submitted.submittedLegs?.find((leg) => leg.reasonCode || leg.reason);
   if (failedLeg?.reasonCode === 'POLYMARKET_CLOB_SYNC_REJECTED_BY_VENUE') {
-    return 'Polymarket rejected this order after CLOB readiness was confirmed. Refresh Polymarket CLOB sync or retry after propagation completes.';
+    return 'Polymarket rejected this order even though live CLOB readiness was confirmed. Lotus will recheck automatically; retry after Polymarket propagation completes.';
+  }
+  if (failedLeg?.reasonCode === 'POLYMARKET_CLOB_SYNC_PENDING_FOR_SUBMIT') {
+    return 'Polymarket CLOB sync is confirmed locally, but live submit readiness is still propagating. Lotus will keep checking automatically; no new sync is required.';
   }
   return failedLeg?.reason ? `Execution failed: ${failedLeg.reason}` : 'Execution failed after backend submit.';
 };
