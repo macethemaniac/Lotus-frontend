@@ -938,7 +938,7 @@ const polymarketReadinessConfirmsTradeReadiness = (readiness: LiveSubmitReadines
   const venue = findPolymarketReadinessVenue(readiness);
   if (!venue || venue.status !== 'fresh' || venue.blockers.length > 0) return false;
   const source = String(venue.collateral.usableBalanceSource ?? '').toUpperCase();
-  return source === 'CLOB_COLLATERAL_ALLOWANCE';
+  return source === 'CLOB_COLLATERAL_ALLOWANCE' || source === 'USER_CLOB_SYNC_CONFIRMED';
 };
 
 const formatReadinessTime = (value: string | number | null | undefined): string => {
@@ -3124,6 +3124,8 @@ export const InfraTradingTerminal = ({
     ? 'checking...'
     : fundingError
       ? 'unavailable'
+      : ticketPolymarketClobPropagationPending
+        ? 'CLOB submit pending'
       : polymarketClobSyncPending
         ? 'CLOB sync pending'
       : ticketActivationRequired
