@@ -224,6 +224,36 @@ export function createExecutionQuote(token: string, request: LiveCandidateReques
   return apiRequest<{ quote: RouteQuote }>("/execution/quote", { method: "POST", token, body: request });
 }
 
+export type PrepareExitQuoteRequest = {
+  sellMode: "SINGLE_VENUE_SELL" | "SELL_ALL";
+  venue?: string;
+  sizeMode: "PERCENT" | "CUSTOM_AMOUNT";
+  percent?: 25 | 50 | 100;
+  amount?: string;
+  marketId: string;
+  outcomeId: string;
+  candidates: TradeRouteCandidate[];
+};
+
+export type PrepareExitQuoteResponse = {
+  quote: RouteQuote;
+  allocations: Array<{
+    venue: string;
+    positionId: string;
+    sellSize: string;
+    availableSize: string;
+  }>;
+  skippedAmount: string;
+};
+
+export function prepareExitQuote(token: string, request: PrepareExitQuoteRequest) {
+  return apiRequest<PrepareExitQuoteResponse>("/execution/sell-preview/prepare-exit", {
+    method: "POST",
+    token,
+    body: request,
+  });
+}
+
 export function submitExecutionQuote(token: string, quoteId: string) {
   return apiRequest<{ executionId: string; status: string; route: RouteQuote; message: string }>("/execution/submit", {
     method: "POST",
