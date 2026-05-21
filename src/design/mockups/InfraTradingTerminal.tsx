@@ -999,6 +999,53 @@ const executionFailureMessage = (submitted: ExecutionStatus): string => {
   return failedLeg?.reason ? `Execution failed: ${failedLeg.reason}` : 'Execution failed after backend submit.';
 };
 
+const primaryExecutionLeg = (execution: ExecutionStatus) => execution.submittedLegs?.[0] ?? null;
+
+const executionLegStatusSummary = (execution: ExecutionStatus): { title: string; detail: string; tone: 'neutral' | 'success' | 'warning' | 'danger' } => {
+  const leg = primaryExecutionLeg(execution);
+  if (!leg) {
+    return { title: execution.userStatus ?? execution.status ?? 'Submitted', detail: 'Tracking execution status.', tone: 'neutral' };
+  }
+  if (leg.reason || leg.reasonCode || String(leg.status).toUpperCase() === 'FAILED') {
+    return { title: 'Failed', detail: leg.reason ?? leg.reasonCode ?? 'Venue submit failed.', tone: 'danger' };
+  }
+  const venue = formatVenueLabel(leg.venue);
+  const legStatus = String(leg.status ?? '').toUpperCase();
+  const fillStatus = String(leg.fillState?.status ?? '').toUpperCase();
+  const settlementStatus = String(leg.settlementState?.status ?? '').toUpperCase();
+  const filledSize = parseFiniteNumber(leg.fillState?.filledSize);
+  const filledLabel = filledSize !== null && filledSize > 0
+    ? `${formatCompactMetric(filledSize) ?? leg.fillState?.filledSize} filled`
+    : '0 filled';
+  if (settlementStatus === 'SETTLEMENT_VERIFIED' || execution.userStatus === 'FILLED' || execution.status === 'FILLED') {
+    return { title: 'Filled', detail: `${venue} fill verified.`, tone: 'success' };
+  }
+  if (fillStatus === 'FILLED') {
+    return { title: 'Fill observed', detail: `${filledLabel}; waiting for verified settlement.`, tone: 'warning' };
+  }
+  if (fillStatus === 'PARTIAL_FILL' || legStatus === 'PARTIAL_FILL' || execution.userStatus === 'PARTIAL') {
+    return { title: 'Partial fill', detail: `${filledLabel}; tracking remaining size.`, tone: 'warning' };
+  }
+  if (leg.fillId || leg.venueOrderId || fillStatus === 'OPEN' || legStatus === 'OPEN' || legStatus === 'SUBMITTED') {
+    return { title: 'Waiting for venue fill', detail: `${venue} accepted the order; ${filledLabel} so far.`, tone: 'neutral' };
+  }
+  return { title: legStatus || 'Submitted', detail: 'Tracking execution status.', tone: 'neutral' };
+};
+
+const executionSubmitStatusMessage = (submitted: ExecutionStatus): string => {
+  const submittedStatus = (submitted.status ?? submitted.userStatus ?? 'SUBMITTED').toUpperCase();
+  if (submittedStatus === 'FILLED') return 'Market order filled.';
+  if (submittedStatus === 'PARTIAL') return 'Market order partially filled. Tracking remaining size.';
+  const summary = executionLegStatusSummary(submitted);
+  if (summary.title === 'Waiting for venue fill') {
+    return 'Order submitted to the venue. Waiting for fill confirmation.';
+  }
+  if (summary.title === 'Fill observed') {
+    return 'Venue fill observed. Waiting for verified settlement before updating positions.';
+  }
+  return 'Market order submitted. Tracking execution status.';
+};
+
 const describeOutcomeSchema = (schema: Record<string, unknown> | null | undefined): string => {
   if (!schema) return 'Outcome schema not specified';
   const yes = typeof schema.yesLabel === 'string' ? schema.yesLabel : 'Yes';
@@ -2312,12 +2359,7 @@ export const InfraTradingTerminal = ({
         setBottomTab('Trade History');
         return;
       }
-      const successMessage = submittedStatus === 'FILLED'
-        ? 'Market order filled.'
-        : submittedStatus === 'PARTIAL'
-          ? 'Market order partially filled. Tracking remaining size.'
-          : 'Market order submitted. Tracking execution status.';
-      setTicketStatusMessage(successMessage);
+      setTicketStatusMessage(executionSubmitStatusMessage(submitted));
       setBottomTab(submittedStatus === 'SUBMITTED' || submittedStatus === 'PARTIAL' ? 'Open Orders' : 'Trade History');
     } catch (error) {
       setTicketError(error instanceof Error ? error.message : 'Wallet signature or signed submit failed.');
@@ -2399,12 +2441,7 @@ export const InfraTradingTerminal = ({
         setBottomTab('Trade History');
         return;
       }
-      const successMessage = submittedStatus === 'FILLED'
-        ? 'Market order filled.'
-        : submittedStatus === 'PARTIAL'
-          ? 'Market order partially filled. Tracking remaining size.'
-          : 'Market order submitted. Tracking execution status.';
-      setTicketStatusMessage(successMessage);
+      setTicketStatusMessage(executionSubmitStatusMessage(submitted));
       setBottomTab(submittedStatus === 'SUBMITTED' || submittedStatus === 'PARTIAL' ? 'Open Orders' : 'Trade History');
     } catch (error) {
       setTicketExecutionId(null);
@@ -4405,30 +4442,44 @@ export const InfraTradingTerminal = ({
                       {accountLoading && <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 px-4 py-2 text-xs font-semibold text-zinc-400">Refreshing open orders...</div>}
                       {accountError && <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-xs font-semibold text-amber-200">{accountError}</div>}
                       {openOrders.length === 0 && emptyCopy('No open orders', accountEmptyCopy)}
-                      {openOrders.map((order) => (
-                        <div key={order.executionId} className="rounded-xl border border-zinc-800 bg-zinc-950/30 px-5 py-3">
-                          <div className="flex items-center justify-between gap-4">
-                            <div className="min-w-0">
-                              <div className="text-sm font-bold text-zinc-100">{order.openStatus}</div>
-                              <div className="mt-0.5 truncate text-xs font-medium text-zinc-500">{order.executionId}</div>
-                            </div>
-                            <div className="grid grid-cols-3 gap-6 text-right">
-                              <div>
-                                <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Route</div>
-                                <div className="text-xs font-bold text-zinc-200">{order.route?.venuePath?.map(formatVenueLabel).join(' / ') || 'Pending'}</div>
+                      {openOrders.map((order) => {
+                        const summary = executionLegStatusSummary(order);
+                        const summaryTone = summary.tone === 'warning'
+                          ? 'text-amber-300'
+                          : summary.tone === 'danger'
+                            ? 'text-rose-300'
+                            : summary.tone === 'success'
+                              ? 'text-emerald-300'
+                              : 'text-zinc-300';
+                        return (
+                          <div key={order.executionId} className="rounded-xl border border-zinc-800 bg-zinc-950/30 px-5 py-3">
+                            <div className="flex items-center justify-between gap-4">
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <div className="text-sm font-bold text-zinc-100">{order.openStatus}</div>
+                                  <div className={`text-xs font-bold ${summaryTone}`}>{summary.title}</div>
+                                </div>
+                                <div className="mt-0.5 truncate text-xs font-medium text-zinc-500">{order.executionId}</div>
+                                <div className="mt-1 text-xs font-semibold text-zinc-400">{summary.detail}</div>
                               </div>
-                              <div>
-                                <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Price</div>
-                                <div className="font-mono text-sm font-black text-white">{formatProbabilityPrice(order.route?.expectedPrice)}</div>
-                              </div>
-                              <div>
-                                <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Updated</div>
-                                <div className="text-xs font-bold text-zinc-300">{formatDateTime(order.updatedAt ?? order.submittedAt)}</div>
+                              <div className="grid grid-cols-3 gap-6 text-right">
+                                <div>
+                                  <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Route</div>
+                                  <div className="text-xs font-bold text-zinc-200">{order.route?.venuePath?.map(formatVenueLabel).join(' / ') || 'Pending'}</div>
+                                </div>
+                                <div>
+                                  <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Price</div>
+                                  <div className="font-mono text-sm font-black text-white">{formatProbabilityPrice(order.route?.expectedPrice)}</div>
+                                </div>
+                                <div>
+                                  <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Updated</div>
+                                  <div className="text-xs font-bold text-zinc-300">{formatDateTime(order.updatedAt ?? order.submittedAt)}</div>
+                                </div>
                               </div>
                             </div>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                 )}
                 {bottomTab === 'Trade History' && (
