@@ -11,6 +11,7 @@ import {
   type MarketCatalogMarket,
 } from '@/features/markets/api/market-api';
 import { getNotifications, markNotificationRead, type UserNotification } from '@/features/notifications/api/notification-api';
+import { NotificationToast, type NotificationToastTone } from '@/features/notifications/components/notification-toast';
 import { getPortfolioSummary, type LiveCandidatesResponse, type PortfolioSummary, type TradeRouteCandidate } from '@/features/trading/api/execution-api';
 import { getVenueBalances, type VenueBalance } from '@/features/funding/api/funding-api';
 import { ApiClientError } from '@/lib/api/http-client';
@@ -940,13 +941,13 @@ const formatRelativeTime = (value: string): string => {
 const mapNotificationForDashboard = (notification: UserNotification) => {
   switch (notification.severity) {
     case 'success':
-      return { Icon: CheckCircle2, tone: 'text-emerald-500', ring: 'bg-emerald-500/10 border-emerald-500/20', meta: notification.targetKind ?? notification.type };
+      return { Icon: CheckCircle2, tone: 'success' as NotificationToastTone, meta: notification.targetKind ?? notification.type };
     case 'warning':
-      return { Icon: AlertTriangle, tone: 'text-amber-400', ring: 'bg-amber-500/10 border-amber-500/20', meta: notification.targetKind ?? notification.type };
+      return { Icon: AlertTriangle, tone: 'warning' as NotificationToastTone, meta: notification.targetKind ?? notification.type };
     case 'error':
-      return { Icon: AlertTriangle, tone: 'text-red-400', ring: 'bg-red-500/10 border-red-500/20', meta: notification.targetKind ?? notification.type };
+      return { Icon: AlertTriangle, tone: 'error' as NotificationToastTone, meta: notification.targetKind ?? notification.type };
     default:
-      return { Icon: Clock, tone: 'text-sky-400', ring: 'bg-sky-500/10 border-sky-500/20', meta: notification.targetKind ?? notification.type };
+      return { Icon: Clock, tone: 'info' as NotificationToastTone, meta: notification.targetKind ?? notification.type };
   }
 };
 
@@ -1465,28 +1466,17 @@ export const DashboardV2Mockup = ({
                         const display = mapNotificationForDashboard(item);
                         const Icon = display.Icon;
                         return (
-                          <button
+                          <NotificationToast
                             key={item.notificationId}
-                            type="button"
-                            onClick={() => handleReadNotification(item)}
-                            className="group/notice flex w-full items-start gap-3 rounded-lg border border-transparent p-2.5 text-left transition-colors hover:border-zinc-200 hover:bg-white dark:hover:border-zinc-700 dark:hover:bg-zinc-900/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
-                          >
-                            <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border ${display.ring}`}>
-                              <Icon className={`h-4 w-4 ${display.tone}`} />
-                            </span>
-                            <span className="min-w-0 flex-1">
-                              <span className="flex items-center justify-between gap-2">
-                                <span className="truncate text-xs font-bold text-zinc-900 dark:text-zinc-100">{item.title}</span>
-                                <span className="shrink-0 text-[10px] font-mono text-zinc-400">{formatRelativeTime(item.createdAt)}</span>
-                              </span>
-                              <span className="mt-1 block text-[11px] leading-snug text-zinc-600 dark:text-zinc-400">
-                                {item.body}
-                              </span>
-                              <span className="mt-2 inline-flex rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-500">
-                                {display.meta}
-                              </span>
-                            </span>
-                          </button>
+                            icon={<Icon className="h-4 w-4" aria-hidden />}
+                            tone={display.tone}
+                            title={item.title}
+                            timeLabel={formatRelativeTime(item.createdAt)}
+                            description={item.body}
+                            meta={display.meta}
+                            unread={item.readAt === null}
+                            onSelect={() => handleReadNotification(item)}
+                          />
                         );
                       })}
                     </div>

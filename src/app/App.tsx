@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
 import {
   Archive,
@@ -33,6 +33,50 @@ import { getVenueBalances, getVenueCapabilities, mergeVenueBalanceSnapshots, typ
 import { getMarketBatchQuotes, listEvents, listMarkets } from "@/features/markets/api/market-api";
 import { getNotifications } from "@/features/notifications/api/notification-api";
 import { listWallets, mergeUserWalletBalanceSnapshots, type UserWallet } from "@/features/wallets/api/wallet-api";
+
+const lotusPageRouteByPage: Record<LotusAppPage, string> = {
+  home: "/dashboard",
+  markets: "/markets",
+  terminal: "/terminal",
+  portfolio: "/portfolio",
+  settings: "/settings",
+};
+
+const lotusPageTitleByPage: Record<LotusAppPage, string> = {
+  home: "Lotus Dashboard",
+  markets: "Lotus Markets",
+  terminal: "Lotus Terminal",
+  portfolio: "Lotus Portfolio",
+  settings: "Lotus Settings",
+};
+
+function normalizeAppPath(pathname: string): string {
+  const normalized = pathname.replace(/\/+$/, "");
+  return normalized || "/";
+}
+
+function lotusPageFromPath(pathname: string): LotusAppPage {
+  switch (normalizeAppPath(pathname)) {
+    case "/":
+    case "/dashboard":
+    case "/home":
+      return "home";
+    case "/markets":
+      return "markets";
+    case "/terminal":
+      return "terminal";
+    case "/portfolio":
+      return "portfolio";
+    case "/settings":
+      return "settings";
+    default:
+      return "home";
+  }
+}
+
+function setLotusDocumentTitle(page: LotusAppPage): void {
+  document.title = lotusPageTitleByPage[page];
+}
 
 function formatTurnkeyError(error: unknown): string {
   if (!(error instanceof Error)) {
@@ -636,10 +680,32 @@ export function App() {
   const [session, setSession] = useState<AuthSession | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
-  const [activePage, setActivePage] = useState<LotusAppPage>("home");
+  const [activePage, setActivePage] = useState<LotusAppPage>(() => lotusPageFromPath(window.location.pathname));
 
   useEffect(() => {
     setSession(loadStoredSession());
+  }, []);
+
+  useEffect(() => {
+    setLotusDocumentTitle(activePage);
+  }, [activePage]);
+
+  useEffect(() => {
+    const syncPageFromLocation = () => {
+      setActivePage(lotusPageFromPath(window.location.pathname));
+    };
+
+    window.addEventListener("popstate", syncPageFromLocation);
+    return () => window.removeEventListener("popstate", syncPageFromLocation);
+  }, []);
+
+  const navigateToPage = useCallback((page: LotusAppPage) => {
+    setActivePage(page);
+    const nextPath = lotusPageRouteByPage[page];
+    const currentPath = normalizeAppPath(window.location.pathname);
+    if (currentPath !== nextPath) {
+      window.history.pushState({ lotusPage: page }, "", nextPath);
+    }
   }, []);
 
   const applySession = (nextSession: AuthSession) => {
@@ -730,8 +796,8 @@ export function App() {
         />
       ) : (
         <div className="h-screen overflow-hidden bg-black pb-10">
-          <AccountDropdown session={session} onLogout={handleLogout} onNavigate={setActivePage} />
-          <DashboardV2Mockup activePage={activePage} onNavigate={setActivePage} session={session} />
+          <AccountDropdown session={session} onLogout={handleLogout} onNavigate={navigateToPage} />
+          <DashboardV2Mockup activePage={activePage} onNavigate={navigateToPage} session={session} />
           <DenseStripFooter fixed />
         </div>
       )}

@@ -13,6 +13,7 @@ const references = [
   "RoutePreview",
   "ExecutionReceipt",
   "AlertsNotifications",
+  "NotificationToasts",
   "GlobalFooterVariations",
   "InfraLeaderboard",
 ];
