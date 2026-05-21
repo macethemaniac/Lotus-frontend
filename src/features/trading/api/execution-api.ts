@@ -95,9 +95,14 @@ export type ExecutionStatus = {
     venue: string;
     status: string;
     venueOrderId?: string;
+    fillId?: string;
     reasonCode?: string;
     reason?: string;
     fillState?: unknown;
+    settlementState?: {
+      status?: string;
+      evidence?: Record<string, unknown>;
+    };
   }>;
 };
 
