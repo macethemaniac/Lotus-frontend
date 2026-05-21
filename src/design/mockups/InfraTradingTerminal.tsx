@@ -1001,6 +1001,47 @@ const executionFailureMessage = (submitted: ExecutionStatus): string => {
 
 const primaryExecutionLeg = (execution: ExecutionStatus) => execution.submittedLegs?.[0] ?? null;
 
+const executionSettlementStatusCode = (execution: ExecutionStatus): string => {
+  const legStatuses = execution.submittedLegs
+    ?.map((leg) => String(leg.settlementState?.status ?? '').toUpperCase())
+    .filter(Boolean) ?? [];
+
+  if (legStatuses.includes('GHOST_FILL_CONFIRMED')) return 'GHOST_FILL_CONFIRMED';
+  if (legStatuses.includes('GHOST_FILL_SUSPECTED')) return 'GHOST_FILL_SUSPECTED';
+  if (legStatuses.includes('SETTLEMENT_TIMEOUT')) return 'SETTLEMENT_TIMEOUT';
+  if (legStatuses.includes('SETTLEMENT_UNKNOWN')) return 'SETTLEMENT_UNKNOWN';
+  if (legStatuses.length > 0 && legStatuses.every((status) =>
+    status === 'SETTLEMENT_VERIFIED' || status === 'NOT_APPLICABLE' || status === 'DRY_RUN_ONLY')) {
+    if (legStatuses.includes('SETTLEMENT_VERIFIED')) return 'SETTLEMENT_VERIFIED';
+    if (legStatuses.every((status) => status === 'DRY_RUN_ONLY')) return 'DRY_RUN_ONLY';
+    return 'NOT_APPLICABLE';
+  }
+
+  return String(execution.settlementStatus ?? 'SETTLEMENT_PENDING').toUpperCase();
+};
+
+const executionSettlementStatusLabel = (execution: ExecutionStatus): string => {
+  switch (executionSettlementStatusCode(execution)) {
+    case 'SETTLEMENT_VERIFIED':
+      return 'Verified';
+    case 'GHOST_FILL_CONFIRMED':
+      return 'Verified after recovery';
+    case 'GHOST_FILL_SUSPECTED':
+      return 'Under review';
+    case 'SETTLEMENT_TIMEOUT':
+      return 'Needs review';
+    case 'SETTLEMENT_UNKNOWN':
+      return 'Unknown';
+    case 'NOT_APPLICABLE':
+      return 'Not required';
+    case 'DRY_RUN_ONLY':
+      return 'Dry run';
+    case 'SETTLEMENT_PENDING':
+    default:
+      return 'Pending';
+  }
+};
+
 const executionLegStatusSummary = (execution: ExecutionStatus): { title: string; detail: string; tone: 'neutral' | 'success' | 'warning' | 'danger' } => {
   const leg = primaryExecutionLeg(execution);
   if (!leg) {
@@ -4501,7 +4542,7 @@ export const InfraTradingTerminal = ({
                               </div>
                               <div>
                                 <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Settlement</div>
-                                <div className="text-xs font-bold text-zinc-300">{execution.settlementStatus ?? 'Pending'}</div>
+                                <div className="text-xs font-bold text-zinc-300">{executionSettlementStatusLabel(execution)}</div>
                               </div>
                               <div>
                                 <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Updated</div>
