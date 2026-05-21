@@ -44,6 +44,7 @@ import {
   getLiveReadiness,
   getOpenOrders,
   getPositions,
+  prepareExitQuote,
   prepareSignatures,
   submitSignedBundle,
   submitExecutionQuote,
@@ -721,6 +722,28 @@ const matchesPositionMarket = (position: ExecutionPosition, marketId: string | n
   return marketMatches && outcomeMatches;
 };
 
+const sellableSharesForPositions = (
+  positions: readonly ExecutionPosition[],
+  marketId: string | null,
+  outcomeId: string | null
+): number => positions
+  .filter((position) => matchesPositionMarket(position, marketId, outcomeId))
+  .reduce((sum, position) => {
+    const sellable = parseFiniteNumber(position.sellableSize);
+    if (sellable !== null) {
+      return sum + Math.max(0, sellable);
+    }
+    const verified = parsePositiveNumber(position.verifiedSize) ?? 0;
+    return sum + verified;
+  }, 0);
+
+const activeTerminalPositions = (
+  positions: readonly ExecutionPosition[],
+  marketId: string | null
+): ExecutionPosition[] => positions.filter((position) =>
+  isOpenExecutionPosition(position) && matchesPositionMarket(position, marketId, null)
+);
+
 const formatDateTime = (value: string | null | undefined): string => {
   if (!value) return 'Pending';
   const date = new Date(value);
@@ -933,6 +956,16 @@ const isPolymarketClobPropagationReadiness = (readiness: LiveSubmitReadinessSnap
     /SYNC WAS CONFIRMED LOCALLY|LIVE CLOB SPENDABLE|SYNC PROPAGAT|PROPAGATION/.test(blockerText);
 };
 
+const isPolymarketSellShareBalanceBlocked = (readiness: LiveSubmitReadinessSnapshot | null): boolean => {
+  const venue = findPolymarketReadinessVenue(readiness);
+  if (!venue || !isReadinessVenueBlocked(venue)) return false;
+  const blockerText = venue.blockers.join(' ').toUpperCase();
+  const tokenSymbol = String(venue.collateral.tokenSymbol ?? '').toUpperCase();
+  const balance = parseFiniteNumber(venue.collateral.balance ?? undefined);
+  return /SHARE BALANCE|SELLABLE BALANCE|BELOW THE SELL AMOUNT/.test(blockerText) ||
+    (tokenSymbol.includes('SHARE') && balance !== null && balance <= 0);
+};
+
 const polymarketReadinessConfirmsTradeReadiness = (readiness: LiveSubmitReadinessSnapshot | null): boolean => {
   if (!readiness || readiness.status !== 'fresh' || readiness.blockers.length > 0) return false;
   const venue = findPolymarketReadinessVenue(readiness);
@@ -965,6 +998,8 @@ const executionFailureMessage = (submitted: ExecutionStatus): string => {
   }
   return failedLeg?.reason ? `Execution failed: ${failedLeg.reason}` : 'Execution failed after backend submit.';
 };
+
+const primaryExecutionLeg = (execution: ExecutionStatus) => execution.submittedLegs?.[0] ?? null;
 
 const executionSettlementStatusCode = (execution: ExecutionStatus): string => {
   const legStatuses = execution.submittedLegs
@@ -1005,6 +1040,51 @@ const executionSettlementStatusLabel = (execution: ExecutionStatus): string => {
     default:
       return 'Pending';
   }
+};
+
+const executionLegStatusSummary = (execution: ExecutionStatus): { title: string; detail: string; tone: 'neutral' | 'success' | 'warning' | 'danger' } => {
+  const leg = primaryExecutionLeg(execution);
+  if (!leg) {
+    return { title: execution.userStatus ?? execution.status ?? 'Submitted', detail: 'Tracking execution status.', tone: 'neutral' };
+  }
+  if (leg.reason || leg.reasonCode || String(leg.status).toUpperCase() === 'FAILED') {
+    return { title: 'Failed', detail: leg.reason ?? leg.reasonCode ?? 'Venue submit failed.', tone: 'danger' };
+  }
+  const venue = formatVenueLabel(leg.venue);
+  const legStatus = String(leg.status ?? '').toUpperCase();
+  const fillStatus = String(leg.fillState?.status ?? '').toUpperCase();
+  const settlementStatus = String(leg.settlementState?.status ?? '').toUpperCase();
+  const filledSize = parseFiniteNumber(leg.fillState?.filledSize);
+  const filledLabel = filledSize !== null && filledSize > 0
+    ? `${formatCompactMetric(filledSize) ?? leg.fillState?.filledSize} filled`
+    : '0 filled';
+  if (settlementStatus === 'SETTLEMENT_VERIFIED' || execution.userStatus === 'FILLED' || execution.status === 'FILLED') {
+    return { title: 'Filled', detail: `${venue} fill verified.`, tone: 'success' };
+  }
+  if (fillStatus === 'FILLED') {
+    return { title: 'Fill observed', detail: `${filledLabel}; waiting for verified settlement.`, tone: 'warning' };
+  }
+  if (fillStatus === 'PARTIAL_FILL' || legStatus === 'PARTIAL_FILL' || execution.userStatus === 'PARTIAL') {
+    return { title: 'Partial fill', detail: `${filledLabel}; tracking remaining size.`, tone: 'warning' };
+  }
+  if (leg.fillId || leg.venueOrderId || fillStatus === 'OPEN' || legStatus === 'OPEN' || legStatus === 'SUBMITTED') {
+    return { title: 'Waiting for venue fill', detail: `${venue} accepted the order; ${filledLabel} so far.`, tone: 'neutral' };
+  }
+  return { title: legStatus || 'Submitted', detail: 'Tracking execution status.', tone: 'neutral' };
+};
+
+const executionSubmitStatusMessage = (submitted: ExecutionStatus): string => {
+  const submittedStatus = (submitted.status ?? submitted.userStatus ?? 'SUBMITTED').toUpperCase();
+  if (submittedStatus === 'FILLED') return 'Market order filled.';
+  if (submittedStatus === 'PARTIAL') return 'Market order partially filled. Tracking remaining size.';
+  const summary = executionLegStatusSummary(submitted);
+  if (summary.title === 'Waiting for venue fill') {
+    return 'Order submitted to the venue. Waiting for fill confirmation.';
+  }
+  if (summary.title === 'Fill observed') {
+    return 'Venue fill observed. Waiting for verified settlement before updating positions.';
+  }
+  return 'Market order submitted. Tracking execution status.';
 };
 
 const describeOutcomeSchema = (schema: Record<string, unknown> | null | undefined): string => {
@@ -1835,14 +1915,7 @@ export const InfraTradingTerminal = ({
   const selectedSellPositions = positions.filter((position) =>
     matchesPositionMarket(position, selectedTicketMarketId, selectedTicketQuoteOutcomeId)
   );
-  const ticketSellableShares = selectedSellPositions.reduce((sum, position) => {
-    const sellable = parseFiniteNumber(position.sellableSize);
-    if (sellable !== null) {
-      return sum + Math.max(0, sellable);
-    }
-    const verified = parsePositiveNumber(position.verifiedSize) ?? 0;
-    return sum + verified;
-  }, 0);
+  const ticketSellableShares = sellableSharesForPositions(positions, selectedTicketMarketId, selectedTicketQuoteOutcomeId);
   const totalVerifiedSize = positions.reduce((sum, position) => sum + (parsePositiveNumber(position.verifiedSize) ?? 0), 0);
   const totalCostBasis = positions.reduce((sum, position) => sum + (parsePositiveNumber(position.verifiedSize) ?? 0) * position.averageEntryPrice, 0);
   const averageEntry = totalVerifiedSize > 0 ? totalCostBasis / totalVerifiedSize : null;
@@ -2092,24 +2165,32 @@ export const InfraTradingTerminal = ({
       setTicketError(side === 'buy' ? 'Enter a USDC amount after a live outcome price is available.' : 'Enter the shares to sell.');
       return;
     }
-    if (side === 'sell' && ticketSellableShares <= 0) {
-      setTicketError('No verified sellable shares are available for this outcome yet.');
-      return;
-    }
-    if (side === 'sell' && requestedShares > ticketSellableShares) {
-      setTicketError(`You can sell up to ${formatSignedShares(ticketSellableShares)} for this outcome.`);
-      return;
-    }
     const backendAmount = formatRouteAmount(requestedShares);
     setTicketLoading(true);
     setTicketError(null);
-    setTicketStatusMessage(null);
+    setTicketStatusMessage(side === 'sell' ? 'Checking verified sellable shares before routing the sell.' : null);
     setTicketQuote(null);
     setTicketLiveReadiness(null);
     setTicketReadinessNextCheckAt(null);
     setTicketExecutionId(null);
     setTicketSignatureBundle(null);
     try {
+      if (side === 'sell') {
+        const positionsResponse = await getPositions(token, { limit: 100 });
+        const activePositions = activeTerminalPositions(positionsResponse.positions, terminalMarketId);
+        setPositions(activePositions);
+        const freshSellableShares = sellableSharesForPositions(activePositions, selectedTicketMarketId, selectedTicketQuoteOutcomeId);
+        if (freshSellableShares <= 0) {
+          setTicketError('No verified sellable shares are available for this outcome.');
+          setTicketStatusMessage('Sell routing is disabled until backend position verification confirms venue shares for this outcome.');
+          return;
+        }
+        if (requestedShares > freshSellableShares) {
+          setTicketError(`You can sell up to ${formatSignedShares(freshSellableShares)} for this outcome.`);
+          setTicketStatusMessage('Refresh positions or lower the sell amount before previewing the route.');
+          return;
+        }
+      }
       const liveCandidates = await getLiveCandidates(token, {
         side,
         marketId: selectedTicketMarketId,
@@ -2122,14 +2203,23 @@ export const InfraTradingTerminal = ({
         setTicketError(readableQuoteBlocker(liveCandidates.blocked[0]?.reason) ?? 'No executable live route returned for this market order.');
         return;
       }
-      const response = await createExecutionQuote(token, {
-        side,
-        marketId: selectedTicketMarketId,
-        outcomeId: selectedTicketQuoteOutcomeId,
-        amount: backendAmount,
-        venues: backendVenueList.length ? backendVenueList : undefined,
-        candidates: liveCandidates.candidates,
-      });
+      const response = side === 'sell'
+        ? await prepareExitQuote(token, {
+          sellMode: 'SELL_ALL',
+          sizeMode: 'CUSTOM_AMOUNT',
+          amount: backendAmount,
+          marketId: selectedTicketMarketId,
+          outcomeId: selectedTicketQuoteOutcomeId,
+          candidates: liveCandidates.candidates,
+        })
+        : await createExecutionQuote(token, {
+          side,
+          marketId: selectedTicketMarketId,
+          outcomeId: selectedTicketQuoteOutcomeId,
+          amount: backendAmount,
+          venues: backendVenueList.length ? backendVenueList : undefined,
+          candidates: liveCandidates.candidates,
+        });
       setTicketQuote(response.quote);
       setTicketQuoteAmount(ticketAmount.trim());
       setTicketSignatureBundle(null);
@@ -2139,6 +2229,18 @@ export const InfraTradingTerminal = ({
         setTicketLiveReadiness(readiness);
         const readinessBlocker = firstReadinessBlocker(readiness);
         if (readinessBlocker) {
+          if (side === 'sell' && isPolymarketSellShareBalanceBlocked(readiness)) {
+            const positionsResponse = await getPositions(token, { limit: 100 });
+            setPositions(activeTerminalPositions(positionsResponse.positions, terminalMarketId));
+            setTicketQuote(null);
+            setTicketQuoteAmount(null);
+            setTicketExecutionId(null);
+            setTicketSignatureBundle(null);
+            setOrderAction('setup');
+            setTicketError('No verified Polymarket shares are available to sell for this outcome.');
+            setTicketStatusMessage('The live venue share check returned zero spendable shares, so this stale sell route was cleared.');
+            return;
+          }
           const blockerCopy = readinessBlocker.blocker;
           const venueLabel = formatVenueLabel(readinessBlocker.venue);
           const pendingPolymarketReadiness = isPolymarketClobPropagationReadiness(readiness);
@@ -2155,11 +2257,51 @@ export const InfraTradingTerminal = ({
       }
       setTicketStatusMessage('Live market quote ready. Review the route before placing the order.');
     } catch (error) {
+      if (side === 'sell' && error instanceof ApiClientError && (
+        error.code === 'NO_EXECUTABLE_EXIT_ROUTE' ||
+        error.code === 'NO_SELLABLE_SHARES'
+      )) {
+        const payload = error.payload && typeof error.payload === 'object' ? error.payload as Record<string, unknown> : {};
+        const readiness = payload.readiness;
+        if (readiness && typeof readiness === 'object') {
+          setTicketLiveReadiness(readiness as LiveSubmitReadinessSnapshot);
+        }
+        setTicketQuote(null);
+        setTicketQuoteAmount(null);
+        setTicketExecutionId(null);
+        setTicketSignatureBundle(null);
+        setOrderAction('setup');
+        setTicketStatusMessage('Sell routing is disabled until backend position verification confirms venue shares for this outcome.');
+      }
       setTicketError(error instanceof Error ? error.message : 'Live market quote failed.');
     } finally {
       setTicketLoading(false);
     }
-  }, [backendVenueList, fundingError, fundingLoading, selectedTicketMarketId, selectedTicketOutcome, selectedTicketOutcomeId, selectedTicketQuoteOutcomeId, side, ticketAmount, ticketOutcomeSide, ticketSellableShares, token, venueReadyBalance]);
+  }, [backendVenueList, fundingError, fundingLoading, selectedTicketMarketId, selectedTicketOutcome, selectedTicketQuoteOutcomeId, side, terminalMarketId, ticketAmount, ticketOutcomeSide, token]);
+
+  React.useEffect(() => {
+    if (side !== 'sell') return;
+    if (ticketSellableShares > 0) return;
+    if (!ticketQuote && !ticketExecutionId && !ticketLiveReadiness && !ticketSignatureBundle) return;
+    setTicketQuote(null);
+    setTicketQuoteAmount(null);
+    setTicketExecutionId(null);
+    setTicketSignatureBundle(null);
+    setTicketLiveReadiness(null);
+    setTicketReadinessNextCheckAt(null);
+    setOrderAction('setup');
+    if (ticketAmount.trim()) {
+      setTicketStatusMessage('No verified sellable shares are available for this outcome.');
+    }
+  }, [
+    side,
+    ticketAmount,
+    ticketExecutionId,
+    ticketLiveReadiness,
+    ticketQuote,
+    ticketSellableShares,
+    ticketSignatureBundle,
+  ]);
 
   const signAndSubmitTicketSignature = useCallback(async (bundle: SignatureBundle, executionId: string) => {
     if (!token) return;
@@ -2248,9 +2390,7 @@ export const InfraTradingTerminal = ({
       setTicketSignatureBundle(null);
       void getPositions(token, { limit: 100 })
         .then((positionsResponse) => {
-          setPositions(positionsResponse.positions.filter((position) =>
-            isOpenExecutionPosition(position) || (parsePositiveNumber(position.sellableSize) ?? 0) > 0
-          ));
+          setPositions(activeTerminalPositions(positionsResponse.positions, terminalMarketId));
         })
         .catch(() => undefined);
       const submittedStatus = (submitted.status ?? submitted.userStatus ?? 'SUBMITTED').toUpperCase();
@@ -2260,19 +2400,14 @@ export const InfraTradingTerminal = ({
         setBottomTab('Trade History');
         return;
       }
-      const successMessage = submittedStatus === 'FILLED'
-        ? 'Market order filled.'
-        : submittedStatus === 'PARTIAL'
-          ? 'Market order partially filled. Tracking remaining size.'
-          : 'Market order submitted. Tracking execution status.';
-      setTicketStatusMessage(successMessage);
+      setTicketStatusMessage(executionSubmitStatusMessage(submitted));
       setBottomTab(submittedStatus === 'SUBMITTED' || submittedStatus === 'PARTIAL' ? 'Open Orders' : 'Trade History');
     } catch (error) {
       setTicketError(error instanceof Error ? error.message : 'Wallet signature or signed submit failed.');
     } finally {
       setTicketLoading(false);
     }
-  }, [handleLogin, refreshWallets, session?.turnkeyOrganizationId, signMessage, ticketAmount, ticketLiveReadiness, ticketQuoteAmount, token, turnkeySession?.organizationId, turnkeyWallets]);
+  }, [handleLogin, refreshWallets, session?.turnkeyOrganizationId, signMessage, terminalMarketId, ticketAmount, ticketLiveReadiness, ticketQuoteAmount, token, turnkeySession?.organizationId, turnkeyWallets]);
 
   const submitMarketOrder = useCallback(async () => {
     if (!token || !ticketQuote) {
@@ -2293,6 +2428,18 @@ export const InfraTradingTerminal = ({
       const readiness = await getLiveReadiness(token, executionId);
       setTicketLiveReadiness(readiness);
       if (isReadinessBlocked(readiness)) {
+        if (side === 'sell' && isPolymarketSellShareBalanceBlocked(readiness)) {
+          const positionsResponse = await getPositions(token, { limit: 100 });
+          setPositions(activeTerminalPositions(positionsResponse.positions, terminalMarketId));
+          setTicketQuote(null);
+          setTicketQuoteAmount(null);
+          setTicketExecutionId(null);
+          setTicketSignatureBundle(null);
+          setOrderAction('setup');
+          setTicketError('No verified Polymarket shares are available to sell for this outcome.');
+          setTicketStatusMessage('The live venue share check returned zero spendable shares, so this stale sell route was cleared.');
+          return;
+        }
         const blocked = firstReadinessBlocker(readiness);
         setTicketExecutionId(executionId);
         setTicketError(`${formatVenueLabel(blocked?.venue ?? 'Venue')}: ${blocked?.blocker ?? 'Live submit readiness is blocked.'}`);
@@ -2325,9 +2472,7 @@ export const InfraTradingTerminal = ({
       setTicketExecutionId(submitted.executionId);
       void getPositions(token, { limit: 100 })
         .then((positionsResponse) => {
-          setPositions(positionsResponse.positions.filter((position) =>
-            isOpenExecutionPosition(position) || (parsePositiveNumber(position.sellableSize) ?? 0) > 0
-          ));
+          setPositions(activeTerminalPositions(positionsResponse.positions, terminalMarketId));
         })
         .catch(() => undefined);
       const submittedStatus = (submitted.status ?? submitted.userStatus ?? 'SUBMITTED').toUpperCase();
@@ -2337,12 +2482,7 @@ export const InfraTradingTerminal = ({
         setBottomTab('Trade History');
         return;
       }
-      const successMessage = submittedStatus === 'FILLED'
-        ? 'Market order filled.'
-        : submittedStatus === 'PARTIAL'
-          ? 'Market order partially filled. Tracking remaining size.'
-          : 'Market order submitted. Tracking execution status.';
-      setTicketStatusMessage(successMessage);
+      setTicketStatusMessage(executionSubmitStatusMessage(submitted));
       setBottomTab(submittedStatus === 'SUBMITTED' || submittedStatus === 'PARTIAL' ? 'Open Orders' : 'Trade History');
     } catch (error) {
       setTicketExecutionId(null);
@@ -2356,7 +2496,7 @@ export const InfraTradingTerminal = ({
     } finally {
       setTicketLoading(false);
     }
-  }, [signAndSubmitTicketSignature, ticketAmount, ticketQuote, ticketQuoteAmount, token]);
+  }, [side, signAndSubmitTicketSignature, terminalMarketId, ticketAmount, ticketQuote, ticketQuoteAmount, token]);
 
   const prepareTicketSignature = useCallback(async () => {
     if (!token || !ticketQuote) return;
@@ -2383,6 +2523,18 @@ export const InfraTradingTerminal = ({
       const readiness = await getLiveReadiness(token, executionId);
       setTicketLiveReadiness(readiness);
       if (isReadinessBlocked(readiness)) {
+        if (side === 'sell' && isPolymarketSellShareBalanceBlocked(readiness)) {
+          const positionsResponse = await getPositions(token, { limit: 100 });
+          setPositions(activeTerminalPositions(positionsResponse.positions, terminalMarketId));
+          setTicketQuote(null);
+          setTicketQuoteAmount(null);
+          setTicketExecutionId(null);
+          setTicketSignatureBundle(null);
+          setOrderAction('setup');
+          setTicketError('No verified Polymarket shares are available to sell for this outcome.');
+          setTicketStatusMessage('The live venue share check returned zero spendable shares, so this stale sell route was cleared.');
+          return;
+        }
         const blocked = firstReadinessBlocker(readiness);
         setTicketError(`${formatVenueLabel(blocked?.venue ?? 'Venue')}: ${blocked?.blocker ?? 'Live submit readiness is blocked.'}`);
         setTicketStatusMessage(isPolymarketClobPropagationReadiness(readiness)
@@ -2410,7 +2562,7 @@ export const InfraTradingTerminal = ({
     } finally {
       setTicketLoading(false);
     }
-  }, [ticketAmount, ticketExecutionId, ticketLiveReadiness, ticketQuote, ticketQuoteAmount, token]);
+  }, [side, terminalMarketId, ticketAmount, ticketExecutionId, ticketLiveReadiness, ticketQuote, ticketQuoteAmount, token]);
 
   const activateLimitlessAccount = useCallback(async () => {
     if (!token) {
@@ -3004,9 +3156,7 @@ export const InfraTradingTerminal = ({
     setAccountError(null);
     try {
       const positionsResponse = await getPositions(token, { limit: 100 });
-      setPositions(positionsResponse.positions.filter((position) =>
-        isOpenExecutionPosition(position) && matchesPositionMarket(position, terminalMarketId, null)
-      ));
+      setPositions(activeTerminalPositions(positionsResponse.positions, terminalMarketId));
       if (bottomTab === 'Open Orders') {
         const openOrdersResponse = await getOpenOrders(token, { limit: 50 });
         setOpenOrders(openOrdersResponse.items.filter((order) => matchesTerminalMarket(order, terminalMarketId)));
@@ -3101,8 +3251,10 @@ export const InfraTradingTerminal = ({
     const reason = `${blocked.reason ?? ''} ${blocked.detailsCode ?? ''}`.toUpperCase();
     return reason.includes('FUND') || reason.includes('BALANCE') || reason.includes('DEPOSIT') || reason.includes('INSUFFICIENT');
   });
+  const ticketPolymarketSellShareBalanceBlocked = side === 'sell' && isPolymarketSellShareBalanceBlocked(ticketLiveReadiness);
   const ticketSellApprovalRequired = side === 'sell' && Boolean(token) && ticketRouteUsesPolymarket && Boolean(ticketPolymarketTokenId) &&
-    /ALLOWANCE|SPENDER|BALANCE|APPROVAL/i.test(ticketError ?? '');
+    !ticketPolymarketSellShareBalanceBlocked &&
+    /ALLOWANCE|SPENDER|APPROVAL|APPROVE/i.test(ticketError ?? '');
   const ticketRouteApprovalVenue = ticketLiveReadiness?.venues.find((venue) =>
     isReadinessVenueBlocked(venue) &&
     venue.blockers.some((blocker) => /ALLOWANCE|APPROVE|APPROVAL/i.test(blocker)) &&
@@ -3191,8 +3343,10 @@ export const InfraTradingTerminal = ({
   const ticketReadinessExpiresAt = ticketQuote?.expiresAt ?? ticketLiveReadiness?.expiresAt ?? null;
   const ticketReadinessExpiryMs = ticketReadinessExpiresAt ? new Date(ticketReadinessExpiresAt).getTime() : null;
   const ticketReadinessQuoteExpired = Boolean(ticketReadinessExpiryMs && Number.isFinite(ticketReadinessExpiryMs) && Date.now() >= ticketReadinessExpiryMs);
+  const ticketSellUnavailable = side === 'sell' && Boolean(token) && ticketSellableShares <= 0;
   const ticketNeedsFundingAction = ticketActivationRequired || ticketDepositRequired || ticketLimitlessSetupRequired || ticketPredictFunAuthRequired || ticketRouteApprovalRequired || ticketPolymarketClobSyncRequired || ticketPolymarketClobPropagationPending || ticketLimitlessBalanceBlocked;
   const ticketActionDisabled = !token || !terminalMarketId || !selectedTicketOutcomeId || ticketLoading || ticketActivationPolling ||
+    ticketSellUnavailable ||
     ticketPolymarketClobSyncRequired ||
     (ticketPolymarketClobPropagationPending && ticketReadinessPolling) ||
     Boolean(ticketExecutionId && ticketQuote && !ticketRequiresSignature && !ticketNeedsFundingAction) ||
@@ -3211,6 +3365,8 @@ export const InfraTradingTerminal = ({
           : 'Checking live route...'
     : side === 'buy' && !ticketQuote && fundingLoading
       ? 'Checking balance...'
+    : ticketSellUnavailable
+      ? 'No sellable shares'
     : ticketActivationRequired
       ? side === 'sell' ? 'Approve Polymarket shares' : 'Activate Polymarket funds'
     : ticketRouteApprovalRequired
@@ -4327,30 +4483,44 @@ export const InfraTradingTerminal = ({
                       {accountLoading && <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 px-4 py-2 text-xs font-semibold text-zinc-400">Refreshing open orders...</div>}
                       {accountError && <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-xs font-semibold text-amber-200">{accountError}</div>}
                       {openOrders.length === 0 && emptyCopy('No open orders', accountEmptyCopy)}
-                      {openOrders.map((order) => (
-                        <div key={order.executionId} className="rounded-xl border border-zinc-800 bg-zinc-950/30 px-5 py-3">
-                          <div className="flex items-center justify-between gap-4">
-                            <div className="min-w-0">
-                              <div className="text-sm font-bold text-zinc-100">{order.openStatus}</div>
-                              <div className="mt-0.5 truncate text-xs font-medium text-zinc-500">{order.executionId}</div>
-                            </div>
-                            <div className="grid grid-cols-3 gap-6 text-right">
-                              <div>
-                                <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Route</div>
-                                <div className="text-xs font-bold text-zinc-200">{order.route?.venuePath?.map(formatVenueLabel).join(' / ') || 'Pending'}</div>
+                      {openOrders.map((order) => {
+                        const summary = executionLegStatusSummary(order);
+                        const summaryTone = summary.tone === 'warning'
+                          ? 'text-amber-300'
+                          : summary.tone === 'danger'
+                            ? 'text-rose-300'
+                            : summary.tone === 'success'
+                              ? 'text-emerald-300'
+                              : 'text-zinc-300';
+                        return (
+                          <div key={order.executionId} className="rounded-xl border border-zinc-800 bg-zinc-950/30 px-5 py-3">
+                            <div className="flex items-center justify-between gap-4">
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <div className="text-sm font-bold text-zinc-100">{order.openStatus}</div>
+                                  <div className={`text-xs font-bold ${summaryTone}`}>{summary.title}</div>
+                                </div>
+                                <div className="mt-0.5 truncate text-xs font-medium text-zinc-500">{order.executionId}</div>
+                                <div className="mt-1 text-xs font-semibold text-zinc-400">{summary.detail}</div>
                               </div>
-                              <div>
-                                <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Price</div>
-                                <div className="font-mono text-sm font-black text-white">{formatProbabilityPrice(order.route?.expectedPrice)}</div>
-                              </div>
-                              <div>
-                                <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Updated</div>
-                                <div className="text-xs font-bold text-zinc-300">{formatDateTime(order.updatedAt ?? order.submittedAt)}</div>
+                              <div className="grid grid-cols-3 gap-6 text-right">
+                                <div>
+                                  <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Route</div>
+                                  <div className="text-xs font-bold text-zinc-200">{order.route?.venuePath?.map(formatVenueLabel).join(' / ') || 'Pending'}</div>
+                                </div>
+                                <div>
+                                  <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Price</div>
+                                  <div className="font-mono text-sm font-black text-white">{formatProbabilityPrice(order.route?.expectedPrice)}</div>
+                                </div>
+                                <div>
+                                  <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Updated</div>
+                                  <div className="text-xs font-bold text-zinc-300">{formatDateTime(order.updatedAt ?? order.submittedAt)}</div>
+                                </div>
                               </div>
                             </div>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                 )}
                 {bottomTab === 'Trade History' && (
