@@ -3,6 +3,10 @@
     {
       "source": "/api/:path*",
       "destination": "https://lotus-backend-g1e1.onrender.com/:path*"
+    },
+    {
+      "source": "/:path*",
+      "destination": "/index.html"
     }
   ]
 }
