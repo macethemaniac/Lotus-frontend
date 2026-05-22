@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { TurnkeyProvider, type TurnkeyCallbacks, type TurnkeyProviderConfig } from "@turnkey/react-wallet-kit";
 import { env } from "@/config/env";
+import { resolveTurnkeyOauthRedirectUri } from "@/app/turnkey-oauth-redirect";
 
 export function isTurnkeyProviderConfigured(): boolean {
   return Boolean(env.turnkeyAuthEnabled && env.turnkeyOrganizationId && env.turnkeyAuthProxyConfigId);
@@ -21,14 +22,14 @@ export function LotusTurnkeyProvider({
 
   const config: TurnkeyProviderConfig = useMemo(
     () => ({
-      apiBaseUrl: "https://api.turnkey.com",
+      apiBaseUrl: env.turnkeyApiBaseUrl,
       authProxyUrl: env.turnkeyAuthProxyUrl,
       organizationId: env.turnkeyOrganizationId,
       authProxyConfigId: env.turnkeyAuthProxyConfigId,
       auth: {
         autoRefreshSession: true,
         oauthConfig: {
-          oauthRedirectUri: env.turnkeyOauthRedirectUri || window.location.origin,
+          oauthRedirectUri: resolveTurnkeyOauthRedirectUri(),
           openOauthInPage: true,
         },
       },

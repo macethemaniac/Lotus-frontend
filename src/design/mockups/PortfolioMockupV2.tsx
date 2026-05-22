@@ -37,6 +37,7 @@ import {
 import {
   getAccountSnapshot,
   getFundingReceipt,
+  getVenueBalances,
   getWithdrawalReceipt,
   mergeVenueBalanceSnapshots,
   preparePolymarketClobSync,
@@ -747,20 +748,31 @@ const hasFilledExecutionHistory = (history: ExecutionStatus[]) =>
   history.some((execution) => executionDisplayStatus(execution) === 'FILLED');
 
 const venueSpecificAddress = (account?: UserVenueAccount): { address?: string; kind?: string } => {
-  if (!account?.venueAccountAddress) {
-    return {};
+  const venueAddress = account?.venueAccountAddress?.trim();
+  if (venueAddress) {
+    return {
+      address: venueAddress,
+      kind: account?.venueAccountType,
+    };
   }
-  const venueAddress = account.venueAccountAddress.trim();
-  const ownerAddress = account.walletAddress?.trim();
-  const eoaVenueUsesOwnerWallet = account.venueAccountType === 'EOA'
-    && ['PREDICT_FUN', 'MYRIAD', 'LIMITLESS'].includes(venueKey(account.venue));
-  if (!venueAddress || (!eoaVenueUsesOwnerWallet && venueAddress.toLowerCase() === ownerAddress?.toLowerCase())) {
-    return {};
+
+  const venueAccountId = account?.venueAccountId?.trim();
+  if (venueAccountId) {
+    return {
+      address: venueAccountId,
+      kind: account?.venueAccountType ?? 'account',
+    };
   }
-  return {
-    address: venueAddress,
-    kind: account.venueAccountType,
-  };
+
+  const ownerAddress = account?.walletAddress?.trim();
+  if (ownerAddress && account?.venueAccountType === 'EOA') {
+    return {
+      address: ownerAddress,
+      kind: 'EOA',
+    };
+  }
+
+  return {};
 };
 
 type VenueCashRow = {
@@ -902,17 +914,21 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
     }
     setError(null);
     try {
-      const [summary, timeseries, accountSnapshot, marketCatalogResponse] = await Promise.all([
+      const [summary, timeseries, accountSnapshot, venueBalanceResponse, marketCatalogResponse] = await Promise.all([
         getPortfolioSummary(token, { force: options.force }),
         getPortfolioTimeSeries(token, { range: performanceRange, force: options.force }),
         getAccountSnapshot(token, { force: options.force }),
+        getVenueBalances(token, { force: options.force }),
         listMarkets({ limit: 250 }),
       ]);
       if (portfolioRefreshSeq.current !== requestSeq) {
         return;
       }
 
-      const nextBalances = accountSnapshot.balances ?? [];
+      const nextBalances = mergeVenueBalanceSnapshots(
+        accountSnapshot.balances ?? [],
+        venueBalanceResponse.balances ?? venueBalanceResponse.venues ?? []
+      );
       const nextWallets = accountSnapshot.wallets ?? [];
       const nextAccounts = accountSnapshot.accounts ??
         accountSnapshot.venueAccounts?.map((item) => item.venueAccount) ??
