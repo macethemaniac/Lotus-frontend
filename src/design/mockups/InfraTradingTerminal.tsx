@@ -201,6 +201,17 @@ const eip712PayloadForTurnkey = (typedData: unknown) => {
   });
 };
 
+const isOpinionEnableTradingRequest = (
+  request: VenueSetupSignatureRequest,
+): request is VenueSetupSignatureRequest & { typedData: Record<string, unknown>; safeTxHash: string } =>
+  request.venue.toUpperCase() === 'OPINION' &&
+  request.requestType === 'OPINION_ENABLE_TRADING_SAFE_TX' &&
+  typeof request.signer === 'string' &&
+  request.signer.length > 0 &&
+  typeof request.safeTxHash === 'string' &&
+  request.safeTxHash.length > 0 &&
+  Boolean(request.typedData && typeof request.typedData === 'object' && !Array.isArray(request.typedData));
+
 const recordValue = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' ? value as Record<string, unknown> : {};
 
@@ -2742,6 +2753,102 @@ export const InfraTradingTerminal = ({
     }
   }, [handleLogin, previewMarketOrder, refreshWallets, session?.turnkeyOrganizationId, signMessage, token, turnkeySession?.organizationId, turnkeyWallets]);
 
+  const activateOpinionTradingSafe = useCallback(async () => {
+    if (!token) {
+      setTicketError('Log in before enabling Opinion trading.');
+      return;
+    }
+    setTicketLoading(true);
+    setTicketError(null);
+    setTicketStatusMessage('Preparing Opinion enable-trading Safe transaction.');
+    try {
+      const prepared = await prepareVenueSetupBatch(token);
+      const opinionAccount = prepared.accounts.find((account) => account.venue.toUpperCase() === 'OPINION');
+      const setupRequests = [
+        ...(prepared.setupRequests ?? []),
+        ...(prepared.signatureRequests ?? []),
+      ];
+      const setupRequest = setupRequests.find(isOpinionEnableTradingRequest);
+
+      if (!setupRequest) {
+        if (opinionAccount?.status === 'ACTIVE' && (opinionAccount.readinessBlockers ?? []).length === 0) {
+          setTicketStatusMessage('Opinion account is active. Refreshing the live route.');
+          setTicketQuote(null);
+          setTicketQuoteAmount(null);
+          setTicketExecutionId(null);
+          setTicketSignatureBundle(null);
+          setTicketLiveReadiness(null);
+          setTicketError(null);
+          await previewMarketOrder();
+          return;
+        }
+        const blocker = opinionAccount?.readinessBlockers?.[0] ?? opinionAccount?.setupInstructions?.[0];
+        setTicketError(blocker ?? 'Opinion setup is not ready yet. Open Portfolio and retry venue setup.');
+        setTicketStatusMessage(null);
+        return;
+      }
+
+      let activeWallets = turnkeyWallets;
+      if (activeWallets.length === 0) {
+        try {
+          activeWallets = await refreshWallets();
+        } catch (walletError) {
+          if (!isTurnkeyMissingSessionError(walletError)) {
+            throw walletError;
+          }
+          setTicketStatusMessage('Reconnect your Turnkey wallet session to enable Opinion trading.');
+          await handleLogin();
+          activeWallets = await refreshWallets();
+        }
+      }
+
+      const walletAccount = findTurnkeyWalletAccount(activeWallets, setupRequest.signer);
+      if (!walletAccount) {
+        throw new Error(`Opinion setup needs your Turnkey EVM wallet ${setupRequest.signer.slice(0, 6)}...${setupRequest.signer.slice(-4)}, but it is not loaded in this session.`);
+      }
+
+      const organizationId = turnkeySession?.organizationId ?? session?.turnkeyOrganizationId;
+      setTicketStatusMessage('Sign the Opinion enable-trading Safe transaction with Turnkey.');
+      const signatureResult = await signMessage({
+        message: eip712PayloadForTurnkey(setupRequest.typedData),
+        walletAccount,
+        encoding: 'PAYLOAD_ENCODING_EIP712',
+        hashFunction: 'HASH_FUNCTION_NO_OP',
+        addEthereumPrefix: false,
+        ...(organizationId ? { organizationId } : {}),
+      });
+
+      setTicketStatusMessage('Submitting Opinion enable-trading signature to Lotus.');
+      const completed = await completeVenueSetupBatch(token, {
+        opinion: {
+          signer: setupRequest.signer,
+          signature: signatureFromTurnkeyResult(signatureResult),
+          safeTxHash: setupRequest.safeTxHash,
+        },
+      });
+      const completedAccount = completed.accounts.find((account) => account.venue.toUpperCase() === 'OPINION');
+      const blockers = completedAccount?.readinessBlockers ?? [];
+      if (!completedAccount || completedAccount.status !== 'ACTIVE' || blockers.length > 0) {
+        setTicketError(blockers[0] ?? 'Opinion enable-trading is still pending.');
+        setTicketStatusMessage(null);
+        return;
+      }
+
+      setTicketStatusMessage('Opinion trading enabled. Refreshing the live route.');
+      setTicketQuote(null);
+      setTicketQuoteAmount(null);
+      setTicketExecutionId(null);
+      setTicketSignatureBundle(null);
+      setTicketLiveReadiness(null);
+      setTicketError(null);
+      await previewMarketOrder();
+    } catch (error) {
+      setTicketError(error instanceof Error ? error.message : 'Opinion trading enablement failed.');
+    } finally {
+      setTicketLoading(false);
+    }
+  }, [handleLogin, previewMarketOrder, refreshWallets, session?.turnkeyOrganizationId, signMessage, token, turnkeySession?.organizationId, turnkeyWallets]);
+
   const approveRouteCollateral = useCallback(async () => {
     const readinessVenue = ticketLiveReadiness?.venues.find((venue) =>
       isReadinessVenueBlocked(venue) &&
@@ -3276,6 +3383,8 @@ export const InfraTradingTerminal = ({
     /ACTIVE LINKED VENUE ACCOUNT|LINKED VENUE ACCOUNT|PROFILE|PROFILE_SETUP|PARTNER ACCOUNT|OWNERSHIP/i.test(ticketError ?? '');
   const ticketPredictFunAuthRequired = Boolean(token) && /PREDICT/i.test(ticketError ?? '') &&
     /AUTH JWT|USER AUTH|VENUE SETUP SIGNATURE|AUTH MESSAGE|JWT/i.test(ticketError ?? '');
+  const ticketOpinionSetupRequired = Boolean(token) && /OPINION/i.test(ticketError ?? '') &&
+    /ENABLE[-\s]?TRADING|SAFE TRANSACTION|SAFE TX|VENUE SETUP SIGNATURE|ACCOUNT SETUP|TRADING SAFE/i.test(ticketError ?? '');
   const ticketPolymarketReadinessVenue = ticketLiveReadiness?.venues.find((venue) =>
     toBackendVenueId(venue.venue) === 'POLYMARKET'
   ) ?? null;
@@ -3312,7 +3421,7 @@ export const InfraTradingTerminal = ({
     (side === 'buy' && polymarketActivationRequired && (ticketRouteUsesPolymarket || ticketHasFundingBlocker || venueReadyBalance <= 0)) ||
     ticketSellApprovalRequired
   );
-  const ticketDepositRequired = side === 'buy' && Boolean(token) && ticketHasFundingBlocker && !ticketActivationRequired && !ticketLimitlessSetupRequired;
+  const ticketDepositRequired = side === 'buy' && Boolean(token) && ticketHasFundingBlocker && !ticketActivationRequired && !ticketLimitlessSetupRequired && !ticketOpinionSetupRequired;
   const ticketFundingLabel = fundingLoading
     ? 'checking...'
     : fundingError
@@ -3344,7 +3453,7 @@ export const InfraTradingTerminal = ({
   const ticketReadinessExpiryMs = ticketReadinessExpiresAt ? new Date(ticketReadinessExpiresAt).getTime() : null;
   const ticketReadinessQuoteExpired = Boolean(ticketReadinessExpiryMs && Number.isFinite(ticketReadinessExpiryMs) && Date.now() >= ticketReadinessExpiryMs);
   const ticketSellUnavailable = side === 'sell' && Boolean(token) && ticketSellableShares <= 0;
-  const ticketNeedsFundingAction = ticketActivationRequired || ticketDepositRequired || ticketLimitlessSetupRequired || ticketPredictFunAuthRequired || ticketRouteApprovalRequired || ticketPolymarketClobSyncRequired || ticketPolymarketClobPropagationPending || ticketLimitlessBalanceBlocked;
+  const ticketNeedsFundingAction = ticketActivationRequired || ticketDepositRequired || ticketLimitlessSetupRequired || ticketPredictFunAuthRequired || ticketOpinionSetupRequired || ticketRouteApprovalRequired || ticketPolymarketClobSyncRequired || ticketPolymarketClobPropagationPending || ticketLimitlessBalanceBlocked;
   const ticketActionDisabled = !token || !terminalMarketId || !selectedTicketOutcomeId || ticketLoading || ticketActivationPolling ||
     ticketSellUnavailable ||
     ticketPolymarketClobSyncRequired ||
@@ -3362,6 +3471,8 @@ export const InfraTradingTerminal = ({
           ? 'Preparing Limitless activation...'
         : ticketPredictFunAuthRequired
           ? 'Refreshing Predict.fun auth...'
+        : ticketOpinionSetupRequired
+          ? 'Enabling Opinion trading...'
           : 'Checking live route...'
     : side === 'buy' && !ticketQuote && fundingLoading
       ? 'Checking balance...'
@@ -3385,6 +3496,8 @@ export const InfraTradingTerminal = ({
       ? 'Activate Limitless account'
     : ticketPredictFunAuthRequired
       ? 'Refresh Predict.fun auth'
+    : ticketOpinionSetupRequired
+      ? 'Enable Opinion trading'
     : ticketDepositRequired
       ? 'Deposit to trade'
     : ticketLiveReadinessBlocked
@@ -4792,6 +4905,8 @@ export const InfraTradingTerminal = ({
                         void activateLimitlessAccount();
                       } else if (ticketPredictFunAuthRequired) {
                         void refreshPredictFunAuth();
+                      } else if (ticketOpinionSetupRequired) {
+                        void activateOpinionTradingSafe();
                       } else if (ticketDepositRequired) {
                         setFundingModalOpen(true);
                       } else if (ticketPolymarketClobPropagationPending) {

@@ -91,6 +91,9 @@ export type VenueSetupSignatureRequest = {
   venueAccount?: UserVenueAccount;
   transactionRequest?: unknown;
   approval?: unknown;
+  typedData?: Record<string, unknown>;
+  safeTx?: Record<string, unknown>;
+  safeTxHash?: string;
 };
 
 export type SetupBatchResponse = {
@@ -111,6 +114,11 @@ export type CompleteVenueSetupBatchRequest = {
     signer: string;
     signature: string;
     message: string;
+  };
+  opinion?: {
+    signer: string;
+    signature: string;
+    safeTxHash: string;
   };
 };
 

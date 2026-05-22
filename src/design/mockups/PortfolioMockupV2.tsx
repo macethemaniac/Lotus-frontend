@@ -19,9 +19,11 @@ import {
 import { ChainLogo, CryptoLogo, VenueLogo } from '@/components/icons/asset-logo';
 import type { AuthSession } from '@/features/auth/types';
 import {
+  completeVenueSetupBatch,
   mergeUserWalletBalanceSnapshots,
   prepareVenueSetupBatch,
   type UserVenueAccount,
+  type VenueSetupSignatureRequest,
   type UserWallet
 } from '@/features/wallets/api/wallet-api';
 import {
@@ -571,6 +573,17 @@ const eip712TypedDataPayload = (typedData: Record<string, unknown>) => {
     },
   });
 };
+
+const isOpinionEnableTradingRequest = (
+  request: VenueSetupSignatureRequest,
+): request is VenueSetupSignatureRequest & { typedData: Record<string, unknown>; safeTxHash: string } =>
+  venueKey(request.venue) === 'OPINION' &&
+  request.requestType === 'OPINION_ENABLE_TRADING_SAFE_TX' &&
+  typeof request.signer === 'string' &&
+  request.signer.length > 0 &&
+  typeof request.safeTxHash === 'string' &&
+  request.safeTxHash.length > 0 &&
+  Boolean(request.typedData && typeof request.typedData === 'object' && !Array.isArray(request.typedData));
 
 const clobSyncSignedPayload = (
   sync: PolymarketClobSyncPreparation,
@@ -1296,8 +1309,84 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
     try {
       const setup = await prepareVenueSetupBatch(token);
       const refreshedAccount = setup.accounts.find((account) => venueKey(account.venue) === venue.backend);
+      if (venue.backend === 'OPINION') {
+        const setupRequests = [
+          ...(setup.setupRequests ?? []),
+          ...(setup.signatureRequests ?? []),
+        ];
+        const setupRequest = setupRequests.find(isOpinionEnableTradingRequest);
+
+        if (!setupRequest) {
+          if (refreshedAccount?.status === 'ACTIVE' && (refreshedAccount.readinessBlockers ?? []).length === 0) {
+            setActivationMessage('Opinion account is active. Venue account metadata refreshed.');
+            await loadPortfolio({ silent: true, force: true });
+            return;
+          }
+          const blocker = refreshedAccount?.readinessBlockers?.[0] ?? refreshedAccount?.setupInstructions?.[0];
+          setActivationMessage(blocker ?? 'Opinion setup did not return an enable-trading signature request yet.');
+          await loadPortfolio({ silent: true, force: true });
+          return;
+        }
+
+        if (!turnkeySession || turnkeyAuthState !== AuthState.Authenticated) {
+          setActivationMessage('Reconnect your Turnkey wallet session to enable Opinion trading.');
+          await handleLogin();
+        }
+
+        let activeTurnkeyWallets = turnkeyWallets;
+        if (activeTurnkeyWallets.length === 0) {
+          try {
+            activeTurnkeyWallets = await refreshWallets();
+          } catch (walletError) {
+            if (isTurnkeyMissingSessionError(walletError)) {
+              setActivationMessage(turnkeySessionRequiredMessage);
+              await loadPortfolio({ silent: true, force: true });
+              return;
+            }
+            throw walletError;
+          }
+        }
+
+        const signerAccount = findTurnkeyWalletAccount(activeTurnkeyWallets, setupRequest.signer);
+        if (!signerAccount) {
+          setActivationMessage(`Opinion setup needs your Turnkey EVM wallet ${setupRequest.signer.slice(0, 6)}...${setupRequest.signer.slice(-4)}, but it is not loaded in this session.`);
+          await loadPortfolio({ silent: true, force: true });
+          return;
+        }
+
+        const signerOrganizationId = turnkeySession?.organizationId ?? session?.turnkeyOrganizationId;
+        setActivationMessage('Sign the Opinion enable-trading Safe transaction with Turnkey.');
+        const signatureResult = await signMessage({
+          message: eip712TypedDataPayload(setupRequest.typedData),
+          walletAccount: signerAccount,
+          encoding: 'PAYLOAD_ENCODING_EIP712',
+          hashFunction: 'HASH_FUNCTION_NO_OP',
+          addEthereumPrefix: false,
+          ...(signerOrganizationId ? { organizationId: signerOrganizationId } : {}),
+        });
+
+        setActivationMessage('Submitting Opinion enable-trading signature to Lotus.');
+        const completed = await completeVenueSetupBatch(token, {
+          opinion: {
+            signer: setupRequest.signer,
+            signature: signatureFromTurnkeyResult(signatureResult),
+            safeTxHash: setupRequest.safeTxHash,
+          },
+        });
+        const completedAccount = completed.accounts.find((account) => venueKey(account.venue) === 'OPINION');
+        const blockers = completedAccount?.readinessBlockers ?? [];
+        if (!completedAccount || completedAccount.status !== 'ACTIVE' || blockers.length > 0) {
+          setActivationMessage(blockers[0] ?? 'Opinion enable-trading is still pending.');
+          await loadPortfolio({ silent: true, force: true });
+          return;
+        }
+
+        setActivationMessage('Opinion trading enabled. Venue account metadata refreshed.');
+        await loadPortfolio({ silent: true, force: true });
+        return;
+      }
       if (venue.backend !== 'POLYMARKET') {
-        const pendingSignature = setup.setupRequests.length > 0;
+        const pendingSignature = setup.setupRequests.some((request) => venueKey(request.venue) === venue.backend);
         setActivationMessage(
           pendingSignature
             ? `${venue.label} setup is prepared. A wallet signature is required before this venue becomes fully active.`
