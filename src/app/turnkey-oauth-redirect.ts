@@ -27,5 +27,5 @@ export function resolveAllowedFrontendOrigin(origin = typeof window === "undefin
 }
 
 export function resolveTurnkeyOauthRedirectUri(origin?: string): string {
-  return `${resolveAllowedFrontendOrigin(origin)}/auth/callback`;
+  return resolveAllowedFrontendOrigin(origin);
 }
