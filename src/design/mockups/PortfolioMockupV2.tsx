@@ -746,21 +746,61 @@ const tradeDrivenPerformanceSeries = (
 const hasFilledExecutionHistory = (history: ExecutionStatus[]) =>
   history.some((execution) => executionDisplayStatus(execution) === 'FILLED');
 
-const venueSpecificAddress = (account?: UserVenueAccount): { address?: string; kind?: string } => {
-  if (!account?.venueAccountAddress) {
-    return {};
+type VenueAccountAddressSource = 'venueAccountAddress' | 'venueAccountId' | 'walletAddress';
+
+const venueAccountPrimaryAddress = (account?: UserVenueAccount): {
+  address?: string;
+  kind?: string;
+  source?: VenueAccountAddressSource;
+} => {
+  const venueAddress = account?.venueAccountAddress?.trim();
+  if (venueAddress) {
+    return {
+      address: venueAddress,
+      kind: account?.venueAccountType,
+      source: 'venueAccountAddress',
+    };
   }
-  const venueAddress = account.venueAccountAddress.trim();
-  const ownerAddress = account.walletAddress?.trim();
-  const eoaVenueUsesOwnerWallet = account.venueAccountType === 'EOA'
-    && ['PREDICT_FUN', 'MYRIAD', 'LIMITLESS'].includes(venueKey(account.venue));
-  if (!venueAddress || (!eoaVenueUsesOwnerWallet && venueAddress.toLowerCase() === ownerAddress?.toLowerCase())) {
-    return {};
+
+  const venueAccountId = account?.venueAccountId?.trim();
+  if (venueAccountId) {
+    return {
+      address: venueAccountId,
+      kind: account?.venueAccountType ?? 'ACCOUNT',
+      source: 'venueAccountId',
+    };
   }
-  return {
-    address: venueAddress,
-    kind: account.venueAccountType,
-  };
+
+  const ownerAddress = account?.walletAddress?.trim();
+  if (ownerAddress && account?.venueAccountType === 'EOA') {
+    return {
+      address: ownerAddress,
+      kind: 'EOA',
+      source: 'walletAddress',
+    };
+  }
+
+  return {};
+};
+
+const venueAccountAddressLabel = (source?: VenueAccountAddressSource, kind?: string) => {
+  if (source === 'venueAccountId') return 'Venue ID';
+  if (source === 'walletAddress') return 'Venue EOA';
+  const normalizedKind = String(kind ?? '').toUpperCase();
+  if (normalizedKind === 'SAFE') return 'Safe wallet';
+  if (normalizedKind === 'DEPOSIT_WALLET') return 'Deposit wallet';
+  if (normalizedKind === 'EOA') return 'Venue EOA';
+  return 'Venue wallet';
+};
+
+const venueAccountStatusText = (status?: string) =>
+  status ? status.replace(/[_-]+/g, ' ').toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase()) : 'Unknown';
+
+const venueAccountStatusClass = (status?: string) => {
+  const normalized = String(status ?? '').toUpperCase();
+  if (normalized === 'ACTIVE') return 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300';
+  if (normalized === 'PENDING') return 'border-amber-300/20 bg-amber-300/10 text-amber-200';
+  return 'border-zinc-700 bg-zinc-900 text-zinc-400';
 };
 
 type VenueCashRow = {
@@ -773,7 +813,12 @@ type VenueCashRow = {
   blockers: string[];
   venueAddress?: string;
   venueAddressKind?: string;
+  venueAddressSource?: VenueAccountAddressSource;
+  venueAccountId?: string;
   venueAccountStatus?: string;
+  ownerWalletAddress?: string;
+  accountBlockers: string[];
+  accountInstructions: string[];
 };
 
 type PortfolioDataState = {
@@ -996,7 +1041,7 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
         ['REQUIRED', 'ACTION_REQUIRED', 'PENDING', 'CONFIG_REQUIRED', 'ACCOUNT_REQUIRED'].includes(activationStatus)
       );
       const blockers = activation?.blockers ?? [];
-      const copyAddress = venueSpecificAddress(account);
+      const copyAddress = venueAccountPrimaryAddress(account);
       const readinessReason = String(activation?.readinessReason ?? '').toUpperCase();
       const clobSyncPending = !balanceConfirmsReady && (readinessReason === 'POLYMARKET_CLOB_SYNC_PENDING' || activationStatus === 'SYNC_PENDING');
       const bridgedUsdcBalance = parseMoney(activation?.bridgedUsdcBalance ?? null) ?? 0;
@@ -1017,7 +1062,12 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
         blockers,
         venueAddress: copyAddress.address,
         venueAddressKind: copyAddress.kind,
+        venueAddressSource: copyAddress.source,
+        venueAccountId: account?.venueAccountId?.trim() || undefined,
         venueAccountStatus: account?.status,
+        ownerWalletAddress: account?.walletAddress?.trim() || undefined,
+        accountBlockers: account?.readinessBlockers ?? [],
+        accountInstructions: account?.setupInstructions ?? [],
       };
     });
   }, [data.activations, data.balances, data.venueAccounts]);
@@ -1594,6 +1644,93 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
               </div>
             )}
 
+            {venueRows.length > 0 && (
+              <div className="rounded-xl border border-zinc-800/80 bg-[#0d0d0f] p-3.5">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div className="text-[11px] font-bold uppercase tracking-[0.08em] text-zinc-500">Venue Accounts</div>
+                  <div className="rounded-full border border-zinc-700 bg-zinc-950 px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.08em] text-zinc-400">
+                    {venueRows.filter((venue) => venue.venueAddress).length}/{venueRows.length} linked
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 gap-2">
+                  {venueRows.map((venue) => {
+                    const accountCopyKey = venue.venueAddress ? `venue-account:${venue.id}:${venue.venueAddress}` : null;
+                    const ownerCopyKey = venue.ownerWalletAddress ? `venue-owner:${venue.id}:${venue.ownerWalletAddress}` : null;
+                    const statusCopy = venue.accountBlockers[0] ?? venue.accountInstructions[0] ?? 'Venue account metadata is waiting for backend setup.';
+                    return (
+                      <div
+                        key={`account:${venue.id}`}
+                        className="rounded-lg border border-zinc-800/70 bg-[#151518] px-3 py-2.5"
+                      >
+                        <div className="mb-2 flex items-center justify-between gap-3">
+                          <div className="flex min-w-0 items-center gap-2.5">
+                            <VenueLogo id={venue.id} label={venue.label} className="h-6 w-6 rounded-md" />
+                            <div className="min-w-0">
+                              <div className="truncate text-sm font-semibold text-zinc-200">{venue.label}</div>
+                              <div className="text-[10px] font-semibold text-zinc-500">{venueAccountAddressLabel(venue.venueAddressSource, venue.venueAddressKind)}</div>
+                            </div>
+                          </div>
+                          <div className={`shrink-0 rounded-full border px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.08em] ${venueAccountStatusClass(venue.venueAccountStatus)}`}>
+                            {venueAccountStatusText(venue.venueAccountStatus)}
+                          </div>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <div className="flex min-h-7 items-center justify-between gap-3 rounded-md border border-zinc-800/70 bg-black/20 px-2.5">
+                            <div className="min-w-0">
+                              <div className="text-[9px] font-bold uppercase tracking-[0.08em] text-zinc-600">
+                                {venue.venueAddress ? venueAccountAddressLabel(venue.venueAddressSource, venue.venueAddressKind) : 'Venue account'}
+                              </div>
+                              <div className={`truncate font-mono text-[10px] ${venue.venueAddress ? 'text-zinc-300' : 'text-amber-200'}`}>
+                                {venue.venueAddress ? shortAddress(venue.venueAddress) : 'Not linked yet'}
+                              </div>
+                            </div>
+                            {venue.venueAddress && accountCopyKey && (
+                              <button
+                                type="button"
+                                onClick={() => copyAddress(accountCopyKey, venue.venueAddress as string)}
+                                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-[#ccff00] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
+                                aria-label={`Copy ${venue.label} venue account address`}
+                                title={`Copy ${venue.label} ${venueAccountAddressLabel(venue.venueAddressSource, venue.venueAddressKind)} ${shortAddress(venue.venueAddress)}`}
+                              >
+                                {copiedAddressKey === accountCopyKey ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                              </button>
+                            )}
+                          </div>
+
+                          {venue.ownerWalletAddress && (
+                            <div className="flex min-h-7 items-center justify-between gap-3 rounded-md border border-zinc-800/60 bg-black/10 px-2.5">
+                              <div className="min-w-0">
+                                <div className="text-[9px] font-bold uppercase tracking-[0.08em] text-zinc-600">Owner EVM</div>
+                                <div className="truncate font-mono text-[10px] text-zinc-500">{shortAddress(venue.ownerWalletAddress)}</div>
+                              </div>
+                              {ownerCopyKey && (
+                                <button
+                                  type="button"
+                                  onClick={() => copyAddress(ownerCopyKey, venue.ownerWalletAddress as string)}
+                                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-[#ccff00] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
+                                  aria-label={`Copy ${venue.label} owner wallet address`}
+                                  title={`Copy ${venue.label} owner EVM ${shortAddress(venue.ownerWalletAddress)}`}
+                                >
+                                  {copiedAddressKey === ownerCopyKey ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+
+                        {!venue.venueAddress && (
+                          <div className="mt-2 line-clamp-2 text-[10px] font-semibold leading-relaxed text-amber-200/90">
+                            {statusCopy}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* Venue Cash Breakdown */}
             <div className="rounded-xl border border-zinc-800/80 bg-[#0d0d0f] p-3.5">
               <div className="mb-3 flex items-start justify-between gap-3">
@@ -1623,7 +1760,7 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
                               onClick={() => copyAddress(`venue:${venue.id}:${venue.venueAddress}`, venue.venueAddress as string)}
                               className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-[#ccff00] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
                               aria-label={`Copy ${venue.label} venue address`}
-                              title={`Copy ${venue.label} ${venue.venueAddressKind?.toLowerCase() ?? 'venue'} address ${shortAddress(venue.venueAddress)}`}
+                              title={`Copy ${venue.label} ${venueAccountAddressLabel(venue.venueAddressSource, venue.venueAddressKind)} ${shortAddress(venue.venueAddress)}`}
                             >
                               {copiedAddressKey === `venue:${venue.id}:${venue.venueAddress}` ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
                             </button>
