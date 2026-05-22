@@ -26,7 +26,7 @@ Frontend behavior:
 - Turnkey React Wallet Kit is wired for Google, X/Twitter, passkey, and wallet auth.
 - Turnkey requires `VITE_TURNKEY_ORGANIZATION_ID` and `VITE_TURNKEY_AUTH_PROXY_CONFIG_ID`.
 - Turnkey API calls use `VITE_TURNKEY_API_BASE_URL` when set; the frontend default is `https://api.turnkey.com`.
-- Turnkey OAuth redirect URI is selected from the frontend origin allowlist at runtime and falls back to `https://app.uselotus.xyz`.
+- Turnkey OAuth redirect URI is selected from the frontend origin allowlist at runtime and falls back to `https://app.uselotus.xyz/`.
 - Turnkey sessions are exchanged for a Lotus JWT through `VITE_LOTUS_AUTH_EXCHANGE_PATH`; the frontend default is `/auth/turnkey/exchange`.
 - If the Lotus JWT exchange fails, the frontend does not treat the raw Turnkey session token as a Lotus API session.
 - Admin auth endpoints are not used in the public frontend.
