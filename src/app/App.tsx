@@ -765,7 +765,7 @@ export function App() {
     void getVenueCapabilities(session.userJwt).catch(() => undefined);
     void getNotifications(session.userJwt, { limit: 8 }).catch(() => undefined);
     void listEvents({ limit: 24 }).catch(() => undefined);
-    void listMarkets({ limit: 24 })
+    void listMarkets({ limit: 24, quoteReadyOnly: true, routeCoverage: "all" })
       .then((response) => {
         const items = response.markets.slice(0, 12).flatMap((market) => {
           const outcomes = market.venueMarkets

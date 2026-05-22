@@ -9,6 +9,7 @@ import {
   listMarkets,
   type MarketBatchQuoteItem,
   type MarketCatalogMarket,
+  type MarketListInput,
 } from '@/features/markets/api/market-api';
 import { getNotifications, markNotificationRead, type UserNotification } from '@/features/notifications/api/notification-api';
 import { NotificationToast, type NotificationToastTone } from '@/features/notifications/components/notification-toast';
@@ -50,7 +51,7 @@ type DashboardOutcomeRow = {
   quoteOutcomeId: string;
   name: string;
   prob: string;
-  liveStatus?: 'live' | 'unavailable' | 'not_requested';
+  liveStatus?: 'live' | 'partial' | 'stale' | 'unavailable' | 'not_requested';
   venues?: string[];
   venueMarkets?: MarketCatalogMarket['venueMarkets'];
   marketType?: 'binary' | 'multi';
@@ -70,6 +71,10 @@ type DashboardMarketRow = Pick<TerminalMarketSelection, 'title' | 'category' | '
   marketType: 'binary' | 'multi';
   marketClass: string;
   status: MarketCatalogMarket['status'];
+  quoteStatus: NonNullable<MarketCatalogMarket['quoteStatus']>;
+  quoteReadyVenueCount: number;
+  quoteBlockers: string[];
+  lastQuoteAt: string | null;
   outcomes: DashboardOutcomeRow[];
   imageUrl: string | null;
   iconUrl: string | null;
@@ -101,6 +106,7 @@ type DashboardMarketRow = Pick<TerminalMarketSelection, 'title' | 'category' | '
 
 type DashboardOutcomeQuote = {
   outcomeId: string;
+  status: NonNullable<MarketCatalogMarket['quoteStatus']>;
   price: number | null;
   priceLabel: string;
   generatedAt: string | null;
@@ -118,6 +124,7 @@ type DashboardMarketQuote = {
 
 type MarketQuickFilter = 'all' | 'watchlist' | 'live_crypto' | 'trending' | 'best_routes' | 'sports' | 'crypto' | 'politics';
 type DashboardRouteFilter = 'Single' | 'Pair' | 'Tri' | 'Strict all';
+type MarketRouteCoverage = NonNullable<MarketListInput['routeCoverage']>;
 type DashboardSortKey = 'volume' | 'liquidity' | 'closing' | 'buys' | 'sells' | 'best_route';
 type ToastPosition = 'top-left' | 'top-center' | 'top-right' | 'bottom-left' | 'bottom-center' | 'bottom-right';
 
@@ -138,6 +145,17 @@ const routeTypeLabel = (market: MarketCatalogMarket): string => {
     return market.venueCount >= 3 ? 'Tri' : 'Pair';
   }
   return 'Single';
+};
+
+const routeCoverageForFilters = (
+  routeTypes: readonly DashboardRouteFilter[],
+): MarketRouteCoverage => {
+  if (routeTypes.length !== 1) return 'all';
+  const [routeType] = routeTypes;
+  if (routeType === 'Single') return 'single';
+  if (routeType === 'Pair') return 'pair';
+  if (routeType === 'Tri') return 'tri';
+  return 'strict_all';
 };
 
 const formatTitleCase = (value: string): string =>
@@ -579,10 +597,27 @@ const getReadableBlocker = (blocked: LiveCandidatesResponse['blocked']): string 
   return reason ? readableQuoteBlocker(reason) : null;
 };
 
+const safeQuoteBlockerReason = (blocker: unknown): string | null => {
+  if (typeof blocker === 'string') return blocker;
+  if (!blocker || typeof blocker !== 'object') return null;
+  const record = blocker as Record<string, unknown>;
+  const candidates = [record.reason, record.code, record.detailsCode, record.message];
+  const value = candidates.find((item): item is string => typeof item === 'string' && item.trim().length > 0);
+  return value?.trim() ?? null;
+};
+
+const catalogQuoteBlockers = (market: MarketCatalogMarket): string[] =>
+  (market.quoteBlockers ?? [])
+    .map(safeQuoteBlockerReason)
+    .filter((item): item is string => Boolean(item));
+
 const readableQuoteBlocker = (reason: string): string => {
   const normalized = reason.toUpperCase();
+  if (normalized.includes('CLOSED_OR_NOT_ACCEPTING_ORDERS')) return 'Market closed or not accepting orders';
+  if (normalized.includes('PREDICT_PROVIDER_AUTH_INVALID')) return 'Predict quote auth invalid';
+  if (normalized.includes('QUOTE_PROVIDER_HTTP_429')) return 'Venue quote provider rate limited';
+  if (normalized.includes('VENUE_OUTCOME_ID_MISSING')) return 'Venue outcome mapping missing';
   if (normalized.includes('OPINION_TOKEN_ID_MISSING')) return 'Opinion token mapping missing';
-  if (normalized.includes('VENUE_OUTCOME_ID_MISSING')) return 'Outcome token mapping missing';
   if (normalized.includes('QUOTE_PROVIDER_TIMEOUT')) return 'Provider timeout';
   if (normalized.includes('QUOTE_PROVIDER_EMPTY_BOOK')) return 'No live depth';
   if (normalized.includes('QUOTE_PROVIDER_BAD_PAYLOAD')) return 'Provider payload unavailable';
@@ -592,6 +627,47 @@ const readableQuoteBlocker = (reason: string): string => {
   if (normalized.includes('QUOTE_SNAPSHOT_STALE')) return 'Stale quote';
   if (normalized.includes('QUOTE_READER_FAILED')) return 'Venue quote unavailable';
   return reason.replace(/[_-]+/g, ' ').toLowerCase();
+};
+
+const marketQuoteStatus = (market: MarketCatalogMarket): NonNullable<MarketCatalogMarket['quoteStatus']> => {
+  const status = String(market.quoteStatus ?? '').toLowerCase();
+  if (status === 'live' || status === 'partial' || status === 'stale' || status === 'unavailable') return status;
+  return 'unavailable';
+};
+
+const marketQuoteReadinessLabel = (status: NonNullable<MarketCatalogMarket['quoteStatus']>, readyVenueCount: number, blockers: string[]): string => {
+  if (status === 'live') return readyVenueCount > 0 ? `${readyVenueCount} quote-ready venue${readyVenueCount === 1 ? '' : 's'}` : 'Quote ready';
+  if (status === 'partial') return readyVenueCount > 0 ? `Partial coverage: ${readyVenueCount} venue${readyVenueCount === 1 ? '' : 's'}` : 'Partial venue coverage';
+  if (status === 'stale') return 'Stale quote - refresh on open';
+  return blockers[0] ? readableQuoteBlocker(blockers[0]) : 'Quote unavailable';
+};
+
+const marketQuoteStatusPriceLabel = (status: NonNullable<MarketCatalogMarket['quoteStatus']>): string => {
+  if (status === 'stale') return 'Stale';
+  if (status === 'unavailable') return 'Unavailable';
+  return 'Preview';
+};
+
+const marketQuoteStatusBadge = (status: NonNullable<MarketCatalogMarket['quoteStatus']>): { label: string; className: string } | null => {
+  if (status === 'partial') {
+    return {
+      label: 'Partial coverage',
+      className: 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300',
+    };
+  }
+  if (status === 'stale') {
+    return {
+      label: 'Stale quote',
+      className: 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300',
+    };
+  }
+  if (status === 'unavailable') {
+    return {
+      label: 'Blocked',
+      className: 'border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-300',
+    };
+  }
+  return null;
 };
 
 const marketIdForCatalogMarket = (market: MarketCatalogMarket): string => market.canonicalMarketIds[0] ?? market.canonicalEventId;
@@ -623,6 +699,10 @@ const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardM
   const venues = venuesForCatalogMarket(market);
   const routeType = routeTypeLabel(market);
   const marketId = marketIdForCatalogMarket(market);
+  const quoteStatus = marketQuoteStatus(market);
+  const quoteReadyVenueCount = Number.isFinite(Number(market.quoteReadyVenueCount)) ? Number(market.quoteReadyVenueCount) : 0;
+  const quoteBlockers = catalogQuoteBlockers(market);
+  const quoteReadinessLabel = marketQuoteReadinessLabel(quoteStatus, quoteReadyVenueCount, quoteBlockers);
   const marketClass = formatTitleCase(market.marketClass || 'Market');
   const category = formatTitleCase(market.category || 'Market');
   const catalogVolume = formatMoneyMetric(market.volume24h ?? market.volume);
@@ -696,24 +776,28 @@ const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardM
     marketType: market.outcomeCount > 2 ? 'multi' : 'binary',
     marketClass,
     status: market.status,
+    quoteStatus,
+    quoteReadyVenueCount,
+    quoteBlockers,
+    lastQuoteAt: market.lastQuoteAt ?? null,
     outcomes: outcomeRows.length > 0
       ? outcomeRows
       : [{ id: 'OUTCOMES', marketId, eventId: market.eventId ?? market.canonicalEventId, canonicalEventId: market.canonicalEventId, quoteOutcomeId: 'OUTCOMES', name: 'Outcomes load in terminal', prob: 'Quote', liveStatus: 'not_requested' }],
     imageUrl: getSafeMediaUrl(market.imageUrl),
     iconUrl: getSafeMediaUrl(market.iconUrl),
-    priceLabel: 'Quote',
+    priceLabel: marketQuoteStatusPriceLabel(quoteStatus),
     priceVenue: null,
-    changeLabel: 'Quote required',
-    savings: 'Quote required',
-    spread: 'Quote required',
-    fallbackLabel: routeType === 'Single' ? 'Single venue' : 'Route preview',
-    fallbackMode: routeType === 'Single' ? 'fallback' : 'pending',
+    changeLabel: quoteReadinessLabel,
+    savings: quoteStatus === 'unavailable' ? 'Unavailable' : 'Preview route',
+    spread: quoteStatus === 'stale' ? 'Stale' : quoteStatus === 'unavailable' ? 'Blocked' : 'Ready',
+    fallbackLabel: quoteReadinessLabel,
+    fallbackMode: quoteStatus === 'unavailable' ? 'blocker' : routeType === 'Single' ? 'fallback' : 'pending',
     closesBy: formatMarketDate(market.expiresAt ?? market.resolvesAt),
     closeTimestamp: dateTimestamp(market.expiresAt ?? market.resolvesAt),
     change24hLabel: 'Quote',
     change24hDirection: 'pending',
     venueDetails,
-    quoteRequired: true,
+    quoteRequired: quoteStatus === 'unavailable',
     prob: null,
     change: null,
     txnBuy: buyCount ?? buyVolume ?? 0,
@@ -740,6 +824,22 @@ const mapCatalogMarketsToDashboardRows = (markets: MarketCatalogMarket[]): Dashb
     const venues = Array.from(new Set(group.flatMap(venuesForCatalogMarket)));
     const routeTypes = group.map(routeTypeLabel);
     const routeType = routeTypes.includes('Strict all') ? 'Strict all' : routeTypes.includes('Tri') ? 'Tri' : routeTypes.includes('Pair') ? 'Pair' : 'Single';
+    const groupedQuoteStatuses = group.map(marketQuoteStatus);
+    const quoteStatus = groupedQuoteStatuses.every((status) => status === 'live')
+      ? 'live'
+      : groupedQuoteStatuses.some((status) => status === 'live' || status === 'partial')
+        ? 'partial'
+        : groupedQuoteStatuses.some((status) => status === 'stale')
+          ? 'stale'
+          : 'unavailable';
+    const quoteReadyVenueCount = Math.max(0, ...group.map((market) => Number(market.quoteReadyVenueCount) || 0));
+    const quoteBlockers = group.flatMap(catalogQuoteBlockers);
+    const quoteReadinessLabel = marketQuoteReadinessLabel(quoteStatus, quoteReadyVenueCount, quoteBlockers);
+    const groupedLastQuoteTimes = group
+      .map((market) => market.lastQuoteAt)
+      .filter((value): value is string => typeof value === 'string' && value.length > 0)
+      .sort();
+    const lastQuoteAt = groupedLastQuoteTimes[groupedLastQuoteTimes.length - 1] ?? null;
     const outcomeByCandidate = new Map<string, DashboardOutcomeRow>();
     for (const market of group) {
       const key = candidateOutcomeKey(market);
@@ -777,6 +877,10 @@ const mapCatalogMarketsToDashboardRows = (markets: MarketCatalogMarket[]): Dashb
       venues,
       venueMarkets,
       marketType: 'binary',
+      quoteStatus,
+      quoteReadyVenueCount,
+      quoteBlockers,
+      lastQuoteAt,
       outcomes,
       badges: venues,
       volume: volume ?? liquidity ?? base.volume,
@@ -784,7 +888,13 @@ const mapCatalogMarketsToDashboardRows = (markets: MarketCatalogMarket[]): Dashb
       txnBuy: buyCount ?? buyVolume ?? 0,
       txnSell: sellCount ?? sellVolume ?? 0,
       txnLabel: buyCount !== null || sellCount !== null ? 'Txns' : buyVolume !== null || sellVolume !== null ? 'Vol' : 'Pending',
-      fallbackLabel: routeType === 'Single' ? 'Single venue' : `${routeType} route`,
+      priceLabel: marketQuoteStatusPriceLabel(quoteStatus),
+      changeLabel: quoteReadinessLabel,
+      savings: quoteStatus === 'unavailable' ? 'Unavailable' : 'Preview route',
+      spread: quoteStatus === 'stale' ? 'Stale' : quoteStatus === 'unavailable' ? 'Blocked' : 'Ready',
+      fallbackLabel: quoteReadinessLabel,
+      fallbackMode: quoteStatus === 'unavailable' ? 'blocker' : base.fallbackMode,
+      quoteRequired: quoteStatus === 'unavailable',
     };
   });
 };
@@ -820,6 +930,7 @@ const toOutcomeQuote = (
   const averagePrice = unifiedAveragePrice(candidates);
   return {
     outcomeId,
+    status: response?.candidates?.length ? 'live' : 'unavailable',
     price: averagePrice,
     priceLabel: formatProbabilityPercent(averagePrice),
     generatedAt: response?.generatedAt ?? null,
@@ -848,6 +959,7 @@ const toOutcomeQuoteFromBatch = (quote: MarketBatchQuoteItem): DashboardOutcomeQ
   const price = quote.unifiedAveragePrice !== null ? Number(quote.unifiedAveragePrice) : bestCandidate?.price ?? null;
   return {
     outcomeId: quote.outcomeId,
+    status: quote.status,
     price: Number.isFinite(price) ? price : null,
     priceLabel: formatProbabilityPercent(Number.isFinite(price) ? price : null),
     generatedAt: quote.generatedAt,
@@ -870,7 +982,7 @@ const applyLiveQuoteToMarket = (market: DashboardMarketRow, quote: DashboardMark
     return {
       ...outcome,
       prob: liveQuote.price !== null ? liveQuote.priceLabel : 'Unavailable',
-      liveStatus: liveQuote.price !== null ? 'live' as const : 'unavailable' as const,
+      liveStatus: liveQuote.price !== null ? liveQuote.status : 'unavailable' as const,
     };
   });
   const liveQuotes = quotedOutcomes
@@ -881,12 +993,14 @@ const applyLiveQuoteToMarket = (market: DashboardMarketRow, quote: DashboardMark
   const displayQuote = yesLiveQuote?.bestCandidate ? yesLiveQuote : liveQuotes[0] ?? null;
   if (!displayQuote) {
     const unavailable = quotedOutcomes.some((outcome) => outcome.liveStatus === 'unavailable');
+    const blocker = Object.values(quote.outcomes).map((outcome) => outcome.blocker).find((item): item is string => Boolean(item));
     return {
       ...market,
       outcomes: quotedOutcomes,
       priceVenue: null,
-      changeLabel: unavailable ? 'Live unavailable' : market.changeLabel,
-      fallbackLabel: unavailable ? 'Backend blocker' : market.fallbackLabel,
+      quoteStatus: unavailable ? 'unavailable' : market.quoteStatus,
+      changeLabel: unavailable ? blocker ?? 'Live unavailable' : market.changeLabel,
+      fallbackLabel: unavailable ? blocker ?? 'Backend blocker' : market.fallbackLabel,
       fallbackMode: unavailable ? 'blocker' : market.fallbackMode,
       quoteRequired: true,
     };
@@ -899,12 +1013,19 @@ const applyLiveQuoteToMarket = (market: DashboardMarketRow, quote: DashboardMark
     ...Object.values(quote.sellOutcomes ?? {}),
   ]));
   const hasCatalogMetric = market.volume !== 'Backend catalog';
+  const batchQuoteStatus = displayQuote.status === 'unavailable' ? market.quoteStatus : displayQuote.status;
+  const statusChangeLabel = batchQuoteStatus === 'partial'
+    ? 'Partial coverage'
+    : batchQuoteStatus === 'stale'
+      ? 'Stale quote'
+      : displayQuote.bestCandidate?.venue ? 'Best Yes' : 'Live';
   return {
     ...market,
     outcomes: quotedOutcomes,
+    quoteStatus: batchQuoteStatus,
     priceLabel: formatProbabilityPrice(displayQuote.bestCandidate?.price),
     priceVenue: displayQuote.bestCandidate?.venue ?? null,
-    changeLabel: displayQuote.bestCandidate?.venue ? 'Best Yes' : 'Live',
+    changeLabel: statusChangeLabel,
     savings: 'Unified',
     spread: formatSpreadBps(displayQuote.bestCandidate),
     fallbackLabel: displayQuote.bestCandidate?.venue ?? market.fallbackLabel,
@@ -1114,9 +1235,9 @@ export const DashboardV2Mockup = ({
       },
       {
         type: marketSummary.routePreviewRequired > 0 ? 'route' : 'buy',
-        title: marketSummary.routePreviewRequired > 0 ? 'Route preview required' : 'Routes refreshed',
+        title: marketSummary.routePreviewRequired > 0 ? 'Quote readiness pending' : 'Routes refreshed',
         market: marketSummary.routePreviewRequired > 0
-          ? `${marketSummary.routePreviewRequired} markets still need live quote evidence`
+          ? `${marketSummary.routePreviewRequired} markets have stale or unavailable quote evidence`
           : 'Visible markets have live route evidence',
         time: marketSummary.routePreviewRequired > 0 ? 'Safe' : 'Live',
         price: '',
@@ -1191,13 +1312,16 @@ export const DashboardV2Mockup = ({
   useEffect(() => {
     if (!isMarketSurface) return;
     let cancelled = false;
+    const routeCoverage = routeCoverageForFilters(selectedRouteTypes);
     const timer = window.setTimeout(() => {
       setMarketsLoading(true);
       setMarketsError(null);
       listMarkets({
         category: filterCategory,
         search: searchQuery.trim() || undefined,
-        limit: activePage === 'markets' ? 120 : 120,
+        limit: 250,
+        quoteReadyOnly: true,
+        routeCoverage,
       })
         .then((response) => {
           if (cancelled) return;
@@ -1219,7 +1343,7 @@ export const DashboardV2Mockup = ({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [activePage, filterCategory, isMarketSurface, searchQuery]);
+  }, [activePage, filterCategory, isMarketSurface, searchQuery, selectedRouteTypes]);
 
   useEffect(() => {
     if (!isMarketSurface || marketRows.length === 0) {
@@ -2041,7 +2165,7 @@ export const DashboardV2Mockup = ({
                   <span className="text-xs font-mono font-bold text-[#99cc00]">{marketSummary.crossVenue}</span>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-medium text-zinc-600 dark:text-zinc-400">Quote Required</span>
+                  <span className="text-xs font-medium text-zinc-600 dark:text-zinc-400">Quote Pending</span>
                   <span className="text-xs font-mono font-bold text-zinc-900 dark:text-zinc-100">{marketSummary.routePreviewRequired}</span>
                 </div>
               </div>
@@ -2603,7 +2727,9 @@ const LotusMarketList = ({
       {!loading && !error && markets.length === 0 && (
         <div className="px-5 py-6 text-sm font-medium text-zinc-400">{emptyCopy}</div>
       )}
-      {markets.map((market) => (
+      {markets.map((market) => {
+        const statusBadge = marketQuoteStatusBadge(market.quoteStatus);
+        return (
         <div key={market.id} className="group grid grid-cols-[minmax(360px,1.7fr)_112px_96px_84px_116px_92px_96px_150px] items-center gap-4 px-5 py-3.5 transition-colors hover:bg-[#ccff00]/[0.035]">
           <div className="flex min-w-0 items-center gap-3">
             <button type="button" className="flex h-7 w-5 shrink-0 items-center justify-center rounded-md text-zinc-500 transition hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70" aria-label={`Expand ${market.title}`}>
@@ -2632,6 +2758,12 @@ const LotusMarketList = ({
                   <span>{market.routeType} route</span>
                   <span>-</span>
                   <span>{market.venueCount} venues</span>
+                  {statusBadge && (
+                    <>
+                      <span>-</span>
+                      <span className={`rounded-full border px-1.5 py-0.5 text-[10px] font-bold ${statusBadge.className}`}>{statusBadge.label}</span>
+                    </>
+                  )}
                   <span className="flex items-center gap-1">
                     {market.venues.map((venue) => (
                       <VenueChip key={venue} id={venue} size="xs" />
@@ -2665,7 +2797,8 @@ const LotusMarketList = ({
             <button type="button" onClick={() => onOpenMarket?.(market)} className="h-8 rounded-lg border border-red-500/60 bg-red-500/10 px-3 text-xs font-bold text-red-300 transition hover:bg-red-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70">No</button>
           </div>
         </div>
-      ))}
+        );
+      })}
       {false && <>
       {marketListRows.map((market, index) => {
         const meta = listMarketMeta[index] ?? listMarketMeta[0];
@@ -2849,7 +2982,7 @@ const NavItem = ({
   </div>
 );
 
-const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, venueCount, routeType, savings, spread, fallback, fallbackLabel, fallbackMode = 'pending', icon, imageUrl, iconUrl, priceLabel, priceVenue, changeLabel, prob, change, volume, volumeLabel = 'Vol', txnBuy, txnSell, txnLabel = 'Pending', badges = [], outcomes, marketType, venues, venueMarkets, isWatched = false, onToggleWatch, onOpenTerminal }: any) => {
+const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, venueCount, routeType, savings, spread, fallback, fallbackLabel, fallbackMode = 'pending', icon, imageUrl, iconUrl, priceLabel, priceVenue, changeLabel, prob, change, volume, volumeLabel = 'Vol', txnBuy, txnSell, txnLabel = 'Pending', badges = [], outcomes, marketType, venues, venueMarkets, quoteStatus = 'live', quoteReadyVenueCount = 0, quoteBlockers = [], lastQuoteAt = null, isWatched = false, onToggleWatch, onOpenTerminal }: any) => {
   const [outcomesExpanded, setOutcomesExpanded] = useState(false);
   const allVenues = [
     { id: 'polymarket', label: 'Polymarket' },
@@ -2859,8 +2992,33 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
     { id: 'myriad', label: 'Myriad' }
   ];
 
-  const displayPrice = priceLabel ?? (prob !== null && prob !== undefined ? `${prob}Â¢` : 'Quote');
-  const displayChange = changeLabel ?? (change ? `+${change}Â¢ vs single venue` : 'Quote required');
+  const normalizedQuoteStatus: NonNullable<MarketCatalogMarket['quoteStatus']> =
+    quoteStatus === 'live' || quoteStatus === 'partial' || quoteStatus === 'stale' || quoteStatus === 'unavailable'
+      ? quoteStatus
+      : 'unavailable';
+  const statusBadge = marketQuoteStatusBadge(normalizedQuoteStatus);
+  const blockerList = Array.isArray(quoteBlockers)
+    ? quoteBlockers.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    : [];
+  const readableBlocker = blockerList[0] ? readableQuoteBlocker(blockerList[0]) : null;
+  const lastQuoteLabel = typeof lastQuoteAt === 'string' && lastQuoteAt ? formatRelativeTime(lastQuoteAt) : null;
+  const displayPrice = priceLabel ?? (prob !== null && prob !== undefined ? `${prob}¢` : 'Quote');
+  const displayChange = changeLabel ?? (
+    normalizedQuoteStatus === 'unavailable'
+      ? readableBlocker ?? 'Quote unavailable'
+      : normalizedQuoteStatus === 'stale'
+        ? 'Stale quote'
+        : change ? `+${change}¢ vs single venue` : 'Quote ready'
+  );
+  const emptyTxnCopy = normalizedQuoteStatus === 'unavailable'
+    ? readableBlocker ?? 'Quote unavailable'
+    : normalizedQuoteStatus === 'stale'
+      ? lastQuoteLabel ? `Stale quote, checked ${lastQuoteLabel}` : 'Stale quote. Refresh on open.'
+      : normalizedQuoteStatus === 'partial'
+        ? 'Partial venue quote coverage'
+        : quoteReadyVenueCount > 0
+          ? `${quoteReadyVenueCount} quote-ready venue${quoteReadyVenueCount === 1 ? '' : 's'}`
+          : 'Quote-ready venue available';
   const buyCount = typeof txnBuy === 'number' ? txnBuy : 0;
   const sellCount = typeof txnSell === 'number' ? txnSell : 0;
   const totalCount = buyCount + sellCount;
@@ -2891,8 +3049,13 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
           <MarketMediaThumb title={title} icon={icon} imageUrl={imageUrl} iconUrl={iconUrl} className="h-10 w-10 text-xl shadow-sm" />
           <span className="flex-1 min-w-0">
             <span className="block text-sm font-bold text-zinc-900 dark:text-zinc-100 leading-tight mb-1 line-clamp-2 pr-2 transition-colors group-hover:text-[#5c7300] dark:group-hover:text-[#ccff00]">{title}</span>
-            <span className="block text-[11px] font-medium text-zinc-500 dark:text-zinc-400 mb-2.5">
-              {category} · {venueCount} venues scanned
+            <span className="mb-2.5 flex flex-wrap items-center gap-1.5 text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
+              <span>{category}</span>
+              <span>-</span>
+              <span>{venueCount} venues scanned</span>
+              {statusBadge && (
+                <span className={`rounded-full border px-1.5 py-0.5 text-[10px] font-bold ${statusBadge.className}`}>{statusBadge.label}</span>
+              )}
             </span>
             <span className="flex gap-1.5 mb-3">
               {allVenues.map(v => {
@@ -3017,7 +3180,7 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
               </span>
             </>
           ) : (
-            <span className="text-zinc-500">{priceLabel === 'Quote' ? 'Live quote required for order flow' : 'Buy/sell transactions pending'}</span>
+            <span className="text-zinc-500">{emptyTxnCopy}</span>
           )}
         </div>
         <div className="hidden">

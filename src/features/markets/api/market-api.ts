@@ -58,6 +58,10 @@ export type MarketCatalogMarket = MarketCatalogMedia & MarketCatalogMetrics & {
     hasSingleVenue: boolean;
     hasCrossVenue: boolean;
   };
+  quoteStatus?: "live" | "partial" | "stale" | "unavailable";
+  quoteReadyVenueCount?: number;
+  quoteBlockers?: unknown[];
+  lastQuoteAt?: string | null;
   venueMarkets: MarketCatalogVenueMarket[];
   updatedAt: string;
 };
@@ -229,6 +233,8 @@ export type MarketListInput = {
   category?: string;
   search?: string;
   limit?: number;
+  quoteReadyOnly?: boolean;
+  routeCoverage?: "all" | "single" | "pair" | "tri" | "strict_all";
 };
 
 export function listMarketCategories() {
@@ -328,6 +334,8 @@ function buildMarketParams(input: MarketListInput): string {
   if (input.category) params.set("category", input.category);
   if (input.search) params.set("search", input.search);
   if (input.limit) params.set("limit", String(input.limit));
+  if (typeof input.quoteReadyOnly === "boolean") params.set("quoteReadyOnly", String(input.quoteReadyOnly));
+  if (input.routeCoverage) params.set("routeCoverage", input.routeCoverage);
   const query = params.toString();
   return query ? `?${query}` : "";
 }
