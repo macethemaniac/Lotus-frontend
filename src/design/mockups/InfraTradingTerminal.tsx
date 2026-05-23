@@ -1451,19 +1451,21 @@ const arrayField = (value: unknown, fields: string[]): unknown[] => {
 };
 
 const routeLegsFromExecutionOrder = (order: ExecutionOrderResponse | null): ExecutionOrderRouteLegSummary[] => {
+  const fallbackPrice = orderEffectivePrice(order);
+  const fallbackSize = orderReceiveAmount(order);
   const rawLegs = arrayField(order?.routeSummary, ['legs', 'routeLegs', 'venueLegs', 'path', 'venues']);
   const objectLegs = rawLegs
     .map((item) => {
       if (typeof item === 'string') {
-        return { venue: item, price: null, size: null };
+        return { venue: item, price: fallbackPrice, size: fallbackSize };
       }
       const source = recordValue(item);
       const venue = textField(source, ['venue', 'venueId', 'name', 'selectedVenue']);
       if (!venue) return null;
       return {
         venue,
-        price: numericField(source, ['price', 'effectivePrice', 'averagePrice', 'avgPrice', 'expectedPrice']),
-        size: textField(source, ['size', 'amount', 'executableAmount', 'shares', 'quantity']),
+        price: numericField(source, ['price', 'effectivePrice', 'averagePrice', 'avgPrice', 'expectedPrice']) ?? fallbackPrice,
+        size: textField(source, ['size', 'amount', 'executableAmount', 'shares', 'quantity']) ?? fallbackSize,
       };
     })
     .filter((item): item is ExecutionOrderRouteLegSummary => Boolean(item));
@@ -4167,6 +4169,7 @@ export const InfraTradingTerminal = ({
   const ticketOrchestratorState = ticketOrchestratorOrder?.state ?? null;
   const ticketOrchestratorRouteLegs = routeLegsFromExecutionOrder(ticketOrchestratorOrder);
   const ticketOrchestratorRouteType = executionOrderRouteType(ticketOrchestratorOrder);
+  const ticketOrchestratorRouteBadge = ticketOrchestratorRouteLegs.length === 1 ? 'SINGLE_VENUE' : ticketOrchestratorRouteType;
   const ticketOrchestratorEstimatedSavings = executionOrderEstimatedSavings(ticketOrchestratorOrder);
   const ticketOrchestratorDetail = ticketOrchestratorBlocker
     ?? (ticketOrchestratorState === 'WAITING_FOR_VENUE_READY'
@@ -5709,13 +5712,11 @@ export const InfraTradingTerminal = ({
                       {executionOrchestratorEnabled && ticketRouteReady && ticketOrchestratorOrder && ticketOrchestratorRouteLegs.length > 0 && (
                         <div className="rounded-lg border border-emerald-500/20 bg-[#0c0c0e] p-3 shadow-[0_0_15px_rgba(16,185,129,0.05)]">
                           <div className="flex items-center justify-between gap-3 border-b border-zinc-800/60 pb-2">
-                            <div className="flex items-center gap-1.5">
-                              <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" aria-hidden />
-                              <span className="text-[10px] font-bold tracking-wide text-zinc-300">Route preview</span>
-                            </div>
+                            <span className="h-px min-w-0 flex-1 bg-zinc-800/70" aria-hidden />
                             <span className="rounded border border-emerald-500/20 bg-emerald-500/10 px-1.5 py-0.5 font-mono text-[8px] font-bold uppercase tracking-widest text-emerald-400">
-                              {ticketOrchestratorRouteType}
+                              {ticketOrchestratorRouteBadge}
                             </span>
+                            <span className="h-px min-w-0 flex-1 bg-zinc-800/70" aria-hidden />
                           </div>
                           <div className="mt-3 flex items-center gap-1 overflow-x-auto pb-1 font-mono text-[9px] custom-scrollbar">
                             {ticketOrchestratorRouteLegs.map((leg, index) => (
@@ -5725,7 +5726,7 @@ export const InfraTradingTerminal = ({
                                     <ChevronRight className="h-3 w-3" aria-hidden />
                                   </div>
                                 )}
-                                <div className="min-w-[95px] flex-1 rounded border border-zinc-800 bg-[#121214] p-1.5 text-center">
+                                <div className="min-w-[120px] flex-1 rounded border border-zinc-800 bg-[#121214] p-2 text-center">
                                   <div className="mx-auto mb-0.5 w-max font-sans text-[8px] font-bold uppercase tracking-wider text-zinc-500">
                                     Leg {index + 1}
                                   </div>
@@ -5738,7 +5739,7 @@ export const InfraTradingTerminal = ({
                                   </div>
                                   {leg.size && (
                                     <div className="mt-1 text-[9px] text-zinc-500">
-                                      {formatCompactMetric(leg.size) ?? leg.size}
+                                      {(formatCompactMetric(leg.size) ?? leg.size)} shares
                                     </div>
                                   )}
                                 </div>
