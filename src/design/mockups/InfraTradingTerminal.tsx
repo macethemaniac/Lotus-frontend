@@ -512,6 +512,7 @@ const readableQuoteBlocker = (reason: string | null | undefined): string | null 
   if (normalized.includes('QUOTE_PROVIDER_EMPTY_BOOK')) return 'No live depth';
   if (normalized.includes('QUOTE_PROVIDER_BAD_PAYLOAD')) return 'Provider payload unavailable';
   const http = normalized.match(/QUOTE_PROVIDER_HTTP_(\d{3})/);
+  if (http?.[1] === '429') return 'Venue quote provider rate limited';
   if (http) return `Provider unavailable (${http[1]})`;
   if (normalized.includes('QUOTE_READER_UNSUPPORTED')) return 'Venue quote reader unsupported';
   if (normalized.includes('QUOTE_SNAPSHOT_STALE')) return 'Stale quote';
@@ -566,6 +567,24 @@ const formatBookNotional = (value: string | null | undefined): string => {
   const metric = formatCompactMetric(value);
   return metric ? `$${metric}` : '-';
 };
+
+const scaleVenueOrderbookDisplayValue = (
+  venue: string,
+  value: string | number | null | undefined
+): string | null => {
+  const parsed = orderbookNumericValue(value);
+  if (parsed === null) return null;
+  if (toBackendVenueId(venue) === 'LIMITLESS' && Math.abs(parsed) >= 1_000_000) {
+    return String(parsed / 1_000_000);
+  }
+  return String(parsed);
+};
+
+const formatBookLevelSize = (level: MarketOrderbookLevel): string =>
+  formatBookSize(scaleVenueOrderbookDisplayValue(level.venue, level.size));
+
+const formatBookLevelNotional = (level: MarketOrderbookLevel): string =>
+  formatBookNotional(scaleVenueOrderbookDisplayValue(level.venue, level.cumulativeNotional));
 
 const orderbookNumberString = (value: string | number | null | undefined): string | null => {
   if (value === null || typeof value === 'undefined') return null;
@@ -2136,7 +2155,8 @@ export const InfraTradingTerminal = ({
   const selectedOutcomeMarketId = selectedOutcome?.marketId ?? terminalMarketId;
   const selectedQuoteOutcomeId = selectedOutcome?.quoteOutcomeId ?? selectedOutcomeId;
   const orderbookMarketId = selectedOutcomeMarketId ?? terminalMarketId;
-  const orderbookWsTopic = orderbookMarketId ? marketOrderbookTopic(orderbookMarketId, selectedQuoteOutcomeId) : null;
+  const orderbookQuoteOutcomeId = selectedQuoteOutcomeId ?? (marketType === 'binary' ? 'YES' : null);
+  const orderbookWsTopic = orderbookMarketId ? marketOrderbookTopic(orderbookMarketId, orderbookQuoteOutcomeId) : null;
   const selectedTicketOutcomeId = outcomeIdForTicketSide(terminalOutcomes, ticketOutcomeSide, selectedOutcomeId);
   const selectedTicketOutcome = terminalOutcomes.find((outcome) => outcome.id === selectedTicketOutcomeId) ?? selectedOutcome;
   const selectedTicketMarketId = selectedTicketOutcome?.marketId ?? selectedOutcomeMarketId ?? terminalMarketId;
@@ -3448,18 +3468,19 @@ export const InfraTradingTerminal = ({
   React.useEffect(() => {
     let cancelled = false;
     const refreshOrderbook = async () => {
-      const requestKey = `${orderbookMarketId ?? 'none'}:${selectedQuoteOutcomeId ?? 'none'}:${orderbookVenue}`;
+      const requestKey = `${orderbookMarketId ?? 'none'}:${orderbookQuoteOutcomeId ?? 'none'}:${orderbookVenue}`;
       if (!orderbookMarketId) {
         setOrderbook(null);
         setOrderbookError(null);
         return;
       }
       if (orderbookNotFoundKey === requestKey) return;
+      setLatestOrderbookStream(null);
       setOrderbookLoading(true);
       setOrderbookError(null);
       try {
         const response = await getMarketOrderbook(orderbookMarketId, {
-          outcomeId: selectedQuoteOutcomeId,
+          outcomeId: orderbookQuoteOutcomeId,
           depth: 20,
           venue: orderbookVenue === 'ALL' ? null : orderbookVenue
         });
@@ -3490,7 +3511,7 @@ export const InfraTradingTerminal = ({
       cancelled = true;
       if (interval !== null) window.clearInterval(interval);
     };
-  }, [orderbookMarketId, orderbookNotFoundKey, orderbookVenue, orderbookWsState, selectedQuoteOutcomeId]);
+  }, [orderbookMarketId, orderbookNotFoundKey, orderbookQuoteOutcomeId, orderbookVenue, orderbookWsState]);
 
   React.useEffect(() => {
     if (!orderbookMarketId || !orderbookWsTopic) {
@@ -3502,7 +3523,7 @@ export const InfraTradingTerminal = ({
     let active = true;
     const topic = orderbookWsTopic;
     const expectedMarketId = orderbookMarketId;
-    const expectedOutcomeId = selectedQuoteOutcomeId ?? null;
+    const expectedOutcomeId = orderbookQuoteOutcomeId ?? null;
     const client = openExecutionSocket({
       onStateChange: (state) => {
         if (active) setOrderbookWsState(state);
@@ -3565,7 +3586,7 @@ export const InfraTradingTerminal = ({
       client.unsubscribe(topic);
       client.socket.close();
     };
-  }, [marketType, orderbookMarketId, orderbookVenue, orderbookWsTopic, selectedQuoteOutcomeId]);
+  }, [marketType, orderbookMarketId, orderbookQuoteOutcomeId, orderbookVenue, orderbookWsTopic]);
 
   const refreshAccountData = useCallback(async () => {
     if (!token) {
@@ -4332,8 +4353,8 @@ export const InfraTradingTerminal = ({
                          <VenueLogo id={normalizeVenueId(level.venue)} label={formatVenueLabel(level.venue)} className={tinyVenueClass} />
                          {formatVenueLabel(level.venue)}
                        </span>
-                       <span className="w-20 text-right text-zinc-200">{formatBookSize(level.size)}</span>
-                       <span className="w-24 text-right text-white font-bold">{formatBookNotional(level.cumulativeNotional)}</span>
+                       <span className="w-20 text-right text-zinc-200">{formatBookLevelSize(level)}</span>
+                       <span className="w-24 text-right text-white font-bold">{formatBookLevelNotional(level)}</span>
                      </div>
                    ))}
                    {/* Asks (Sells) */}
@@ -4365,8 +4386,8 @@ export const InfraTradingTerminal = ({
                          <VenueLogo id={normalizeVenueId(level.venue)} label={formatVenueLabel(level.venue)} className={tinyVenueClass} />
                          {formatVenueLabel(level.venue)}
                        </span>
-                       <span className="w-20 text-right text-zinc-200">{formatBookSize(level.size)}</span>
-                       <span className="w-24 text-right text-white font-bold">{formatBookNotional(level.cumulativeNotional)}</span>
+                       <span className="w-20 text-right text-zinc-200">{formatBookLevelSize(level)}</span>
+                       <span className="w-24 text-right text-white font-bold">{formatBookLevelNotional(level)}</span>
                      </div>
                    ))}
                    {/* Bids (Buys) */}
