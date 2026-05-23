@@ -4960,14 +4960,6 @@ export const InfraTradingTerminal = ({
                          </button>
                      ))}
                  </div>
-                 {bottomTab === 'Outcomes' && (
-                     <div className="flex items-center gap-2 border-b border-transparent pb-1">
-                          <span className="text-zinc-400 text-[11px] font-bold uppercase tracking-wider">Vol Filter</span>
-                          <div className="w-8 h-4 bg-zinc-700 rounded-full flex items-center p-0.5 cursor-pointer">
-                              <div className="w-3 h-3 bg-white rounded-full shadow-sm"></div>
-                          </div>
-                     </div>
-                 )}
              </div>
              <div className="flex-1 overflow-y-auto w-full custom-scrollbar bg-[#121214] p-4">
                 {bottomTab === 'Outcomes' && (
