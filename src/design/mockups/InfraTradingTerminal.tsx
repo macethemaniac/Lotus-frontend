@@ -1827,6 +1827,57 @@ const formatChartTimeLabel = (timestamp: string, timeframe: MarketChartTimeframe
   return new Intl.DateTimeFormat("en-US", options).format(date);
 };
 
+const formatChartAxisTimeLabel = (timestamp: number, timeframe: MarketChartTimeframe): string => {
+  if (!Number.isFinite(timestamp)) return "";
+  return formatChartTimeLabel(new Date(timestamp).toISOString(), timeframe);
+};
+
+const formatChartAxisValue = (value: number, marketType: 'binary' | 'multi'): string => {
+  const suffix = marketType === 'multi' ? 'c' : '%';
+  const precision = Math.abs(value) >= 10 ? 0 : Math.abs(value) >= 1 ? 1 : 2;
+  return `${value.toFixed(precision)}${suffix}`;
+};
+
+const buildChartTicks = (max: number): number[] => {
+  if (!Number.isFinite(max) || max <= 0) return [0, 25, 50, 75, 100];
+  const divisions = 4;
+  return Array.from({ length: divisions + 1 }, (_, index) => Number(((max / divisions) * index).toFixed(max <= 2 ? 2 : max <= 10 ? 1 : 0)));
+};
+
+const buildChartYAxis = (
+  rows: TerminalChartRow[],
+  series: TerminalChartSeries[]
+): { domain: [number, number]; ticks: number[] } => {
+  const values = rows.flatMap((row) =>
+    series.flatMap((item) => {
+      const value = row[item.id];
+      return typeof value === 'number' && Number.isFinite(value) ? [value] : [];
+    })
+  );
+
+  if (values.length === 0) return { domain: [0, 100], ticks: [0, 25, 50, 75, 100] };
+
+  const max = Math.max(...values);
+  const paddedMax = max <= 0 ? 1 : max * 1.16;
+  const upper = paddedMax <= 1
+    ? 1
+    : paddedMax <= 2
+      ? 2
+      : paddedMax <= 5
+        ? 5
+        : paddedMax <= 10
+          ? 10
+          : paddedMax <= 25
+            ? 25
+            : paddedMax <= 50
+              ? 50
+              : paddedMax <= 75
+                ? 75
+                : 100;
+
+  return { domain: [0, upper], ticks: buildChartTicks(upper) };
+};
+
 const toVenueChartModel = (
   chart: MarketChartResponse | null,
   timeframe: MarketChartTimeframe
@@ -1841,7 +1892,7 @@ const toVenueChartModel = (
   }));
   const rows = chart.points.map((point) => ({
     label: formatChartTimeLabel(point.timestamp, timeframe),
-    timestamp: Date.parse(point.timestamp),
+    timestamp: bucketChartTimestamp(point.timestamp),
     unified: chartPointValue(point.unified),
     ...Object.fromEntries(Object.entries(point.venues).map(([venue, value]) => [venue, chartPointValue(value)]))
   }));
@@ -1926,6 +1977,7 @@ const LiveCanonicalChart = ({
     [activeTab, marketType, outcomeCharts, venueChart]
   );
   const { rows, series, historyStatus } = chartModel;
+  const yAxis = useMemo(() => buildChartYAxis(rows, series), [rows, series]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -1998,7 +2050,9 @@ const LiveCanonicalChart = ({
     if (!active || !payload?.length) return null;
     return (
       <div className="bg-[#18181b]/95 border border-zinc-800 rounded-lg p-3 shadow-2xl z-50 min-w-[200px]">
-        <div className="text-zinc-400 text-[11px] mb-3 font-sans">{label}</div>
+        <div className="text-zinc-400 text-[11px] mb-3 font-sans">
+          {formatChartAxisTimeLabel(Number(label), activeTab) || String(label)}
+        </div>
         <div className="flex flex-col gap-2">
           {[...payload].filter((entry: any) => typeof entry.value === 'number').sort((a: any, b: any) => b.value - a.value).map((entry: any) => (
             <div key={entry.dataKey} className="flex items-center gap-1.5 text-[13px] font-medium">
@@ -2038,7 +2092,7 @@ const LiveCanonicalChart = ({
           ))}
         </div>
       </div>
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-3 mt-4 text-[13px] min-h-[20px] sm:px-4">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-3 mt-3 text-[12px] min-h-[20px] sm:px-4 sm:text-[13px]">
         {series.slice(0, 5).map((item) => {
           const latest = [...rows].reverse().find((point) => typeof point[item.id] === 'number');
           const value = typeof latest?.[item.id] === 'number' ? latest[item.id] as number : null;
@@ -2055,7 +2109,7 @@ const LiveCanonicalChart = ({
           <div className="text-zinc-500 font-bold ml-2">Live history accumulating</div>
         )}
       </div>
-      <div className="h-[260px] min-h-[260px] w-full mt-4 pr-2 relative sm:h-[300px] sm:min-h-[300px] sm:mt-6 sm:pr-4">
+      <div className="relative mt-4 min-h-[260px] w-full flex-1 pr-2 sm:mt-5 sm:min-h-[300px] sm:pr-4">
         {loading && rows.length === 0 && (
           <div className="absolute inset-0 z-10 flex items-center justify-center text-xs font-bold uppercase tracking-[0.18em] text-zinc-500">
             Loading live chart
@@ -2072,19 +2126,31 @@ const LiveCanonicalChart = ({
           </div>
         )}
         <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={260}>
-          <LineChart data={rows} margin={{ top: 20, right: 30, left: 10, bottom: 5 }}>
-            <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fill: '#71717A', fontSize: 11 }} dy={10} />
+          <LineChart data={rows} margin={{ top: 12, right: 38, left: 8, bottom: 12 }}>
+            <XAxis
+              dataKey="timestamp"
+              type="number"
+              domain={['dataMin', 'dataMax']}
+              axisLine={false}
+              tickLine={false}
+              tick={{ fill: '#71717A', fontSize: 11 }}
+              tickCount={activeTab === 'ALL' ? 7 : 5}
+              minTickGap={28}
+              dy={10}
+              tickFormatter={(value) => formatChartAxisTimeLabel(Number(value), activeTab)}
+            />
             <YAxis
               orientation="right"
               axisLine={false}
               tickLine={false}
               tick={{ fill: '#71717A', fontSize: 11 }}
-              dx={10}
-              tickFormatter={(val) => marketType === 'multi' ? `${val}c` : `${val}%`}
-              ticks={[0, 25, 50, 75, 100]}
-              domain={[0, 100]}
+              width={42}
+              dx={8}
+              tickFormatter={(value) => formatChartAxisValue(Number(value), marketType)}
+              ticks={yAxis.ticks}
+              domain={yAxis.domain}
             />
-            {[0, 25, 50, 75, 100].map((val) => (
+            {yAxis.ticks.map((val) => (
               <ReferenceLine key={val} y={val} stroke="#27272A" strokeDasharray="3 3" opacity={0.6} />
             ))}
             <Tooltip content={<CustomTooltip />} cursor={{ stroke: '#52525B', strokeWidth: 1, strokeDasharray: '3 3' }} />
