@@ -1480,7 +1480,7 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
   }, [handleLogin, loadPortfolio, pollPolymarketActivationReadiness, refreshWallets, session?.turnkeyOrganizationId, signMessage, syncPolymarketClobReadiness, token, turnkeyAuthState, turnkeySession, turnkeyWallets]);
 
   return (
-    <div className="min-h-full bg-[#09090b] text-white p-3 font-sans antialiased space-y-4 animate-fade-in relative sm:p-4 lg:p-6 lg:space-y-6">
+    <div className="relative min-h-full w-full bg-[#09090b] px-3 pt-3 pb-16 font-sans text-white antialiased space-y-4 animate-fade-in sm:px-4 sm:pt-4 sm:pb-16 lg:px-6 lg:pt-6 lg:pb-20 lg:space-y-6">
       {activationToast && (
         <div
           role="status"

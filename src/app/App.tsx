@@ -795,7 +795,7 @@ export function App() {
           onError={setAuthError}
         />
       ) : (
-        <div className="h-[100dvh] min-h-[100dvh] overflow-hidden bg-black pb-[calc(2.5rem+env(safe-area-inset-bottom))]">
+        <div className="relative h-[100dvh] min-h-[100dvh] overflow-hidden bg-black">
           <AccountDropdown session={session} onLogout={handleLogout} onNavigate={navigateToPage} />
           <DashboardV2Mockup activePage={activePage} onNavigate={navigateToPage} session={session} />
           <DenseStripFooter fixed />

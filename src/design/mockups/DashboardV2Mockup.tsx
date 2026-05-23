@@ -1502,7 +1502,7 @@ export const DashboardV2Mockup = ({
     <div className={`${isDarkMode ? 'dark' : ''} h-full min-h-0 w-full`}>
       <div className="flex h-full min-h-0 w-full bg-[#F7F8FA] dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 font-sans overflow-hidden">
         {/* Sidebar */}
-      <aside className="w-12 bg-white dark:bg-zinc-900 border-r border-zinc-200 dark:border-zinc-800 flex flex-col items-center gap-6 z-50 shrink-0 pb-[calc(3.5rem+env(safe-area-inset-bottom))] pt-4">
+      <aside className="w-12 bg-white dark:bg-zinc-900 border-r border-zinc-200 dark:border-zinc-800 flex flex-col items-center gap-6 z-50 shrink-0 pb-14 pt-4">
         <div className="w-7 h-7 flex items-center justify-center">
           <LotusLogo className="w-7 h-7 text-[#ccff00]" />
         </div>
@@ -2231,7 +2231,7 @@ export const DashboardV2Mockup = ({
           </div>
           </>
           ) : activePage === 'terminal' ? (
-            <div className="min-w-0 flex-1 overflow-hidden">
+            <div className="min-w-0 flex-1">
               <InfraTradingTerminal
                 embedded
                 darkMode={isDarkMode}
@@ -2241,7 +2241,7 @@ export const DashboardV2Mockup = ({
               />
             </div>
           ) : activePage === 'portfolio' ? (
-            <div className="min-w-0 flex-1 overflow-hidden">
+            <div className="min-w-0 flex-1">
               <PortfolioMockupV2 session={session} />
             </div>
           ) : (
