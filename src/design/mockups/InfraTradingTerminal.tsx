@@ -4488,10 +4488,10 @@ export const InfraTradingTerminal = ({
   const ticketAmountUnit = side === 'buy' ? 'USDC' : 'Shares';
   const ticketReceiveLabel = side === 'buy' ? 'To Win' : 'To Receive';
   const ticketOrchestratorReceiveText = orderReceiveAmount(ticketOrchestratorOrder);
-  const ticketReceiveText = executionOrchestratorEnabled && ticketOrchestratorReceiveText
-    ? (side === 'buy' ? `${ticketOrchestratorReceiveText} shares` : `${ticketOrchestratorReceiveText} USDC`)
-    : side === 'buy'
-      ? formatUsdc(ticketEstimatedPayout)
+  const ticketReceiveText = side === 'buy'
+    ? formatUsdc(ticketEstimatedPayout)
+    : executionOrchestratorEnabled && ticketOrchestratorReceiveText
+      ? `${ticketOrchestratorReceiveText} USDC`
       : formatTradeUsdc(ticketReceiveEstimate);
   const ticketPrimaryButtonClass = side === 'buy'
     ? 'bg-[#ccff00] hover:bg-[#b0dc00] text-black shadow-[0_0_15px_rgba(204,255,0,0.15)]'
@@ -5645,70 +5645,6 @@ export const InfraTradingTerminal = ({
                   </div>
 
                   <div className="flex flex-col gap-2">
-                      {executionOrchestratorEnabled && (
-                        <div className={`rounded-lg border px-3 py-2.5 transition-colors ${
-                          ticketOrchestratorBlocker
-                            ? 'border-amber-500/30 bg-amber-500/10'
-                            : ticketRouteReady
-                              ? 'border-emerald-500/20 bg-emerald-500/10'
-                              : 'border-zinc-800 bg-zinc-950/40'
-                        }`}>
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="min-w-0">
-                              <div className={`flex items-center gap-2 text-[11px] font-bold uppercase tracking-wide ${
-                                ticketOrchestratorBlocker
-                                  ? 'text-amber-200'
-                                  : ticketRouteReady
-                                    ? 'text-emerald-300'
-                                    : 'text-zinc-400'
-                              }`}>
-                                <span className={`h-2 w-2 rounded-full ${
-                                  ticketOrchestratorBlocker
-                                    ? 'bg-amber-300'
-                                    : ticketRouteReady
-                                      ? 'bg-emerald-400'
-                                      : 'bg-zinc-600'
-                                }`} />
-                                {ticketOrchestratorState === 'SUBMITTED'
-                                  ? 'Order submitted'
-                                  : ticketOrchestratorState === 'FILLED'
-                                    ? 'Order filled'
-                                    : ticketOrchestratorState === 'WAITING_FOR_VENUE_READY'
-                                      ? 'Waiting for venue'
-                                      : ticketRouteReady
-                                        ? 'Live route ready'
-                                        : ticketAmount.trim()
-                                          ? 'Pricing route'
-                                          : 'Enter amount'}
-                              </div>
-                              <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] font-semibold text-zinc-400">
-                                {ticketRoutePath.length > 0 ? ticketRoutePath.map((venue, index) => (
-                                  <React.Fragment key={`${venue}-${index}`}>
-                                    {index > 0 && <ChevronRight className="h-3 w-3 text-zinc-600" aria-hidden />}
-                                    <span className="inline-flex items-center gap-1 rounded-md border border-zinc-800 bg-zinc-950/60 px-1.5 py-0.5 text-zinc-200">
-                                      <VenueLogo id={normalizeVenueId(venue)} label={formatVenueLabel(venue)} className="h-3 w-3 rounded-full" />
-                                      {formatVenueLabel(venue)}
-                                    </span>
-                                  </React.Fragment>
-                                )) : (
-                                  <span>{ticketAmount.trim() ? 'Getting backend route and price...' : 'Route appears automatically after amount entry.'}</span>
-                                )}
-                              </div>
-                            </div>
-                            <div className="shrink-0 text-right">
-                              <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Avg price</div>
-                              <div className="font-mono text-sm font-black text-white">{formatProbabilityPrice(ticketEffectivePrice)}</div>
-                            </div>
-                          </div>
-                          {ticketOrchestratorDetail && (
-                            <div className={`mt-2 text-[10px] font-semibold leading-snug ${
-                              ticketOrchestratorBlocker ? 'text-amber-100' : 'text-emerald-100'
-                            }`}>
-                              {ticketOrchestratorDetail}
-                            </div>
-                          )}
-                        </div>
-                      )}
                       {executionOrchestratorEnabled && ticketRouteReady && ticketOrchestratorOrder && ticketOrchestratorRouteLegs.length > 0 && (
                         <div className="rounded-lg border border-emerald-500/20 bg-[#0c0c0e] p-3 shadow-[0_0_15px_rgba(16,185,129,0.05)]">
                           <div className="flex items-center justify-between gap-3 border-b border-zinc-800/60 pb-2">
