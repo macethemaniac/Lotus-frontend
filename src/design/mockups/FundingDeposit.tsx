@@ -980,7 +980,7 @@ export const FundingDeposit = ({
     };
 
     return (
-        <div className={modal ? 'flex w-full min-w-0 flex-col items-center overflow-x-hidden' : 'min-h-[calc(100vh-4rem)] flex min-w-0 flex-col items-center overflow-x-hidden pt-8 pb-32'}>
+        <div className={modal ? 'flex w-full min-w-0 flex-col items-center overflow-x-hidden' : 'min-h-[calc(100dvh-4rem)] flex min-w-0 flex-col items-center overflow-x-hidden px-3 pt-6 pb-32 sm:px-0 sm:pt-8'}>
             
             <div className={`bg-zinc-900/50 p-1 ${modal ? 'mb-3' : 'mb-6'} rounded-lg flex gap-1 border border-zinc-800`}>
                 <button 

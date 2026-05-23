@@ -370,7 +370,7 @@ function AccountDropdown({
   };
 
   return (
-    <div ref={menuRef} className="fixed right-5 top-3 z-50">
+    <div ref={menuRef} className="fixed right-3 top-3 z-50 sm:right-5">
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
@@ -390,7 +390,7 @@ function AccountDropdown({
       {open && (
         <div
           role="menu"
-          className="absolute right-0 mt-3 w-[342px] overflow-hidden rounded-2xl border border-zinc-800 bg-[#121214] text-zinc-100 shadow-2xl shadow-black/60"
+          className="absolute right-0 mt-3 w-[min(342px,calc(100vw-1.5rem))] overflow-hidden rounded-2xl border border-zinc-800 bg-[#121214] text-zinc-100 shadow-2xl shadow-black/60"
         >
           <div className="relative border-b border-zinc-800 p-4">
             <div className="absolute inset-x-0 top-0 h-20 bg-[radial-gradient(circle_at_18%_0%,rgba(204,255,0,0.13),transparent_42%),radial-gradient(circle_at_90%_10%,rgba(16,185,129,0.08),transparent_34%)]" />
@@ -795,7 +795,7 @@ export function App() {
           onError={setAuthError}
         />
       ) : (
-        <div className="h-screen overflow-hidden bg-black pb-10">
+        <div className="h-[100dvh] min-h-[100dvh] overflow-hidden bg-black pb-[calc(2.5rem+env(safe-area-inset-bottom))]">
           <AccountDropdown session={session} onLogout={handleLogout} onNavigate={navigateToPage} />
           <DashboardV2Mockup activePage={activePage} onNavigate={navigateToPage} session={session} />
           <DenseStripFooter fixed />

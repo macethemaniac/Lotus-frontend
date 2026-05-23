@@ -1499,10 +1499,10 @@ export const DashboardV2Mockup = ({
   const unreadNotificationCount = notificationItems.filter(item => item.readAt === null).length;
 
   return (
-    <div className={`${isDarkMode ? 'dark' : ''} w-full h-full`}>
-      <div className="flex h-screen w-full bg-[#F7F8FA] dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 font-sans overflow-hidden">
+    <div className={`${isDarkMode ? 'dark' : ''} h-full min-h-0 w-full`}>
+      <div className="flex h-full min-h-0 w-full bg-[#F7F8FA] dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 font-sans overflow-hidden">
         {/* Sidebar */}
-      <aside className="w-12 bg-white dark:bg-zinc-900 border-r border-zinc-200 dark:border-zinc-800 flex flex-col items-center gap-6 z-50 shrink-0 pb-14 pt-4">
+      <aside className="w-12 bg-white dark:bg-zinc-900 border-r border-zinc-200 dark:border-zinc-800 flex flex-col items-center gap-6 z-50 shrink-0 pb-[calc(3.5rem+env(safe-area-inset-bottom))] pt-4">
         <div className="w-7 h-7 flex items-center justify-center">
           <LotusLogo className="w-7 h-7 text-[#ccff00]" />
         </div>
@@ -1521,8 +1521,8 @@ export const DashboardV2Mockup = ({
       {/* Main Content */}
       <main className="min-w-0 flex-1 flex flex-col overflow-hidden">
         {/* Topbar */}
-        <header className="h-14 bg-white dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between px-5 shrink-0">
-          <div className="flex items-center gap-4 w-full max-w-sm">
+        <header className="h-14 bg-white dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between gap-3 px-3 sm:px-5 shrink-0">
+          <div className="flex min-w-0 items-center gap-4 w-full max-w-[min(24rem,calc(100vw-9rem))] sm:max-w-sm">
             <div className="relative w-full">
               <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 dark:text-zinc-500" />
               <input 
@@ -1534,7 +1534,7 @@ export const DashboardV2Mockup = ({
               />
             </div>
           </div>
-          <div className="flex items-center gap-4 pr-72">
+          <div className="flex shrink-0 items-center gap-3 pr-16 sm:pr-56 lg:pr-72">
             <div className="flex items-center gap-3">
               <div className="relative">
                 <button 
@@ -1618,7 +1618,7 @@ export const DashboardV2Mockup = ({
         </header>
 
         {/* Scrollable Area */}
-        <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 pb-24 xl:p-5 xl:pb-24 custom-scrollbar flex gap-4">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden p-3 pb-24 sm:p-4 sm:pb-24 xl:p-5 xl:pb-24 custom-scrollbar flex flex-col gap-3 sm:gap-4 xl:flex-row">
           {isMarketSurface ? (
           <>
           
@@ -2231,7 +2231,7 @@ export const DashboardV2Mockup = ({
           </div>
           </>
           ) : activePage === 'terminal' ? (
-            <div className="min-w-0 flex-1">
+            <div className="min-w-0 flex-1 overflow-hidden">
               <InfraTradingTerminal
                 embedded
                 darkMode={isDarkMode}
@@ -2241,7 +2241,7 @@ export const DashboardV2Mockup = ({
               />
             </div>
           ) : activePage === 'portfolio' ? (
-            <div className="min-w-0 flex-1">
+            <div className="min-w-0 flex-1 overflow-hidden">
               <PortfolioMockupV2 session={session} />
             </div>
           ) : (
@@ -2339,18 +2339,18 @@ const SettingsPage = ({
   ];
 
   return (
-    <div className="min-w-0 flex-1 overflow-y-auto bg-[#070708] p-4 pb-16">
+    <div className="min-w-0 flex-1 overflow-y-auto bg-[#070708] p-3 pb-16 sm:p-4">
       <div className="relative min-h-full rounded-xl border border-zinc-900 bg-[#0c0c0d]">
         <button
           type="button"
           onClick={onClose}
-          className="absolute right-8 top-8 z-10 flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-950 text-zinc-400 transition hover:border-[#ccff00]/40 hover:text-[#ccff00] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
+          className="absolute right-4 top-4 z-10 flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-950 text-zinc-400 transition hover:border-[#ccff00]/40 hover:text-[#ccff00] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 sm:right-8 sm:top-8"
           aria-label="Close settings"
         >
           <X className="h-4 w-4" />
         </button>
-        <div className="grid min-h-[calc(100vh-7rem)] grid-cols-[220px_minmax(0,1fr)]">
-          <aside className="border-r border-zinc-800 p-4">
+        <div className="grid min-h-[calc(100dvh-7rem)] grid-cols-1 md:grid-cols-[220px_minmax(0,1fr)]">
+          <aside className="border-b border-zinc-800 p-4 md:border-b-0 md:border-r">
             <h2 className="mb-5 text-sm font-bold text-white">Settings</h2>
             <nav className="space-y-2">
               {navItems.map(({ id, label, Icon }) => (
@@ -2367,7 +2367,7 @@ const SettingsPage = ({
             </nav>
           </aside>
 
-          <section className="mx-auto w-full max-w-2xl px-10 py-10">
+          <section className="mx-auto w-full max-w-2xl px-4 py-8 sm:px-6 lg:px-10 lg:py-10">
             {activeSection === 'notifications' && (
               <div>
                 <h1 className="text-base font-bold text-white">Notifications</h1>
@@ -2376,7 +2376,7 @@ const SettingsPage = ({
                   <SettingsToggle label="Display Notification" enabled={settings.notificationsEnabled} onChange={(value) => updateNotificationSetting({ notificationsEnabled: value })} />
                   <div>
                     <div className="mb-3 text-xs font-medium text-zinc-400">Toast Position</div>
-                    <div className="grid grid-cols-3 gap-4">
+                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4">
                       {positions.map((position) => (
                         <button
                           key={position.id}
@@ -2702,8 +2702,8 @@ const LotusMarketList = ({
     return 'text-zinc-500';
   };
   return (
-  <div className="overflow-hidden rounded-2xl border border-zinc-800 bg-[#101012] shadow-sm">
-    <div className="grid grid-cols-[minmax(360px,1.7fr)_112px_96px_84px_116px_92px_96px_150px] items-center gap-4 border-b border-zinc-800 bg-zinc-900/80 px-5 py-3 text-[11px] font-bold uppercase tracking-[0.08em] text-zinc-500">
+  <div className="overflow-x-auto overflow-y-hidden rounded-2xl border border-zinc-800 bg-[#101012] shadow-sm custom-scrollbar">
+    <div className="grid min-w-[1150px] grid-cols-[minmax(360px,1.7fr)_112px_96px_84px_116px_92px_96px_150px] items-center gap-4 border-b border-zinc-800 bg-zinc-900/80 px-5 py-3 text-[11px] font-bold uppercase tracking-[0.08em] text-zinc-500">
       <div className="flex items-center gap-3"><Sparkles className="h-4 w-4 text-[#ccff00]" /> Market</div>
       <div>Last 7 Days</div>
       <div>Yes Price</div>
@@ -2713,7 +2713,7 @@ const LotusMarketList = ({
       <div>Spread</div>
       <div className="text-right">Trade</div>
     </div>
-    <div className="divide-y divide-zinc-800">
+    <div className="min-w-[1150px] divide-y divide-zinc-800">
       {loading && markets.length === 0 && [0, 1, 2, 3, 4, 5].map((item) => (
         <div key={item} className="grid grid-cols-[minmax(360px,1.7fr)_112px_96px_84px_116px_92px_96px_150px] items-center gap-4 px-5 py-3.5">
           {[0, 1, 2, 3, 4, 5, 6, 7].map((cell) => (
@@ -2873,8 +2873,8 @@ const LotusMarketList = ({
 };
 
 const MarketListTable = () => (
-  <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-[#101012]">
-    <div className="grid grid-cols-[minmax(360px,1.7fr)_112px_96px_84px_116px_92px_96px_150px] items-center gap-4 border-b border-zinc-200 bg-zinc-50/70 px-5 py-3 text-[11px] font-bold uppercase tracking-[0.08em] text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-500">
+  <div className="overflow-x-auto overflow-y-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-[#101012] custom-scrollbar">
+    <div className="grid min-w-[1150px] grid-cols-[minmax(360px,1.7fr)_112px_96px_84px_116px_92px_96px_150px] items-center gap-4 border-b border-zinc-200 bg-zinc-50/70 px-5 py-3 text-[11px] font-bold uppercase tracking-[0.08em] text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-500">
       <div className="flex items-center gap-3"><Sparkles className="h-4 w-4 text-[#ccff00]" /> Market</div>
       <div>Last 7 Days</div>
       <div>Yes Price</div>
@@ -2884,7 +2884,7 @@ const MarketListTable = () => (
       <div>Spread</div>
       <div className="text-right">Trade</div>
     </div>
-    <div className="divide-y divide-zinc-200 dark:divide-zinc-800">
+    <div className="min-w-[1150px] divide-y divide-zinc-200 dark:divide-zinc-800">
       {marketListRows.map((market) => (
         <div key={market.title} className="group grid grid-cols-[minmax(340px,1.55fr)_120px_150px_112px_118px_112px_104px_104px] items-center gap-4 px-5 py-4 transition-colors hover:bg-[#ccff00]/[0.025] dark:hover:bg-[#ccff00]/[0.035]">
           <div className="flex min-w-0 items-center gap-3">

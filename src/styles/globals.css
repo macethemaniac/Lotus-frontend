@@ -15,7 +15,7 @@
 
 body {
   width: 100%;
-  min-height: 100vh;
+  min-height: 100dvh;
   margin: 0;
   overflow-x: hidden;
   background: #09090b;
@@ -26,7 +26,7 @@ body {
 }
 
 #root {
-  min-height: 100vh;
+  min-height: 100dvh;
   overflow-x: hidden;
 }
 
@@ -61,27 +61,10 @@ textarea {
 }
 
 .lotus-terminal-stage {
+  width: 100%;
   min-width: 0;
   min-height: 0;
-  transform-origin: top left;
-}
-
-@media (min-width: 1024px) {
-  .lotus-terminal {
-    --lotus-terminal-scale: 0.66;
-  }
-
-  .lotus-terminal-stage {
-    width: calc(100% / var(--lotus-terminal-scale));
-    min-height: 0;
-    transform: scale(var(--lotus-terminal-scale));
-  }
-}
-
-@media (max-width: 1023px) {
-  .lotus-terminal-stage {
-    transform: none;
-  }
+  transform: none;
 }
 
 .lotus-terminal-light {

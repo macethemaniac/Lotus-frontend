@@ -52,7 +52,7 @@ export const DepositFailedReceipt = ({
   const txHash = firstTxHash(receipt);
   const shellClass = modal
     ? 'fixed inset-0 z-[80] bg-black/70 p-3 backdrop-blur-md'
-    : 'min-h-[calc(100vh-4rem)] pt-8 pb-32';
+    : 'min-h-[calc(100dvh-4rem)] px-3 pt-6 pb-32 sm:px-0 sm:pt-8';
   const cardClass = modal
     ? 'max-h-[calc(100dvh-1.5rem)] rounded-2xl p-4 sm:p-5 overflow-y-auto custom-scrollbar'
     : 'rounded-3xl p-8 sm:p-10';

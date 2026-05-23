@@ -1659,7 +1659,7 @@ const CanonicalChart = ({ marketType }: { marketType: 'binary' | 'multi' }) => {
   return (
     <div className="relative w-full h-full flex flex-col pt-2 pb-2 bg-[#0c0c0c] rounded-xl overflow-hidden">
       {/* Probability Header */}
-      <div className="flex items-center gap-2 px-4 pt-2">
+      <div className="flex items-center gap-2 px-3 pt-2 sm:px-4">
         <Activity className="w-4 h-4 text-white" />
         <span className="text-white font-bold text-sm">Probability</span>
       </div>
@@ -2020,14 +2020,14 @@ const LiveCanonicalChart = ({
       </div>
       <div className="w-full bg-zinc-800 h-px mt-2" />
       <div className="w-24 bg-white h-0.5" />
-      <div className="flex items-center justify-between px-4 mt-3">
-        <div className="flex items-center rounded-md bg-transparent space-x-1">
+      <div className="mt-3 overflow-x-auto px-2 sm:px-4 custom-scrollbar">
+        <div className="flex w-max min-w-0 items-center rounded-md bg-transparent space-x-1">
           {tabs.map((tab) => (
             <button
               key={tab}
               type="button"
               onClick={() => setActiveTab(tab)}
-              className={`px-3 py-1 text-sm font-bold transition-colors ${
+              className={`px-2.5 py-1 text-sm font-bold transition-colors sm:px-3 ${
                 activeTab === tab
                   ? 'text-white border border-white bg-transparent rounded shadow-sm'
                   : 'text-zinc-400 hover:text-white'
@@ -2038,7 +2038,7 @@ const LiveCanonicalChart = ({
           ))}
         </div>
       </div>
-      <div className="flex items-center gap-4 px-4 mt-4 text-[13px] min-h-[20px]">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-3 mt-4 text-[13px] min-h-[20px] sm:px-4">
         {series.slice(0, 5).map((item) => {
           const latest = [...rows].reverse().find((point) => typeof point[item.id] === 'number');
           const value = typeof latest?.[item.id] === 'number' ? latest[item.id] as number : null;
@@ -2055,7 +2055,7 @@ const LiveCanonicalChart = ({
           <div className="text-zinc-500 font-bold ml-2">Live history accumulating</div>
         )}
       </div>
-      <div className="h-[300px] min-h-[300px] w-full mt-6 pr-4 relative">
+      <div className="h-[260px] min-h-[260px] w-full mt-4 pr-2 relative sm:h-[300px] sm:min-h-[300px] sm:mt-6 sm:pr-4">
         {loading && rows.length === 0 && (
           <div className="absolute inset-0 z-10 flex items-center justify-center text-xs font-bold uppercase tracking-[0.18em] text-zinc-500">
             Loading live chart
@@ -4499,11 +4499,11 @@ export const InfraTradingTerminal = ({
 
   return (
     <>
-    <div className={`lotus-terminal lotus-terminal-viewport ${darkMode ? 'lotus-terminal-dark' : 'lotus-terminal-light'} ${embedded ? 'h-[calc(100vh-6.5rem)]' : 'h-[calc(100vh-4rem)] -mx-4 -my-8 lg:-mx-12 lg:-my-12'} bg-[#09090b] text-white font-sans overflow-y-auto overflow-x-hidden custom-scrollbar`}>
-      <div className="lotus-terminal-stage flex min-h-full w-full bg-[#09090b] text-white p-2 2xl:p-3 gap-2 2xl:gap-3 items-start">
+    <div className={`lotus-terminal lotus-terminal-viewport ${darkMode ? 'lotus-terminal-dark' : 'lotus-terminal-light'} ${embedded ? 'h-[calc(100dvh-7rem)]' : 'h-[calc(100dvh-4rem)] -mx-3 -my-4 sm:-mx-4 sm:-my-6 lg:-mx-8 lg:-my-8 2xl:-mx-12 2xl:-my-12'} bg-[#09090b] text-white font-sans overflow-y-auto overflow-x-hidden custom-scrollbar`}>
+      <div className="lotus-terminal-stage flex min-h-full w-full flex-col bg-[#09090b] text-white p-2 2xl:p-3 gap-2 2xl:gap-3 items-stretch xl:flex-row xl:items-start">
       
       {/* Focus Rail */}
-      {!embedded && <div className="w-16 bg-[#121214] border border-zinc-800 rounded-xl flex flex-col items-center py-4 gap-6 shrink-0 z-10">
+      {!embedded && <div className="hidden w-16 bg-[#121214] border border-zinc-800 rounded-xl 2xl:flex flex-col items-center py-4 gap-6 shrink-0 z-10">
           <div className="w-8 h-8 flex items-center justify-center">
               <LotusLogo className="w-8 h-8 text-[#ccff00]" />
           </div>
@@ -4540,16 +4540,16 @@ export const InfraTradingTerminal = ({
       </div>}
 
       {/* Middle Panel Container: Chart & Tabs */}
-      <div className="flex-1 flex flex-col gap-3 min-w-0">
+      <div className="w-full flex-1 flex flex-col gap-3 min-w-0">
          {/* Top Header Row */}
-         <div className="bg-[#121214] border border-zinc-800 rounded-xl p-3 2xl:p-4 flex items-center justify-between gap-3 shrink-0">
-            <div className="flex min-w-0 flex-1 items-center gap-2 2xl:gap-4">
-                <div className="relative z-30">
+         <div className="bg-[#121214] border border-zinc-800 rounded-xl p-3 2xl:p-4 flex flex-col xl:flex-row xl:items-center xl:justify-between gap-3 shrink-0">
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 2xl:gap-4">
+                <div className="relative z-30 w-full sm:w-auto">
                     <button
                       type="button"
                       onClick={() => setShowMarketSelector((open) => !open)}
                       aria-expanded={showMarketSelector}
-                      className="group flex h-11 2xl:h-12 w-[clamp(280px,30vw,520px)] items-center gap-3 rounded-xl border border-zinc-800 bg-[#0c0c0e] px-3 text-left transition-colors hover:border-zinc-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 focus-visible:ring-offset-2 focus-visible:ring-offset-[#09090b]"
+                      className="group flex h-11 2xl:h-12 w-full sm:w-[min(32rem,calc(100vw-9rem))] xl:w-[clamp(280px,30vw,520px)] items-center gap-3 rounded-xl border border-zinc-800 bg-[#0c0c0e] px-3 text-left transition-colors hover:border-zinc-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 focus-visible:ring-offset-2 focus-visible:ring-offset-[#09090b]"
                     >
                       <TerminalMarketThumb
                         title={terminalMarket.title}
@@ -4570,7 +4570,7 @@ export const InfraTradingTerminal = ({
                     </button>
 
                     {showMarketSelector && (
-                      <div className="lotus-terminal-event-menu absolute left-0 top-full z-50 mt-3 w-[480px] overflow-hidden rounded-2xl border border-zinc-800 bg-[#0c0c0e] shadow-2xl shadow-black/40">
+                      <div className="lotus-terminal-event-menu absolute left-0 top-full z-50 mt-3 w-[min(480px,calc(100vw-5rem))] overflow-hidden rounded-2xl border border-zinc-800 bg-[#0c0c0e] shadow-2xl shadow-black/40">
                         <div className="border-b border-zinc-800 p-4">
                           <div className="flex items-start justify-between gap-4">
                             <div>
@@ -4788,7 +4788,7 @@ export const InfraTradingTerminal = ({
                 </div>
             </div>
 
-            <div className="flex shrink-0 items-center gap-3 2xl:gap-6 text-sm">
+            <div className="flex shrink-0 flex-wrap items-center gap-3 2xl:gap-6 text-sm">
                 <div className="flex items-center gap-2 text-emerald-400 font-mono font-medium bg-emerald-500/10 px-2.5 2xl:px-3 py-1.5 rounded-md border border-emerald-500/20">
                     <Clock className="w-3.5 h-3.5" /> 50d 1h 50m
                 </div>
@@ -4798,10 +4798,10 @@ export const InfraTradingTerminal = ({
          </div>
          
          {/* Chart & Order Book Grid */}
-         <div className="h-[540px] 2xl:h-[620px] bg-[#121214] border border-zinc-800 rounded-xl flex overflow-hidden relative shrink-0">
+         <div className="min-h-[680px] lg:h-[540px] lg:min-h-0 2xl:h-[620px] bg-[#121214] border border-zinc-800 rounded-xl flex flex-col lg:flex-row overflow-hidden relative shrink-0">
             
             {/* Main Chart Section */}
-            <div className="flex-1 flex flex-col relative border-r border-zinc-800 p-4 min-w-0">
+            <div className="min-h-[320px] flex-1 flex flex-col relative border-b border-zinc-800 p-4 min-w-0 lg:min-h-0 lg:border-b-0 lg:border-r">
                <LiveCanonicalChart
                  marketId={selectedOutcomeMarketId}
                  outcomeId={selectedQuoteOutcomeId}
@@ -4811,7 +4811,7 @@ export const InfraTradingTerminal = ({
             </div>
 
             {/* Order Book Panel (Right side of middle container) */}
-            <div className="w-[clamp(400px,24vw,520px)] bg-[#121214] flex flex-col text-[10px] font-mono shrink-0">
+            <div className="min-h-[320px] w-full bg-[#121214] flex flex-col text-[10px] font-mono shrink-0 lg:min-h-0 lg:w-[clamp(360px,30vw,460px)] 2xl:w-[clamp(400px,24vw,520px)]">
                <div className="p-3 border-b border-zinc-800 flex justify-between items-center bg-zinc-950/30">
                    <div className="flex items-center gap-3">
                        <ChevronLeft className="w-4 h-4 text-zinc-500 cursor-pointer hover:text-white" />
@@ -5177,7 +5177,7 @@ export const InfraTradingTerminal = ({
                                     </button>
                                 </div>
                                 <div className="flex-1 overflow-y-auto custom-scrollbar pr-2">
-                                    <div className="grid grid-cols-[minmax(0,1fr)_minmax(360px,460px)] gap-5">
+                                    <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(320px,420px)] 2xl:grid-cols-[minmax(0,1fr)_minmax(360px,460px)]">
                                         <div className="space-y-6 min-w-0">
                                             {riskState.loading && <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 px-4 py-2 text-xs font-semibold text-zinc-400">Loading backend resolution risk...</div>}
                                             {riskState.error && <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-xs font-semibold text-amber-200">{riskState.error}</div>}
@@ -5360,7 +5360,7 @@ export const InfraTradingTerminal = ({
                                     </button>
                                 </div>
                                 <div className="flex-1 overflow-y-auto custom-scrollbar pr-2">
-                                    <div className="grid grid-cols-[minmax(0,1fr)_minmax(360px,460px)] gap-5">
+                                    <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(320px,420px)] 2xl:grid-cols-[minmax(0,1fr)_minmax(360px,460px)]">
                                         <div className="space-y-6 min-w-0">
                                             {rulesInnerTab === 'rules' && (
                                                 <>
@@ -5457,7 +5457,7 @@ export const InfraTradingTerminal = ({
                                 <div className="mt-0.5 text-xs font-medium text-zinc-500">{position.outcomeId} - {position.status}</div>
                               </div>
                             </div>
-                            <div className="grid grid-cols-3 gap-6 text-right">
+                            <div className="grid grid-cols-3 gap-3 text-right sm:gap-6">
                               <div>
                                 <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Size</div>
                                 <div className="font-mono text-sm font-black text-white">{formatCompactMetric(position.verifiedSize) ?? position.verifiedSize}</div>
@@ -5501,7 +5501,7 @@ export const InfraTradingTerminal = ({
                                 <div className="mt-0.5 truncate text-xs font-medium text-zinc-500">{order.executionId}</div>
                                 <div className="mt-1 text-xs font-semibold text-zinc-400">{summary.detail}</div>
                               </div>
-                              <div className="grid grid-cols-3 gap-6 text-right">
+                              <div className="grid grid-cols-3 gap-3 text-right sm:gap-6">
                                 <div>
                                   <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Route</div>
                                   <div className="text-xs font-bold text-zinc-200">{order.route?.venuePath?.map(formatVenueLabel).join(' / ') || 'Pending'}</div>
@@ -5533,7 +5533,7 @@ export const InfraTradingTerminal = ({
                               <div className="text-sm font-bold text-zinc-100">{execution.userStatus ?? execution.status ?? 'Submitted'}</div>
                               <div className="mt-0.5 truncate text-xs font-medium text-zinc-500">{execution.executionId}</div>
                             </div>
-                            <div className="grid grid-cols-3 gap-6 text-right">
+                            <div className="grid grid-cols-3 gap-3 text-right sm:gap-6">
                               <div>
                                 <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Route</div>
                                 <div className="text-xs font-bold text-zinc-200">{execution.route?.venuePath?.map(formatVenueLabel).join(' / ') || 'Pending'}</div>
@@ -5564,7 +5564,7 @@ export const InfraTradingTerminal = ({
       </div>
 
       {/* Right Panel: Trade Ticket & Account */}
-      <div className="w-[clamp(380px,21vw,460px)] flex flex-col gap-2 2xl:gap-3 shrink-0 overflow-y-auto custom-scrollbar">
+      <div className="w-full flex flex-col gap-2 2xl:gap-3 shrink-0 overflow-visible xl:max-h-[calc(100dvh-8rem)] xl:w-[360px] xl:overflow-y-auto 2xl:w-[clamp(380px,21vw,460px)] custom-scrollbar">
          {/* Trade Block */}
          <div className="bg-[#121214] border border-zinc-800 rounded-xl flex flex-col shrink-0 min-h-0 transition-all duration-300">
              <div className="flex justify-between items-center p-3 border-b border-zinc-800/80">

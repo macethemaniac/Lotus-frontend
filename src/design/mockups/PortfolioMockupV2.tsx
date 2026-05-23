@@ -1480,7 +1480,7 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
   }, [handleLogin, loadPortfolio, pollPolymarketActivationReadiness, refreshWallets, session?.turnkeyOrganizationId, signMessage, syncPolymarketClobReadiness, token, turnkeyAuthState, turnkeySession, turnkeyWallets]);
 
   return (
-    <div className="min-h-screen bg-[#09090b] text-white p-6 font-sans antialiased space-y-6 animate-fade-in relative">
+    <div className="min-h-full bg-[#09090b] text-white p-3 font-sans antialiased space-y-4 animate-fade-in relative sm:p-4 lg:p-6 lg:space-y-6">
       {activationToast && (
         <div
           role="status"
@@ -1506,7 +1506,7 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
       )}
       
       {/* Top Grid */}
-      <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[400px_1fr]">
+      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(320px,380px)_minmax(0,1fr)] xl:grid-cols-[400px_minmax(0,1fr)] xl:gap-6">
         
         {/* Left Panel - Portfolio */}
         <div className="rounded-xl border border-zinc-800 bg-[#121214] overflow-hidden flex flex-col">
@@ -1827,8 +1827,8 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
       <div className="bg-[#121214] border border-zinc-800 rounded-xl overflow-hidden p-1">
         
         {/* Tabs Bar */}
-        <div className="flex items-center justify-between p-4 border-b border-zinc-800">
-          <div className="flex items-center gap-1">
+        <div className="flex flex-col gap-3 p-3 border-b border-zinc-800 sm:p-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-center gap-1 overflow-x-auto custom-scrollbar">
             <button 
               className={`px-4 py-2 text-sm font-semibold rounded-lg transition-colors ${activeTab === 'positions' ? 'bg-lotus-500 text-black' : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'}`}
               onClick={() => setActiveTab('positions')}
@@ -1855,19 +1855,19 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
             </button>
           </div>
 
-          <div className="relative">
+          <div className="relative w-full lg:w-auto">
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
             <input 
               type="text" 
               placeholder="Search" 
-              className="bg-[#18181b] border border-zinc-800 text-zinc-200 text-sm rounded-lg pl-9 pr-4 py-2 w-[240px] focus:outline-none focus:border-zinc-700 transition-colors"
+              className="w-full bg-[#18181b] border border-zinc-800 text-zinc-200 text-sm rounded-lg pl-9 pr-4 py-2 focus:outline-none focus:border-zinc-700 transition-colors lg:w-[240px]"
             />
           </div>
         </div>
 
         {/* Table Content */}
         <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
+          <table className="w-full min-w-[980px] text-left border-collapse">
             <thead>
               <tr className="border-b border-zinc-800 text-zinc-400 text-[13px] font-semibold">
                 <th className="px-6 py-4 font-semibold w-[40%]">{activeTab === 'positions' ? 'Market' : activeTab === 'funding' ? 'Intent' : 'Execution'}</th>
