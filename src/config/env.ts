@@ -8,6 +8,10 @@ const lotusAuthExchangePath = import.meta.env.VITE_LOTUS_AUTH_EXCHANGE_PATH;
 const executionOrchestratorV1Enabled = import.meta.env.VITE_EXECUTION_ORCHESTRATOR_V1_ENABLED;
 const lotusBackendApiBaseUrl = "https://lotus-backend-g1e1.onrender.com";
 
+function isEnabledFlag(value: unknown): boolean {
+  return typeof value === "string" && value.trim().toLowerCase() === "true";
+}
+
 export const env = {
   lotusApiBaseUrl: typeof apiBaseUrl === "string" && apiBaseUrl.length > 0
     ? apiBaseUrl.replace(/\/$/, "")
@@ -24,7 +28,7 @@ export const env = {
   lotusAuthExchangePath: typeof lotusAuthExchangePath === "string" && lotusAuthExchangePath.length > 0
     ? lotusAuthExchangePath
     : "/auth/turnkey/exchange",
-  executionOrchestratorV1Enabled: executionOrchestratorV1Enabled === "true",
+  executionOrchestratorV1Enabled: isEnabledFlag(executionOrchestratorV1Enabled),
 };
 
 export function lotusWsUrl(): string {
