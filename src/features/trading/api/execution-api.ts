@@ -81,6 +81,64 @@ export type SignatureBundle = {
   }>;
 };
 
+export type ExecutionOrderState =
+  | "READY_TO_PLACE"
+  | "NEEDS_SIGNATURE"
+  | "NEEDS_VENUE_SETUP"
+  | "WAITING_FOR_VENUE_READY"
+  | "BLOCKED_ACTION_REQUIRED"
+  | "SUBMITTING"
+  | "SUBMITTED"
+  | "FILLED"
+  | "FAILED"
+  | "EXPIRED";
+
+export type ExecutionOrderPrimaryAction = "PLACE_ORDER" | "SIGN" | "ENABLE_VENUE" | "NONE";
+
+export type ExecutionOrderVenuePreference =
+  | "BEST_ROUTE"
+  | "POLYMARKET"
+  | "LIMITLESS"
+  | "PREDICT_FUN"
+  | "OPINION";
+
+export type ExecutionOrderSignatureRequest = SignatureBundle["signatureRequests"][number];
+
+export type ExecutionOrderPreviewRequest = {
+  marketId: string;
+  outcomeId: string;
+  side: TradeSide;
+  amount: string;
+  venuePreference: ExecutionOrderVenuePreference;
+};
+
+export type ExecutionOrderResponse = {
+  orderId: string;
+  quoteId?: string | null;
+  executionId?: string | null;
+  state: ExecutionOrderState;
+  primaryAction?: ExecutionOrderPrimaryAction | null;
+  signingMode?: string | null;
+  routeSummary?: Record<string, unknown> | null;
+  priceSummary?: Record<string, unknown> | null;
+  venuePreference?: ExecutionOrderVenuePreference | string | null;
+  readinessSummary?: Record<string, unknown> | null;
+  venueCapabilitySummary?: Record<string, unknown> | null;
+  blockers?: Array<string | { message?: string; reason?: string; code?: string; venue?: string }>;
+  lastError?: string | { message?: string; code?: string } | null;
+  signatureRequests?: ExecutionOrderSignatureRequest[];
+  nextPollAt?: string | null;
+  canAutoRenew?: boolean;
+  renewalReason?: string | null;
+};
+
+export type ExecutionOrderSignedPayload = {
+  legIndex: number;
+  venue: string;
+  requestType?: string;
+  signedPayload: Record<string, unknown>;
+};
+
 export type ExecutionStatus = {
   executionId: string;
   status?: string;
@@ -290,6 +348,34 @@ export function submitSignedBundle(token: string, executionId: string, signedLeg
 
 export function getLiveReadiness(token: string, executionId: string) {
   return apiRequest<LiveSubmitReadinessSnapshot>(`/execution/${encodeURIComponent(executionId)}/live-readiness`, { token });
+}
+
+export function previewExecutionOrder(token: string, request: ExecutionOrderPreviewRequest) {
+  return apiRequest<ExecutionOrderResponse>("/execution/orders/preview", {
+    method: "POST",
+    token,
+    body: request,
+  });
+}
+
+export function placeExecutionOrder(token: string, orderId: string) {
+  return apiRequest<ExecutionOrderResponse>(`/execution/orders/${encodeURIComponent(orderId)}/place`, {
+    method: "POST",
+    token,
+    body: {},
+  });
+}
+
+export function submitExecutionOrderSignatures(token: string, orderId: string, signedPayloads: ExecutionOrderSignedPayload[]) {
+  return apiRequest<ExecutionOrderResponse>(`/execution/orders/${encodeURIComponent(orderId)}/signatures`, {
+    method: "POST",
+    token,
+    body: { signedPayloads },
+  });
+}
+
+export function getExecutionOrderStatus(token: string, orderId: string) {
+  return apiRequest<ExecutionOrderResponse>(`/execution/orders/${encodeURIComponent(orderId)}/status`, { token });
 }
 
 export function getExecutionStatus(token: string, executionId: string) {

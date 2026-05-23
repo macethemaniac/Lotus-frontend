@@ -11,6 +11,7 @@ import { JsonRpcProvider, Transaction } from 'ethers';
 import { VenueLogo } from '@/components/icons/asset-logo';
 import { LotusLogo } from '@/components/icons/lotus-icons';
 import { FundingDeposit } from '@/design/mockups/FundingDeposit';
+import { env } from '@/config/env';
 import type { AuthSession } from '@/features/auth/types';
 import {
   getAccountSnapshot,
@@ -44,14 +45,22 @@ import {
 import {
   createExecutionQuote,
   getExecutionHistory,
+  getExecutionOrderStatus,
   getLiveCandidates,
   getLiveReadiness,
   getOpenOrders,
   getPositions,
+  placeExecutionOrder,
   prepareExitQuote,
   prepareSignatures,
+  previewExecutionOrder,
+  submitExecutionOrderSignatures,
   submitSignedBundle,
   submitExecutionQuote,
+  type ExecutionOrderResponse,
+  type ExecutionOrderSignedPayload,
+  type ExecutionOrderSignatureRequest,
+  type ExecutionOrderVenuePreference,
   type ExecutionPosition,
   type ExecutionStatus,
   type LiveCandidatesResponse,
@@ -1341,6 +1350,112 @@ const executionSubmitStatusMessage = (submitted: ExecutionStatus): string => {
   return 'Market order submitted. Tracking execution status.';
 };
 
+const executionOrderBlockerMessage = (order: ExecutionOrderResponse | null): string | null => {
+  const blocker = order?.blockers?.[0];
+  if (typeof blocker === 'string') return blocker;
+  if (blocker && typeof blocker === 'object') {
+    const message = blocker.message ?? blocker.reason ?? blocker.code;
+    return blocker.venue && message ? `${formatVenueLabel(blocker.venue)}: ${message}` : message ?? null;
+  }
+  const lastError = order?.lastError;
+  if (typeof lastError === 'string') return lastError;
+  if (lastError && typeof lastError === 'object') return lastError.message ?? lastError.code ?? null;
+  return null;
+};
+
+const executionOrderStatusMessage = (order: ExecutionOrderResponse): string => {
+  const blocker = executionOrderBlockerMessage(order);
+  switch (order.state) {
+    case 'READY_TO_PLACE':
+      return 'Live market route ready. Review the venue and price before placing the order.';
+    case 'NEEDS_SIGNATURE':
+      return 'Wallet signature is required. Turnkey will open to sign this order.';
+    case 'NEEDS_VENUE_SETUP':
+      return blocker ?? 'Enable this venue before placing the order.';
+    case 'WAITING_FOR_VENUE_READY':
+      return blocker ?? 'Waiting for venue readiness. Lotus will keep checking automatically.';
+    case 'BLOCKED_ACTION_REQUIRED':
+      return blocker ?? 'Action is required before this order can be placed.';
+    case 'SUBMITTING':
+      return 'Submitting order through Lotus backend.';
+    case 'SUBMITTED':
+      return 'Order submitted. Tracking venue fill status.';
+    case 'FILLED':
+      return 'Order filled.';
+    case 'FAILED':
+      return blocker ?? 'Order failed.';
+    case 'EXPIRED':
+      return order.canAutoRenew
+        ? 'Route expired. Refreshing route automatically.'
+        : 'Route expired. Refresh the route before placing the order.';
+    default:
+      return blocker ?? 'Order status updated.';
+  }
+};
+
+const executionOrderPollDelayMs = (order: ExecutionOrderResponse): number => {
+  if (order.nextPollAt) {
+    const nextMs = new Date(order.nextPollAt).getTime();
+    if (Number.isFinite(nextMs)) return Math.max(750, Math.min(15_000, nextMs - Date.now()));
+  }
+  if (order.state === 'WAITING_FOR_VENUE_READY') return 5_000;
+  if (order.state === 'SUBMITTING' || order.state === 'SUBMITTED') return 2_500;
+  return 3_000;
+};
+
+const isExecutionOrderPollingState = (state: ExecutionOrderResponse['state']): boolean =>
+  state === 'WAITING_FOR_VENUE_READY' || state === 'SUBMITTING' || state === 'SUBMITTED';
+
+const isExecutionOrderTerminalState = (state: ExecutionOrderResponse['state']): boolean =>
+  state === 'SUBMITTED' || state === 'FILLED' || state === 'FAILED';
+
+const stringArrayField = (value: unknown, field: string): string[] => {
+  const source = recordValue(value)[field];
+  return Array.isArray(source) ? source.filter((item): item is string => typeof item === 'string') : [];
+};
+
+const numericField = (value: unknown, fields: string[]): number | null => {
+  const source = recordValue(value);
+  for (const field of fields) {
+    const candidate = source[field];
+    const parsed = typeof candidate === 'string' || typeof candidate === 'number' || candidate === null || candidate === undefined
+      ? parseFiniteNumber(candidate)
+      : null;
+    if (parsed !== null) return parsed;
+  }
+  return null;
+};
+
+const textField = (value: unknown, fields: string[]): string | null => {
+  const source = recordValue(value);
+  for (const field of fields) {
+    const candidate = source[field];
+    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
+  }
+  return null;
+};
+
+const routePathFromExecutionOrder = (order: ExecutionOrderResponse | null): string[] => {
+  const direct = stringArrayField(order?.routeSummary, 'venuePath');
+  if (direct.length > 0) return direct;
+  const venues = stringArrayField(order?.routeSummary, 'venues');
+  if (venues.length > 0) return venues;
+  const venue = textField(order?.routeSummary, ['venue', 'selectedVenue']);
+  if (venue) return [venue];
+  const preference = typeof order?.venuePreference === 'string' && order.venuePreference !== 'BEST_ROUTE'
+    ? order.venuePreference
+    : null;
+  return preference ? [preference] : [];
+};
+
+const orderEffectivePrice = (order: ExecutionOrderResponse | null): number | null =>
+  numericField(order?.priceSummary, ['effectivePrice', 'averagePrice', 'avgPrice', 'price', 'expectedPrice']) ??
+  numericField(order?.routeSummary, ['effectivePrice', 'averagePrice', 'avgPrice', 'price', 'expectedPrice']);
+
+const orderReceiveAmount = (order: ExecutionOrderResponse | null): string | null =>
+  textField(order?.priceSummary, ['toReceive', 'toWin', 'estimatedReceive', 'estimatedPayout', 'estimatedShares', 'executableAmount']) ??
+  textField(order?.routeSummary, ['toReceive', 'toWin', 'estimatedReceive', 'estimatedPayout', 'estimatedShares', 'executableAmount']);
+
 const describeOutcomeSchema = (schema: Record<string, unknown> | null | undefined): string => {
   if (!schema) return 'Outcome schema not specified';
   const yes = typeof schema.yesLabel === 'string' ? schema.yesLabel : 'Yes';
@@ -1971,6 +2086,9 @@ export const InfraTradingTerminal = ({
   const [ticketQuoteAmount, setTicketQuoteAmount] = useState<string | null>(null);
   const [ticketExecutionId, setTicketExecutionId] = useState<string | null>(null);
   const [ticketSignatureBundle, setTicketSignatureBundle] = useState<SignatureBundle | null>(null);
+  const [ticketOrchestratorOrder, setTicketOrchestratorOrder] = useState<ExecutionOrderResponse | null>(null);
+  const [ticketOrchestratorAmount, setTicketOrchestratorAmount] = useState<string | null>(null);
+  const [ticketOrchestratorAutoRenewFailed, setTicketOrchestratorAutoRenewFailed] = useState(false);
   const [ticketPolymarketClobSyncConfirmed, setTicketPolymarketClobSyncConfirmed] = useState(false);
   const [ticketStatusMessage, setTicketStatusMessage] = useState<string | null>(null);
   const [ticketLoading, setTicketLoading] = useState(false);
@@ -2011,7 +2129,10 @@ export const InfraTradingTerminal = ({
   const [latestOrderbookStream, setLatestOrderbookStream] = useState<MarketOrderbookStreamPayload | null>(null);
   const missingRiskProfileKeysRef = React.useRef<Set<string>>(new Set());
   const autoPolymarketClobSyncKeyRef = React.useRef<string | null>(null);
+  const orchestratorPreviewSeqRef = React.useRef(0);
+  const orchestratorPollTimeoutRef = React.useRef<number | null>(null);
   const [localSelectedMarket, setLocalSelectedMarket] = useState<TerminalMarketSelection | null>(null);
+  const executionOrchestratorEnabled = env.executionOrchestratorV1Enabled;
 
   React.useEffect(() => {
     setLocalSelectedMarket(null);
@@ -2162,12 +2283,32 @@ export const InfraTradingTerminal = ({
   const selectedTicketMarketId = selectedTicketOutcome?.marketId ?? selectedOutcomeMarketId ?? terminalMarketId;
   const selectedTicketQuoteOutcomeId = quoteOutcomeIdForTicketSide(selectedTicketOutcome, ticketOutcomeSide)
     ?? selectedTicketOutcomeId;
-  const ticketRoutePath = routePath(ticketQuote);
-  const ticketRouteUsesPolymarket = Boolean(ticketQuote?.legs.some((leg) => toBackendVenueId(leg.venue) === 'POLYMARKET'));
+  const ticketVenuePreference = useMemo<ExecutionOrderVenuePreference>(() => {
+    const selectedVenue = toBackendVenueId(orderbookVenue);
+    if (selectedVenue && selectedVenue !== 'ALL') {
+      if (
+        selectedVenue === 'POLYMARKET' ||
+        selectedVenue === 'LIMITLESS' ||
+        selectedVenue === 'PREDICT_FUN' ||
+        selectedVenue === 'OPINION'
+      ) {
+        return selectedVenue;
+      }
+    }
+    return 'BEST_ROUTE';
+  }, [orderbookVenue]);
+  const ticketOrchestratorRoutePath = routePathFromExecutionOrder(ticketOrchestratorOrder);
+  const legacyTicketRoutePath = routePath(ticketQuote);
+  const ticketRoutePath = executionOrchestratorEnabled ? ticketOrchestratorRoutePath : legacyTicketRoutePath;
+  const ticketRouteUsesPolymarket = executionOrchestratorEnabled
+    ? ticketOrchestratorRoutePath.some((venue) => toBackendVenueId(venue) === 'POLYMARKET')
+    : Boolean(ticketQuote?.legs.some((leg) => toBackendVenueId(leg.venue) === 'POLYMARKET'));
   const ticketPolymarketTokenId = ticketQuote?.legs.find((leg) =>
     toBackendVenueId(leg.venue) === 'POLYMARKET' && /^\d+$/.test(String(leg.venueOutcomeId ?? ''))
   )?.venueOutcomeId;
-  const ticketEffectivePrice = ticketQuote?.effectivePrice ?? ticketPriceForSide(selectedTicketOutcome, ticketOutcomeSide);
+  const ticketEffectivePrice = executionOrchestratorEnabled
+    ? orderEffectivePrice(ticketOrchestratorOrder) ?? ticketPriceForSide(selectedTicketOutcome, ticketOutcomeSide)
+    : ticketQuote?.effectivePrice ?? ticketPriceForSide(selectedTicketOutcome, ticketOutcomeSide);
   const ticketEstimatedShares = estimateShares(ticketAmount, ticketEffectivePrice);
   const ticketShareImprovement = routeShareImprovement(ticketAmount, ticketQuote, ticketLiveCandidates);
   const accountEmptyCopy = !token ? 'Log in to load your Lotus execution records for this market.' : 'No backend records for this market yet.';
@@ -2370,6 +2511,9 @@ export const InfraTradingTerminal = ({
     setTicketQuoteAmount(null);
     setTicketExecutionId(null);
     setTicketSignatureBundle(null);
+    setTicketOrchestratorOrder(null);
+    setTicketOrchestratorAmount(null);
+    setTicketOrchestratorAutoRenewFailed(false);
     setTicketStatusMessage(null);
     setTicketError(null);
   }, [terminalMarket.initialOutcomeId, terminalMarket.initialOutcomeSide, terminalMarketId]);
@@ -2573,6 +2717,62 @@ export const InfraTradingTerminal = ({
     ticketSignatureBundle,
   ]);
 
+  const signTicketSignatureRequests = useCallback(async (
+    signatureRequests: Array<ExecutionOrderSignatureRequest | SignatureBundle['signatureRequests'][number]>,
+  ): Promise<ExecutionOrderSignedPayload[]> => {
+    if (signatureRequests.length === 0) {
+      throw new Error('This order requires a wallet signature, but no signature request was returned.');
+    }
+    let activeWallets = turnkeyWallets;
+    if (activeWallets.length === 0) {
+      try {
+        activeWallets = await refreshWallets();
+      } catch (walletError) {
+        if (!isTurnkeyMissingSessionError(walletError)) {
+          throw walletError;
+        }
+        setTicketStatusMessage('Reconnect your Turnkey wallet session to sign this market order.');
+        await handleLogin();
+        activeWallets = await refreshWallets();
+      }
+    }
+    const organizationId = turnkeySession?.organizationId ?? session?.turnkeyOrganizationId;
+    const signedPayloads: ExecutionOrderSignedPayload[] = [];
+    for (const request of signatureRequests) {
+      if (request.kind !== 'EIP712' || !request.typedData) {
+        throw new Error(`${request.venue} returned an unsupported signature request.`);
+      }
+      const signer = request.signer ?? '';
+      const account = request.account ?? signer;
+      const walletAccount = findTurnkeyWalletAccount(activeWallets, signer);
+      if (!walletAccount) {
+        throw new Error(`${request.venue} requires the Turnkey EVM wallet ${signer.slice(0, 6)}...${signer.slice(-4)}, but it is not loaded in this session.`);
+      }
+      const signatureResult = await signMessage({
+        message: eip712PayloadForTurnkey(request.typedData),
+        walletAccount,
+        encoding: 'PAYLOAD_ENCODING_EIP712',
+        hashFunction: 'HASH_FUNCTION_NO_OP',
+        addEthereumPrefix: false,
+        ...(organizationId ? { organizationId } : {}),
+      });
+      const hint = recordValue(request.signedPayloadHint);
+      signedPayloads.push({
+        legIndex: request.legIndex,
+        venue: request.venue,
+        requestType: request.requestType,
+        signedPayload: {
+          ...hint,
+          signer,
+          account,
+          typedData: request.typedData,
+          signature: signatureFromTurnkeyResult(signatureResult),
+        },
+      });
+    }
+    return signedPayloads;
+  }, [handleLogin, refreshWallets, session?.turnkeyOrganizationId, signMessage, turnkeySession?.organizationId, turnkeyWallets]);
+
   const signAndSubmitTicketSignature = useCallback(async (bundle: SignatureBundle, executionId: string) => {
     if (!token) return;
     if (ticketQuoteAmount !== null && ticketQuoteAmount !== ticketAmount.trim()) {
@@ -2607,53 +2807,7 @@ export const InfraTradingTerminal = ({
     setTicketLoading(true);
     setTicketError(null);
     try {
-      let activeWallets = turnkeyWallets;
-      if (activeWallets.length === 0) {
-        try {
-          activeWallets = await refreshWallets();
-        } catch (walletError) {
-          if (!isTurnkeyMissingSessionError(walletError)) {
-            throw walletError;
-          }
-          setTicketStatusMessage('Reconnect your Turnkey wallet session to sign this market order.');
-          await handleLogin();
-          activeWallets = await refreshWallets();
-        }
-      }
-      const organizationId = turnkeySession?.organizationId ?? session?.turnkeyOrganizationId;
-      const signedLegs = [];
-      for (const request of bundle.signatureRequests) {
-        if (request.kind !== 'EIP712' || !request.typedData) {
-          throw new Error(`${request.venue} returned an unsupported signature request.`);
-        }
-        const signer = request.signer ?? '';
-        const account = request.account ?? signer;
-        const walletAccount = findTurnkeyWalletAccount(activeWallets, signer);
-        if (!walletAccount) {
-          throw new Error(`${request.venue} requires the Turnkey EVM wallet ${signer.slice(0, 6)}...${signer.slice(-4)}, but it is not loaded in this session.`);
-        }
-        const signatureResult = await signMessage({
-          message: eip712PayloadForTurnkey(request.typedData),
-          walletAccount,
-          encoding: 'PAYLOAD_ENCODING_EIP712',
-          hashFunction: 'HASH_FUNCTION_NO_OP',
-          addEthereumPrefix: false,
-          ...(organizationId ? { organizationId } : {}),
-        });
-        const hint = recordValue(request.signedPayloadHint);
-        signedLegs.push({
-          legIndex: request.legIndex,
-          venue: request.venue,
-          requestType: request.requestType,
-          signedPayload: {
-            ...hint,
-            signer,
-            account,
-            typedData: request.typedData,
-            signature: signatureFromTurnkeyResult(signatureResult),
-          },
-        });
-      }
+      const signedLegs = await signTicketSignatureRequests(bundle.signatureRequests);
       setTicketStatusMessage('Wallet signature collected. Submitting signed market order to Lotus backend.');
       const submitted = await submitSignedBundle(token, executionId, signedLegs, false);
       setTicketExecutionId(submitted.executionId);
@@ -2677,7 +2831,7 @@ export const InfraTradingTerminal = ({
     } finally {
       setTicketLoading(false);
     }
-  }, [handleLogin, refreshWallets, session?.turnkeyOrganizationId, signMessage, terminalMarketId, ticketAmount, ticketLiveReadiness, ticketQuoteAmount, token, turnkeySession?.organizationId, turnkeyWallets]);
+  }, [signTicketSignatureRequests, terminalMarketId, ticketAmount, ticketLiveReadiness, ticketQuoteAmount, token]);
 
   const submitMarketOrder = useCallback(async () => {
     if (!token || !ticketQuote) {
@@ -2859,9 +3013,12 @@ export const InfraTradingTerminal = ({
       if (!setupRequest) {
         if (limitlessAccount?.status === 'ACTIVE' && (limitlessAccount.readinessBlockers ?? []).length === 0) {
           setTicketStatusMessage('Limitless account is linked. Refreshing the live route.');
-          setTicketExecutionId(null);
-          setTicketSignatureBundle(null);
-          setTicketError(null);
+    setTicketExecutionId(null);
+    setTicketSignatureBundle(null);
+    setTicketOrchestratorOrder(null);
+    setTicketOrchestratorAmount(null);
+    setTicketOrchestratorAutoRenewFailed(false);
+    setTicketError(null);
           await previewMarketOrder();
           return;
         }
@@ -3689,8 +3846,285 @@ export const InfraTradingTerminal = ({
     };
   }, [selectedVenueMarkets, terminalCanonicalEventId]);
 
+  const previewOrchestratorOrder = useCallback(async (
+    options: { quiet?: boolean; allowAutoRenew?: boolean } = {},
+  ): Promise<ExecutionOrderResponse | null> => {
+    if (!executionOrchestratorEnabled) return null;
+    const trimmedAmount = ticketAmount.trim();
+    if (!token || !selectedTicketMarketId || !selectedTicketQuoteOutcomeId || !trimmedAmount) {
+      if (!options.quiet) setTicketError(!token ? 'Log in to place a market order.' : 'Select a market outcome and enter an amount.');
+      return null;
+    }
+    const amountValue = parsePositiveNumber(trimmedAmount);
+    if (!amountValue) {
+      if (!options.quiet) setTicketError(side === 'buy' ? 'Enter a USDC amount.' : 'Enter shares to sell.');
+      return null;
+    }
+    const previewSeq = ++orchestratorPreviewSeqRef.current;
+    if (!options.quiet) setTicketLoading(true);
+    setTicketOrchestratorAutoRenewFailed(false);
+    try {
+      const order = await previewExecutionOrder(token, {
+        marketId: selectedTicketMarketId,
+        outcomeId: selectedTicketQuoteOutcomeId,
+        side,
+        amount: trimmedAmount,
+        venuePreference: ticketVenuePreference,
+      });
+      if (previewSeq !== orchestratorPreviewSeqRef.current) return null;
+      if (order.state === 'EXPIRED' && order.canAutoRenew && options.allowAutoRenew !== false) {
+        return previewOrchestratorOrder({ ...options, allowAutoRenew: false });
+      }
+      setTicketOrchestratorOrder(order);
+      setTicketOrchestratorAmount(trimmedAmount);
+      if (routePathFromExecutionOrder(order).length > 0) setOrderAction('preview');
+      setTicketStatusMessage(executionOrderStatusMessage(order));
+      const blocker = executionOrderBlockerMessage(order);
+      setTicketError(order.state === 'FAILED' || order.state === 'BLOCKED_ACTION_REQUIRED' || order.state === 'NEEDS_VENUE_SETUP'
+        ? blocker ?? executionOrderStatusMessage(order)
+        : null);
+      return order;
+    } catch (error) {
+      if (previewSeq !== orchestratorPreviewSeqRef.current) return null;
+      if (!options.quiet) {
+        setTicketError(error instanceof Error ? error.message : 'Order preview failed.');
+        setTicketStatusMessage(null);
+      }
+      setTicketOrchestratorOrder(null);
+      setTicketOrchestratorAmount(null);
+      return null;
+    } finally {
+      if (!options.quiet) setTicketLoading(false);
+    }
+  }, [
+    executionOrchestratorEnabled,
+    selectedTicketMarketId,
+    selectedTicketQuoteOutcomeId,
+    side,
+    ticketAmount,
+    ticketVenuePreference,
+    token,
+  ]);
+
+  const scheduleOrchestratorStatusPoll = useCallback((order: ExecutionOrderResponse | null) => {
+    if (!executionOrchestratorEnabled || !token || !order?.orderId) return;
+    if (orchestratorPollTimeoutRef.current !== null) {
+      window.clearTimeout(orchestratorPollTimeoutRef.current);
+      orchestratorPollTimeoutRef.current = null;
+    }
+    if (!isExecutionOrderPollingState(order.state)) return;
+    orchestratorPollTimeoutRef.current = window.setTimeout(async () => {
+      try {
+        const nextOrder = await getExecutionOrderStatus(token, order.orderId);
+        setTicketOrchestratorOrder(nextOrder);
+        setTicketStatusMessage(executionOrderStatusMessage(nextOrder));
+        const blocker = executionOrderBlockerMessage(nextOrder);
+        setTicketError(nextOrder.state === 'FAILED' || nextOrder.state === 'BLOCKED_ACTION_REQUIRED'
+          ? blocker ?? executionOrderStatusMessage(nextOrder)
+          : null);
+        if (nextOrder.executionId) setTicketExecutionId(nextOrder.executionId);
+        if (nextOrder.state === 'EXPIRED' && nextOrder.canAutoRenew) {
+          const renewed = await previewOrchestratorOrder({ quiet: true, allowAutoRenew: false });
+          if (!renewed) setTicketOrchestratorAutoRenewFailed(true);
+          return;
+        }
+        if (isExecutionOrderTerminalState(nextOrder.state)) {
+          void refreshAccountData();
+          setBottomTab(nextOrder.state === 'SUBMITTED' ? 'Open Orders' : 'Trade History');
+          return;
+        }
+        scheduleOrchestratorStatusPoll(nextOrder);
+      } catch (error) {
+        setTicketError(error instanceof Error ? error.message : 'Order status refresh failed.');
+        scheduleOrchestratorStatusPoll(order);
+      }
+    }, executionOrderPollDelayMs(order));
+  }, [executionOrchestratorEnabled, previewOrchestratorOrder, refreshAccountData, token]);
+
+  const submitOrchestratorSignatures = useCallback(async (order: ExecutionOrderResponse): Promise<ExecutionOrderResponse | null> => {
+    if (!token) return null;
+    const signatureRequests = order.signatureRequests ?? [];
+    if (signatureRequests.length === 0) {
+      setTicketError('This order requires a wallet signature, but no signature request was returned.');
+      return null;
+    }
+    setTicketStatusMessage('Turnkey signature requested. Review and sign to place the order.');
+    const signedPayloads = await signTicketSignatureRequests(signatureRequests);
+    setTicketStatusMessage('Signature collected. Lotus backend is submitting the order.');
+    const signedOrder = await submitExecutionOrderSignatures(token, order.orderId, signedPayloads);
+    setTicketOrchestratorOrder(signedOrder);
+    setTicketStatusMessage(executionOrderStatusMessage(signedOrder));
+    if (signedOrder.executionId) setTicketExecutionId(signedOrder.executionId);
+    scheduleOrchestratorStatusPoll(signedOrder);
+    return signedOrder;
+  }, [scheduleOrchestratorStatusPoll, signTicketSignatureRequests, token]);
+
+  const runOrchestratorVenueSetup = useCallback(() => {
+    const text = `${executionOrderBlockerMessage(ticketOrchestratorOrder) ?? ''} ${ticketOrchestratorOrder?.venuePreference ?? ''}`.toUpperCase();
+    if (/OPINION/.test(text)) {
+      void activateOpinionTradingSafe();
+    } else if (/PREDICT/.test(text)) {
+      void refreshPredictFunAuth();
+    } else if (/LIMITLESS/.test(text)) {
+      void activateLimitlessAccount();
+    } else if (/APPROVAL|ALLOWANCE|SHARE/.test(text)) {
+      void approveRouteCollateral();
+    } else {
+      void activatePolymarketFunds();
+    }
+  }, [
+    activateLimitlessAccount,
+    activateOpinionTradingSafe,
+    activatePolymarketFunds,
+    approveRouteCollateral,
+    refreshPredictFunAuth,
+    ticketOrchestratorOrder,
+  ]);
+
+  const placeOrchestratorOrder = useCallback(async () => {
+    if (!executionOrchestratorEnabled || !token) return;
+    setTicketLoading(true);
+    setTicketError(null);
+    try {
+      const currentAmount = ticketAmount.trim();
+      let order = ticketOrchestratorOrder && ticketOrchestratorAmount === currentAmount
+        ? ticketOrchestratorOrder
+        : await previewOrchestratorOrder({ quiet: true });
+      if (!order) {
+        order = await previewOrchestratorOrder({ quiet: false });
+      }
+      if (!order) return;
+      if (order.state === 'EXPIRED') {
+        const renewed = await previewOrchestratorOrder({ quiet: true, allowAutoRenew: false });
+        if (renewed && renewed.state !== 'EXPIRED') order = renewed;
+        else if (order.canAutoRenew) {
+          setTicketOrchestratorAutoRenewFailed(true);
+          setTicketError('Route expired and could not be refreshed. Try again.');
+          return;
+        } else {
+          setTicketOrchestratorAutoRenewFailed(true);
+          setTicketError('Route expired. Refresh the route before placing the order.');
+          return;
+        }
+      }
+      if (order.state === 'NEEDS_VENUE_SETUP') {
+        runOrchestratorVenueSetup();
+        return;
+      }
+      if (order.state !== 'READY_TO_PLACE') {
+        setTicketOrchestratorOrder(order);
+        setTicketStatusMessage(executionOrderStatusMessage(order));
+        const blocker = executionOrderBlockerMessage(order);
+        setTicketError(order.state === 'FAILED' || order.state === 'BLOCKED_ACTION_REQUIRED'
+          ? blocker ?? executionOrderStatusMessage(order)
+          : null);
+        scheduleOrchestratorStatusPoll(order);
+        return;
+      }
+      setTicketStatusMessage('Placing order through Lotus backend.');
+      const placed = await placeExecutionOrder(token, order.orderId);
+      setTicketOrchestratorOrder(placed);
+      setTicketStatusMessage(executionOrderStatusMessage(placed));
+      if (placed.executionId) setTicketExecutionId(placed.executionId);
+      if (placed.state === 'NEEDS_SIGNATURE') {
+        await submitOrchestratorSignatures(placed);
+        return;
+      }
+      if (placed.state === 'EXPIRED' && placed.canAutoRenew) {
+        const renewed = await previewOrchestratorOrder({ quiet: true, allowAutoRenew: false });
+        if (!renewed) setTicketOrchestratorAutoRenewFailed(true);
+        return;
+      }
+      if (isExecutionOrderTerminalState(placed.state)) {
+        void refreshAccountData();
+        setBottomTab(placed.state === 'SUBMITTED' ? 'Open Orders' : 'Trade History');
+        return;
+      }
+      scheduleOrchestratorStatusPoll(placed);
+    } catch (error) {
+      setTicketError(error instanceof Error ? error.message : 'Order placement failed.');
+    } finally {
+      setTicketLoading(false);
+    }
+  }, [
+    executionOrchestratorEnabled,
+    previewOrchestratorOrder,
+    refreshAccountData,
+    runOrchestratorVenueSetup,
+    scheduleOrchestratorStatusPoll,
+    submitOrchestratorSignatures,
+    ticketAmount,
+    ticketOrchestratorAmount,
+    ticketOrchestratorOrder,
+    token,
+  ]);
+
+  React.useEffect(() => {
+    if (!executionOrchestratorEnabled) return;
+    setTicketLiveCandidates(null);
+    setTicketQuote(null);
+    setTicketQuoteAmount(null);
+    setTicketExecutionId(null);
+    setTicketSignatureBundle(null);
+    setTicketLiveReadiness(null);
+    setTicketReadinessNextCheckAt(null);
+    setTicketStatusMessage(null);
+    setTicketError(null);
+    setTicketOrchestratorOrder(null);
+    setTicketOrchestratorAmount(null);
+    setTicketOrchestratorAutoRenewFailed(false);
+    orchestratorPreviewSeqRef.current += 1;
+  }, [
+    executionOrchestratorEnabled,
+    selectedTicketMarketId,
+    selectedTicketQuoteOutcomeId,
+    side,
+    ticketAmount,
+    ticketVenuePreference,
+  ]);
+
+  React.useEffect(() => {
+    if (!executionOrchestratorEnabled) return;
+    if (!token || !selectedTicketMarketId || !selectedTicketQuoteOutcomeId || !parsePositiveNumber(ticketAmount.trim())) return;
+    const timeoutId = window.setTimeout(() => {
+      void previewOrchestratorOrder({ quiet: true });
+    }, 450);
+    return () => window.clearTimeout(timeoutId);
+  }, [
+    executionOrchestratorEnabled,
+    previewOrchestratorOrder,
+    selectedTicketMarketId,
+    selectedTicketQuoteOutcomeId,
+    ticketAmount,
+    token,
+  ]);
+
+  React.useEffect(() => {
+    if (!executionOrchestratorEnabled || !ticketOrchestratorOrder) return;
+    scheduleOrchestratorStatusPoll(ticketOrchestratorOrder);
+    return () => {
+      if (orchestratorPollTimeoutRef.current !== null) {
+        window.clearTimeout(orchestratorPollTimeoutRef.current);
+        orchestratorPollTimeoutRef.current = null;
+      }
+    };
+  }, [executionOrchestratorEnabled, scheduleOrchestratorStatusPoll, ticketOrchestratorOrder]);
+
   const ticketAmountValue = ticketAmountNumber(ticketAmount);
-  const ticketHasExecutableQuote = Boolean(ticketQuote && ticketRoutePath.length > 0);
+  const ticketOrchestratorBlocker = executionOrderBlockerMessage(ticketOrchestratorOrder);
+  const ticketOrchestratorState = ticketOrchestratorOrder?.state ?? null;
+  const ticketOrchestratorRouteReady = Boolean(ticketOrchestratorOrder && ticketRoutePath.length > 0 && (
+    ticketOrchestratorState === 'READY_TO_PLACE' ||
+    ticketOrchestratorState === 'NEEDS_SIGNATURE' ||
+    ticketOrchestratorState === 'SUBMITTING' ||
+    ticketOrchestratorState === 'SUBMITTED' ||
+    ticketOrchestratorState === 'FILLED'
+  ));
+  const ticketOrchestratorWaiting = executionOrchestratorEnabled && ticketOrchestratorState === 'WAITING_FOR_VENUE_READY';
+  const ticketOrchestratorTerminal = Boolean(ticketOrchestratorState && isExecutionOrderTerminalState(ticketOrchestratorState));
+  const ticketHasExecutableQuote = executionOrchestratorEnabled
+    ? ticketOrchestratorRouteReady
+    : Boolean(ticketQuote && ticketRoutePath.length > 0);
   const ticketHasFundingBlocker = !ticketHasExecutableQuote && (ticketLiveCandidates?.blocked ?? []).some((blocked) => {
     const reason = `${blocked.reason ?? ''} ${blocked.detailsCode ?? ''}`.toUpperCase();
     return reason.includes('FUND') || reason.includes('BALANCE') || reason.includes('DEPOSIT') || reason.includes('INSUFFICIENT');
@@ -3791,13 +4225,48 @@ export const InfraTradingTerminal = ({
   const ticketReadinessQuoteExpired = Boolean(ticketReadinessExpiryMs && Number.isFinite(ticketReadinessExpiryMs) && Date.now() >= ticketReadinessExpiryMs);
   const ticketSellUnavailable = side === 'sell' && Boolean(token) && ticketSellableShares <= 0;
   const ticketNeedsFundingAction = ticketActivationRequired || ticketDepositRequired || ticketLimitlessSetupRequired || ticketPredictFunAuthRequired || ticketOpinionSetupRequired || ticketRouteApprovalRequired || ticketPolymarketClobSyncRequired || ticketPolymarketClobPropagationPending || ticketLimitlessBalanceBlocked;
-  const ticketActionDisabled = !token || !terminalMarketId || !selectedTicketOutcomeId || ticketLoading || ticketActivationPolling ||
-    ticketSellUnavailable ||
-    ticketPolymarketClobSyncRequired ||
-    (ticketPolymarketClobPropagationPending && ticketReadinessPolling) ||
-    Boolean(ticketExecutionId && ticketQuote && !ticketRequiresSignature && !ticketNeedsFundingAction) ||
-    Boolean(side === 'buy' && !ticketQuote && fundingLoading);
-  const ticketActionLabel = ticketActivationPolling
+  const ticketActionDisabled = executionOrchestratorEnabled
+    ? !token || !terminalMarketId || !selectedTicketOutcomeId || ticketLoading || ticketActivationPolling ||
+      ticketSellUnavailable ||
+      ticketOrchestratorWaiting ||
+      ticketOrchestratorState === 'BLOCKED_ACTION_REQUIRED' ||
+      ticketOrchestratorState === 'SUBMITTING' ||
+      ticketOrchestratorTerminal
+    : !token || !terminalMarketId || !selectedTicketOutcomeId || ticketLoading || ticketActivationPolling ||
+      ticketSellUnavailable ||
+      ticketPolymarketClobSyncRequired ||
+      (ticketPolymarketClobPropagationPending && ticketReadinessPolling) ||
+      Boolean(ticketExecutionId && ticketQuote && !ticketRequiresSignature && !ticketNeedsFundingAction) ||
+      Boolean(side === 'buy' && !ticketQuote && fundingLoading);
+  const ticketActionLabel = executionOrchestratorEnabled
+    ? ticketActivationPolling
+      ? 'Confirming venue readiness...'
+      : ticketLoading
+        ? ticketOrchestratorState === 'NEEDS_SIGNATURE'
+          ? 'Waiting for signature...'
+          : ticketOrchestratorState === 'SUBMITTING'
+            ? 'Submitting order...'
+            : 'Placing order...'
+      : ticketSellUnavailable
+        ? 'No sellable shares'
+      : ticketOrchestratorState === 'NEEDS_VENUE_SETUP'
+        ? 'Enable venue'
+      : ticketOrchestratorState === 'WAITING_FOR_VENUE_READY'
+        ? 'Waiting for venue readiness...'
+      : ticketOrchestratorState === 'BLOCKED_ACTION_REQUIRED'
+        ? 'Execution blocked'
+      : ticketOrchestratorState === 'SUBMITTING'
+        ? 'Submitting order...'
+      : ticketOrchestratorState === 'SUBMITTED'
+        ? 'Order submitted'
+      : ticketOrchestratorState === 'FILLED'
+        ? 'Filled'
+      : ticketOrchestratorState === 'FAILED'
+        ? 'Order failed'
+      : ticketOrchestratorState === 'EXPIRED' || ticketOrchestratorAutoRenewFailed
+        ? 'Refresh route'
+      : 'Place order'
+    : ticketActivationPolling
     ? 'Confirming Polymarket readiness...'
     : ticketLoading
       ? ticketActivationRequired
@@ -3850,7 +4319,9 @@ export const InfraTradingTerminal = ({
     : ticketQuote
       ? side === 'buy' ? 'Place market order' : 'Place sell order'
       : 'Preview market order';
-  const ticketRouteReady = Boolean(ticketQuote && ticketRoutePath.length > 0);
+  const ticketRouteReady = executionOrchestratorEnabled
+    ? Boolean(ticketOrchestratorOrder && ticketRoutePath.length > 0)
+    : Boolean(ticketQuote && ticketRoutePath.length > 0);
   const ticketPolymarketClobReadinessKey = ticketQuote?.quoteId
     ?? ticketExecutionId
     ?? `${selectedTicketMarketId}:${selectedTicketQuoteOutcomeId}:${ticketAmount.trim() || 'empty'}`;
@@ -3944,9 +4415,12 @@ export const InfraTradingTerminal = ({
   const ticketAmountLabel = side === 'buy' ? 'Amount' : 'Shares to Sell';
   const ticketAmountUnit = side === 'buy' ? 'USDC' : 'Shares';
   const ticketReceiveLabel = side === 'buy' ? 'To Win' : 'To Receive';
-  const ticketReceiveText = side === 'buy'
-    ? formatUsdc(ticketEstimatedPayout)
-    : formatTradeUsdc(ticketReceiveEstimate);
+  const ticketOrchestratorReceiveText = orderReceiveAmount(ticketOrchestratorOrder);
+  const ticketReceiveText = executionOrchestratorEnabled && ticketOrchestratorReceiveText
+    ? (side === 'buy' ? `${ticketOrchestratorReceiveText} shares` : `${ticketOrchestratorReceiveText} USDC`)
+    : side === 'buy'
+      ? formatUsdc(ticketEstimatedPayout)
+      : formatTradeUsdc(ticketReceiveEstimate);
   const ticketPrimaryButtonClass = side === 'buy'
     ? 'bg-[#ccff00] hover:bg-[#b0dc00] text-black shadow-[0_0_15px_rgba(204,255,0,0.15)]'
     : 'bg-[#E52B50] hover:bg-[#ff3366] text-white shadow-[0_0_15px_rgba(229,43,80,0.15)]';
@@ -5074,9 +5548,12 @@ export const InfraTradingTerminal = ({
                               setTicketLiveCandidates(null);
                               setTicketQuote(null);
                               setTicketQuoteAmount(null);
-                              setTicketExecutionId(null);
-                              setTicketSignatureBundle(null);
-                              setTicketStatusMessage(null);
+    setTicketExecutionId(null);
+    setTicketSignatureBundle(null);
+    setTicketOrchestratorOrder(null);
+    setTicketOrchestratorAmount(null);
+    setTicketOrchestratorAutoRenewFailed(false);
+    setTicketStatusMessage(null);
                               setTicketError(null);
                             }}
                           />
@@ -5221,6 +5698,45 @@ export const InfraTradingTerminal = ({
                               )}
                           </div>
                       )}
+                      {executionOrchestratorEnabled && orderAction === 'preview' && ticketRouteReady && ticketOrchestratorOrder && (
+                          <div className="bg-[#0c0c0e] border border-emerald-500/20 rounded-lg p-3 animate-in slide-in-from-top-2 duration-300 space-y-3 shadow-[0_0_15px_rgba(16,185,129,0.05)]">
+                              <div className="flex items-center justify-between pb-2 border-b border-zinc-800/60">
+                                  <div className="flex items-center gap-1.5">
+                                     <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                                     <span className="text-[10px] font-bold text-zinc-300 tracking-wide">Route preview: Live</span>
+                                  </div>
+                                  <span className="px-1.5 py-0.5 rounded text-[8px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 uppercase tracking-widest font-mono font-bold">
+                                    {ticketOrchestratorOrder.venuePreference === 'BEST_ROUTE' ? 'BEST_ROUTE' : formatVenueLabel(String(ticketOrchestratorOrder.venuePreference ?? ticketVenuePreference))}
+                                  </span>
+                              </div>
+                              <div className="flex items-center gap-1 font-mono text-[9px] overflow-x-auto custom-scrollbar pb-1">
+                                  {ticketRoutePath.map((venue, index) => (
+                                    <React.Fragment key={`${venue}-${index}`}>
+                                      {index > 0 && (
+                                        <div className="flex items-center justify-center text-zinc-600">
+                                          <ChevronRight className="w-3 h-3" />
+                                        </div>
+                                      )}
+                                      <div className="min-w-[95px] flex-1 bg-[#121214] border border-zinc-800 rounded p-1.5 text-center flex flex-col justify-center">
+                                        <div className="text-zinc-500 w-max mx-auto mb-0.5 text-[8px] tracking-wider uppercase font-sans font-bold">Leg {index + 1}</div>
+                                        <div className="flex items-center justify-center gap-1 text-emerald-400 font-bold tracking-tighter">
+                                          <VenueLogo id={normalizeVenueId(venue)} label={formatVenueLabel(venue)} className="h-3 w-3 rounded-full" />
+                                          {formatVenueLabel(venue)}
+                                        </div>
+                                        <div className="text-zinc-400 mt-1 pb-0.5 border-b border-zinc-800 border-dashed w-max mx-auto text-[10px]">
+                                          {formatProbabilityPrice(ticketEffectivePrice)}
+                                        </div>
+                                      </div>
+                                    </React.Fragment>
+                                  ))}
+                              </div>
+                              {ticketOrchestratorBlocker && (
+                                <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[10px] font-semibold text-amber-100">
+                                  {ticketOrchestratorBlocker}
+                                </div>
+                              )}
+                          </div>
+                      )}
                   </div>
 
                   <div className="h-px bg-zinc-800/80 -mx-4 my-0.5"></div>
@@ -5249,7 +5765,9 @@ export const InfraTradingTerminal = ({
                   <button
                     type="button"
                     onClick={() => {
-                      if (ticketActivationRequired) {
+                      if (executionOrchestratorEnabled) {
+                        void placeOrchestratorOrder();
+                      } else if (ticketActivationRequired) {
                         void activatePolymarketFunds();
                       } else if (ticketRouteApprovalRequired) {
                         void approveRouteCollateral();

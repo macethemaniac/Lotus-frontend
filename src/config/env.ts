@@ -5,6 +5,7 @@ const turnkeyOrganizationId = import.meta.env.VITE_TURNKEY_ORGANIZATION_ID;
 const turnkeyAuthProxyConfigId = import.meta.env.VITE_TURNKEY_AUTH_PROXY_CONFIG_ID;
 const turnkeyAuthProxyUrl = import.meta.env.VITE_TURNKEY_AUTH_PROXY_URL;
 const lotusAuthExchangePath = import.meta.env.VITE_LOTUS_AUTH_EXCHANGE_PATH;
+const executionOrchestratorV1Enabled = import.meta.env.VITE_EXECUTION_ORCHESTRATOR_V1_ENABLED;
 const lotusBackendApiBaseUrl = "https://lotus-backend-g1e1.onrender.com";
 
 export const env = {
@@ -23,6 +24,7 @@ export const env = {
   lotusAuthExchangePath: typeof lotusAuthExchangePath === "string" && lotusAuthExchangePath.length > 0
     ? lotusAuthExchangePath
     : "/auth/turnkey/exchange",
+  executionOrchestratorV1Enabled: executionOrchestratorV1Enabled === "true",
 };
 
 export function lotusWsUrl(): string {
