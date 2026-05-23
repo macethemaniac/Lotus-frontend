@@ -5630,9 +5630,9 @@ export const InfraTradingTerminal = ({
       </div>
 
       {/* Right Panel: Trade Ticket & Account */}
-      <div className="w-full flex flex-col gap-2 2xl:gap-3 shrink-0 overflow-visible xl:max-h-[calc(100dvh-8rem)] xl:w-[360px] xl:overflow-y-auto 2xl:w-[clamp(380px,21vw,460px)] custom-scrollbar">
+      <div className="w-full flex flex-col gap-2 2xl:gap-3 shrink-0 overflow-visible xl:max-h-[calc(100dvh-8rem)] xl:w-[360px] xl:overflow-hidden 2xl:w-[clamp(380px,21vw,460px)]">
          {/* Trade Block */}
-         <div className="bg-[#121214] border border-zinc-800 rounded-xl flex flex-col shrink-0 min-h-0 transition-all duration-300">
+         <div className="bg-[#121214] border border-zinc-800 rounded-xl flex flex-col shrink-0 min-h-0 transition-all duration-300 xl:flex-1 xl:overflow-hidden">
              <div className="flex justify-between items-center p-3 border-b border-zinc-800/80">
                  <div className="flex gap-4 items-center pl-2">
                      <button type="button" onClick={() => switchTicketSide('buy')} className={`pb-1 text-sm font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${side === 'buy' ? 'text-white border-b-2 border-white' : 'text-zinc-500 hover:text-zinc-300'}`}>Buy</button>
@@ -5643,7 +5643,7 @@ export const InfraTradingTerminal = ({
                  </button>
              </div>
 
-              <div className="p-4 flex flex-col gap-4 animate-in fade-in duration-300">
+              <div className="flex flex-col gap-3 p-3 animate-in fade-in duration-300 2xl:p-4 xl:min-h-0 xl:flex-1 xl:overflow-y-auto xl:pr-3 custom-scrollbar">
                   <div className="grid grid-cols-2 gap-3">
                       <button type="button" onClick={() => selectTicketOutcome('yes')} className={`font-bold py-3 rounded-lg flex items-center justify-center gap-2 shadow-sm transition-colors text-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${ticketOutcomeSide === 'yes' ? 'bg-emerald-500 text-white hover:bg-emerald-400' : 'bg-transparent border border-emerald-500/30 text-emerald-500 hover:bg-emerald-500/10'}`}>
                           YES {selectedTicketOutcome?.yesPrice ?? 'Quote'}
@@ -5697,15 +5697,15 @@ export const InfraTradingTerminal = ({
 
                   <div className="flex flex-col gap-2">
                       {executionOrchestratorEnabled && ticketRouteReady && ticketOrchestratorOrder && ticketOrchestratorRouteLegs.length > 0 && (
-                        <div className="rounded-lg border border-emerald-500/20 bg-[#0c0c0e] p-3 shadow-[0_0_15px_rgba(16,185,129,0.05)]">
-                          <div className="flex items-center justify-between gap-3 border-b border-zinc-800/60 pb-2">
+                        <div className="rounded-lg border border-emerald-500/20 bg-[#0c0c0e] p-2.5 shadow-[0_0_15px_rgba(16,185,129,0.05)]">
+                          <div className="flex items-center justify-between gap-3 border-b border-zinc-800/60 pb-1.5">
                             <span className="h-px min-w-0 flex-1 bg-zinc-800/70" aria-hidden />
                             <span className="rounded border border-emerald-500/20 bg-emerald-500/10 px-1.5 py-0.5 font-mono text-[8px] font-bold uppercase tracking-widest text-emerald-400">
                               {ticketOrchestratorRouteBadge}
                             </span>
                             <span className="h-px min-w-0 flex-1 bg-zinc-800/70" aria-hidden />
                           </div>
-                          <div className="mt-3 flex items-center gap-1 overflow-x-auto pb-1 font-mono text-[9px] custom-scrollbar">
+                          <div className="mt-2 flex items-center gap-1 overflow-x-auto pb-1 font-mono text-[9px] custom-scrollbar">
                             {ticketOrchestratorRouteLegs.map((leg, index) => (
                               <React.Fragment key={`${leg.venue}-${index}`}>
                                 {index > 0 && (
@@ -5713,7 +5713,7 @@ export const InfraTradingTerminal = ({
                                     <ChevronRight className="h-3 w-3" aria-hidden />
                                   </div>
                                 )}
-                                <div className="min-w-[120px] flex-1 rounded border border-zinc-800 bg-[#121214] p-2 text-center">
+                                <div className="min-w-[120px] flex-1 rounded border border-zinc-800 bg-[#121214] p-1.5 text-center">
                                   <div className="mx-auto mb-0.5 w-max font-sans text-[8px] font-bold uppercase tracking-wider text-zinc-500">
                                     Leg {index + 1}
                                   </div>
@@ -5734,7 +5734,7 @@ export const InfraTradingTerminal = ({
                             ))}
                           </div>
                           {ticketOrchestratorEstimatedSavings !== null && (
-                            <div className="mt-2 rounded border border-[#ccff00]/20 bg-[#ccff00]/10 p-1.5 text-center">
+                            <div className="mt-1.5 rounded border border-[#ccff00]/20 bg-[#ccff00]/10 p-1.5 text-center">
                               <span className="text-[10px] font-bold text-[#ccff00]">
                                 Estimated savings: {formatUsdc(ticketOrchestratorEstimatedSavings)}
                               </span>
@@ -6227,7 +6227,7 @@ export const InfraTradingTerminal = ({
              ))}
          </div>
 
-         <div className="bg-[#121214] border border-zinc-800 rounded-xl p-3 2xl:p-4 flex flex-col gap-3 min-h-[250px] shrink-0">
+         <div className="bg-[#121214] border border-zinc-800 rounded-xl p-2.5 2xl:p-3 flex flex-col gap-2 shrink-0 xl:max-h-[240px] xl:overflow-y-auto custom-scrollbar">
              <div className="flex items-start justify-between gap-3">
                  <div>
                      <div className="flex items-center gap-2">
@@ -6241,7 +6241,7 @@ export const InfraTradingTerminal = ({
                  </span>
              </div>
 
-             <div className="rounded-xl border border-[#ccff00]/20 bg-[#ccff00]/[0.055] p-3">
+             <div className="rounded-xl border border-[#ccff00]/20 bg-[#ccff00]/[0.055] p-2.5">
                  <div className="flex items-end justify-between gap-3">
                      <div>
                          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500">Position Value</p>
@@ -6253,7 +6253,7 @@ export const InfraTradingTerminal = ({
                          <p className="mt-1 text-[10px] font-semibold text-zinc-400">Avg entry {positionAverageEntryDisplay}</p>
                      </div>
                  </div>
-                 <div className="mt-3 flex h-1.5 overflow-hidden rounded-full bg-zinc-900">
+                 <div className="mt-2 flex h-1.5 overflow-hidden rounded-full bg-zinc-900">
                      {totalVerifiedSize > 0 ? (
                        positionVenueRows.slice(0, 4).map((row, index) => (
                          <div
