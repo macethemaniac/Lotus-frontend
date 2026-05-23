@@ -2373,26 +2373,17 @@ export const InfraTradingTerminal = ({
   const totalVerifiedSize = positions.reduce((sum, position) => sum + (parsePositiveNumber(position.verifiedSize) ?? 0), 0);
   const totalCostBasis = positions.reduce((sum, position) => sum + (parsePositiveNumber(position.verifiedSize) ?? 0) * position.averageEntryPrice, 0);
   const averageEntry = totalVerifiedSize > 0 ? totalCostBasis / totalVerifiedSize : null;
-  const positionVenueRows = positions.map((position) => {
+  const positionValueRows = positions.map((position) => {
     const outcomeRow = terminalOutcomes.find((outcome) => matchesPositionMarket(position, outcome.marketId ?? terminalMarketId, null)) ?? selectedOutcome;
     const currentPrice = parseProbabilityLabel(position.outcomeId === 'NO' ? outcomeRow?.noPrice : outcomeRow?.yesPrice) ?? position.averageEntryPrice;
     const size = parsePositiveNumber(position.verifiedSize) ?? 0;
     const value = size * currentPrice;
-    const pnl = value - (size * position.averageEntryPrice);
-    return {
-      venue: formatVenueLabel(position.venue),
-      logo: normalizeVenueId(position.venue),
-      shares: formatCompactMetric(position.verifiedSize) ?? position.verifiedSize,
-      avgEntry: formatProbabilityPrice(position.averageEntryPrice),
-      mark: formatProbabilityPrice(currentPrice),
-      pnl,
-      pnlTone: pnl >= 0 ? 'text-emerald-400' : 'text-red-400',
-      value,
-      fill: formatCompactMetric(position.sellableSize) ? `${formatCompactMetric(position.sellableSize)} sellable` : 'Verified',
-    };
+    return { value };
   });
-  const totalPositionValue = positionVenueRows.reduce((sum, row) => sum + row.value, 0);
-  const totalPositionPnl = positionVenueRows.reduce((sum, row) => sum + row.pnl, 0);
+  const totalPositionValue = positionValueRows.reduce((sum, row) => sum + row.value, 0);
+  const positionValueDisplay = totalVerifiedSize > 0 ? formatTerminalCurrency(totalPositionValue) : '$0';
+  const positionShareDisplay = totalVerifiedSize > 0 ? `${formatCompactMetric(totalVerifiedSize) ?? totalVerifiedSize.toFixed(2)} shares` : '0 shares';
+  const positionAverageEntryDisplay = averageEntry !== null ? formatProbabilityPrice(averageEntry) : '--';
   const primaryRiskAssessment = riskState.assessments[0] ?? null;
   const primaryRiskTone = riskTone(primaryRiskAssessment);
   const PrimaryRiskIcon = primaryRiskTone.icon;
@@ -6162,69 +6153,34 @@ export const InfraTradingTerminal = ({
              ))}
          </div>
 
-         <div className="bg-[#121214] border border-zinc-800 rounded-xl p-3 2xl:p-4 flex flex-col gap-3 min-h-[250px] shrink-0">
+         <div className="bg-[#121214] border border-zinc-800 rounded-xl p-3 2xl:p-4 flex flex-col gap-3 min-h-[170px] shrink-0">
              <div className="flex items-start justify-between gap-3">
                  <div>
                      <div className="flex items-center gap-2">
                          <div className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.7)]" />
                          <h3 className="text-sm font-black text-white">Open Position</h3>
                      </div>
-                     <p className="mt-1 text-[10px] text-zinc-500">Auto-refreshes after verified venue fills</p>
                  </div>
-                 <span className="rounded-full border border-emerald-500/25 bg-emerald-500/10 px-2 py-1 text-[9px] font-bold uppercase tracking-widest text-emerald-300">
-                     live
-                 </span>
              </div>
 
              <div className="rounded-xl border border-[#ccff00]/20 bg-[#ccff00]/[0.055] p-3">
-                 <div className="flex items-end justify-between gap-3">
-                     <div>
-                         <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500">Position Value</p>
-                         <div className="mt-1 font-mono text-2xl font-black text-emerald-400">{positionVenueRows.length ? formatTerminalCurrency(totalPositionValue) : 'No position'}</div>
-                     </div>
-                     <div className="text-right">
-                         <p className="text-[10px] font-semibold text-zinc-500">{totalVerifiedSize > 0 ? `${formatCompactMetric(totalVerifiedSize)} verified` : 'Verified fills only'}</p>
-                         <p className={`mt-1 text-[10px] font-semibold ${totalPositionPnl >= 0 ? 'text-emerald-300' : 'text-red-300'}`}>
-                           {positionVenueRows.length ? `${totalPositionPnl >= 0 ? '+' : '-'}${formatTerminalCurrency(Math.abs(totalPositionPnl))}` : 'Avg entry pending'}
-                         </p>
-                         <p className="mt-1 text-[10px] font-semibold text-zinc-400">Avg {formatProbabilityPrice(averageEntry)} - {selectedOutcome?.name ?? 'Select outcome'}</p>
-                     </div>
+                 <div>
+                     <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500">Position Value</p>
+                     <div className="mt-1 font-mono text-2xl font-black text-emerald-400">{positionValueDisplay}</div>
                  </div>
-                 <div className="mt-3 flex h-1.5 overflow-hidden rounded-full bg-zinc-900">
-                     {positionVenueRows.length ? positionVenueRows.slice(0, 4).map((row, index) => (
-                       <div key={row.venue} className={`h-full ${index === 0 ? 'bg-blue-500' : index === 1 ? 'bg-[#ccff00]' : index === 2 ? 'bg-purple-500' : 'bg-emerald-500'}`} style={{ width: `${Math.max(12, 100 / positionVenueRows.length)}%` }} />
-                     )) : <div className="h-full w-full bg-zinc-800" />}
+                 <div className="mt-3 grid grid-cols-2 gap-2">
+                     <div className="rounded-lg border border-zinc-800/80 bg-zinc-950/30 px-3 py-2">
+                         <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-500">Share Amount</p>
+                         <p className="mt-1 font-mono text-sm font-black text-white">{positionShareDisplay}</p>
+                     </div>
+                     <div className="rounded-lg border border-zinc-800/80 bg-zinc-950/30 px-3 py-2">
+                         <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-500">Average Entry</p>
+                         <p className="mt-1 font-mono text-sm font-black text-white">{positionAverageEntryDisplay}</p>
+                     </div>
                  </div>
              </div>
 
-             <div className="space-y-2">
-                 {positionVenueRows.length === 0 && (
-                     <div className="rounded-lg border border-zinc-800 bg-[#0c0c0e] px-3 py-3 text-xs font-medium text-zinc-500">
-                         {accountEmptyCopy}
-                     </div>
-                 )}
-                 {positionVenueRows.map((row) => (
-                     <div key={row.venue} className="rounded-lg border border-zinc-800 bg-[#0c0c0e] px-3 py-2">
-                         <div className="flex items-center justify-between gap-3">
-                             <div className="flex min-w-0 items-center gap-2">
-                                 <VenueLogo id={row.logo} label={row.venue} className="h-5 w-5 rounded-full" />
-                                 <div className="min-w-0">
-                                     <p className="truncate text-xs font-bold text-zinc-200">{row.venue}</p>
-                                     <p className="text-[10px] font-medium text-zinc-500">{row.fill} of route • {row.shares} shares</p>
-                                 </div>
-                             </div>
-                             <div className="text-right">
-                                 <p className={`font-mono text-sm font-black ${row.pnlTone}`}>{formatTerminalCurrency(row.value)}</p>
-                                 <p className="text-[10px] text-zinc-500">{row.avgEntry} → {row.mark}</p>
-                             </div>
-                         </div>
-                     </div>
-                 ))}
-             </div>
 
-             <div className="rounded-lg border border-zinc-800/80 bg-zinc-950/40 p-2 text-[10px] leading-relaxed text-zinc-500">
-                 Positions appear after verified fills. Value uses the current live outcome price when available and falls back to verified entry price.
-             </div>
          </div>
 
 
