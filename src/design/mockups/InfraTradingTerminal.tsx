@@ -2373,14 +2373,22 @@ export const InfraTradingTerminal = ({
   const totalVerifiedSize = positions.reduce((sum, position) => sum + (parsePositiveNumber(position.verifiedSize) ?? 0), 0);
   const totalCostBasis = positions.reduce((sum, position) => sum + (parsePositiveNumber(position.verifiedSize) ?? 0) * position.averageEntryPrice, 0);
   const averageEntry = totalVerifiedSize > 0 ? totalCostBasis / totalVerifiedSize : null;
-  const positionValueRows = positions.map((position) => {
+  const positionVenueRows = positions.map((position) => {
     const outcomeRow = terminalOutcomes.find((outcome) => matchesPositionMarket(position, outcome.marketId ?? terminalMarketId, null)) ?? selectedOutcome;
     const currentPrice = parseProbabilityLabel(position.outcomeId === 'NO' ? outcomeRow?.noPrice : outcomeRow?.yesPrice) ?? position.averageEntryPrice;
     const size = parsePositiveNumber(position.verifiedSize) ?? 0;
     const value = size * currentPrice;
-    return { value };
+    return {
+      key: position.positionId,
+      venue: formatVenueLabel(position.venue),
+      logo: normalizeVenueId(position.venue),
+      size,
+      shares: formatCompactMetric(position.verifiedSize) ?? position.verifiedSize,
+      avgEntry: formatProbabilityPrice(position.averageEntryPrice),
+      value,
+    };
   });
-  const totalPositionValue = positionValueRows.reduce((sum, row) => sum + row.value, 0);
+  const totalPositionValue = positionVenueRows.reduce((sum, row) => sum + row.value, 0);
   const positionValueDisplay = totalVerifiedSize > 0 ? formatTerminalCurrency(totalPositionValue) : '$0';
   const positionShareDisplay = totalVerifiedSize > 0 ? `${formatCompactMetric(totalVerifiedSize) ?? totalVerifiedSize.toFixed(2)} shares` : '0 shares';
   const positionAverageEntryDisplay = averageEntry !== null ? formatProbabilityPrice(averageEntry) : '--';
@@ -6160,7 +6168,7 @@ export const InfraTradingTerminal = ({
                          <div className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.7)]" />
                          <h3 className="text-sm font-black text-white">Open Position</h3>
                      </div>
-                     <p className="mt-1 text-[10px] text-zinc-500">Live position summary</p>
+                     <p className="mt-1 text-[10px] text-zinc-500">Auto-refreshes after venue fills</p>
                  </div>
                  <span className="rounded-full border border-emerald-500/25 bg-emerald-500/10 px-2 py-1 text-[9px] font-bold uppercase tracking-widest text-emerald-300">
                      live
@@ -6181,11 +6189,13 @@ export const InfraTradingTerminal = ({
                  </div>
                  <div className="mt-3 flex h-1.5 overflow-hidden rounded-full bg-zinc-900">
                      {totalVerifiedSize > 0 ? (
-                       <>
-                         <div className="h-full w-1/2 bg-blue-500" />
-                         <div className="h-full w-1/4 bg-[#ccff00]" />
-                         <div className="h-full w-1/4 bg-purple-500" />
-                       </>
+                       positionVenueRows.slice(0, 4).map((row, index) => (
+                         <div
+                           key={row.key}
+                           className={`h-full ${index === 0 ? 'bg-blue-500' : index === 1 ? 'bg-[#ccff00]' : index === 2 ? 'bg-purple-500' : 'bg-emerald-500'}`}
+                           style={{ width: `${Math.max(8, (row.size / totalVerifiedSize) * 100)}%` }}
+                         />
+                       ))
                      ) : (
                        <div className="h-full w-full bg-zinc-800" />
                      )}
@@ -6193,33 +6203,23 @@ export const InfraTradingTerminal = ({
              </div>
 
              <div className="space-y-2">
-                 <div className="rounded-lg border border-zinc-800 bg-[#0c0c0e] px-3 py-2">
-                     <div className="flex items-center justify-between gap-3">
-                         <div className="flex min-w-0 items-center gap-2">
-                             <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#ccff00]/15 text-[#ccff00]">
-                                 <Layers className="h-3 w-3" />
+                 {positionVenueRows.map((row) => (
+                     <div key={row.key} className="rounded-lg border border-zinc-800 bg-[#0c0c0e] px-3 py-2">
+                         <div className="flex items-center justify-between gap-3">
+                             <div className="flex min-w-0 items-center gap-2">
+                                 <VenueLogo id={row.logo} label={row.venue} className="h-5 w-5 rounded-full" />
+                                 <div className="min-w-0">
+                                     <p className="truncate text-xs font-bold text-zinc-200">{row.venue}</p>
+                                     <p className="text-[10px] font-medium text-zinc-500">{row.shares} shares</p>
+                                 </div>
                              </div>
-                             <div className="min-w-0">
-                                 <p className="truncate text-xs font-bold text-zinc-200">Share Amount</p>
-                             </div>
-                         </div>
-                         <p className="font-mono text-sm font-black text-emerald-400">{positionShareDisplay}</p>
-                     </div>
-                 </div>
-
-                 <div className="rounded-lg border border-zinc-800 bg-[#0c0c0e] px-3 py-2">
-                     <div className="flex items-center justify-between gap-3">
-                         <div className="flex min-w-0 items-center gap-2">
-                             <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-purple-500/15 text-purple-300">
-                                 <BarChart2 className="h-3 w-3" />
-                             </div>
-                             <div className="min-w-0">
-                                 <p className="truncate text-xs font-bold text-zinc-200">Average Entry</p>
+                             <div className="text-right">
+                                 <p className="font-mono text-sm font-black text-emerald-400">{formatTerminalCurrency(row.value)}</p>
+                                 <p className="text-[10px] text-zinc-500">Avg {row.avgEntry}</p>
                              </div>
                          </div>
-                         <p className="font-mono text-sm font-black text-white">{positionAverageEntryDisplay}</p>
                      </div>
-                 </div>
+                 ))}
              </div>
          </div>
 
