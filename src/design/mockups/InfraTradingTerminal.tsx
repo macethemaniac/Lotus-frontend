@@ -4113,6 +4113,18 @@ export const InfraTradingTerminal = ({
   const ticketAmountValue = ticketAmountNumber(ticketAmount);
   const ticketOrchestratorBlocker = executionOrderBlockerMessage(ticketOrchestratorOrder);
   const ticketOrchestratorState = ticketOrchestratorOrder?.state ?? null;
+  const ticketOrchestratorDetail = ticketOrchestratorBlocker
+    ?? (ticketOrchestratorState === 'WAITING_FOR_VENUE_READY'
+      ? 'Lotus is checking venue readiness in the background.'
+      : ticketOrchestratorState === 'SUBMITTING'
+        ? 'Lotus is submitting the order.'
+        : ticketOrchestratorState === 'SUBMITTED'
+          ? 'Tracking fill status.'
+          : ticketOrchestratorState === 'FILLED'
+            ? 'Fill verified.'
+            : ticketOrchestratorState === 'EXPIRED' && !ticketOrchestratorAutoRenewFailed
+              ? 'Refreshing the route automatically.'
+              : null);
   const ticketOrchestratorRouteReady = Boolean(ticketOrchestratorOrder && ticketRoutePath.length > 0 && (
     ticketOrchestratorState === 'READY_TO_PLACE' ||
     ticketOrchestratorState === 'NEEDS_SIGNATURE' ||
@@ -4327,13 +4339,14 @@ export const InfraTradingTerminal = ({
     ?? `${selectedTicketMarketId}:${selectedTicketQuoteOutcomeId}:${ticketAmount.trim() || 'empty'}`;
 
   React.useEffect(() => {
-    if (!token || !ticketPolymarketClobSyncRequired || ticketLoading || ticketActivationPolling) return;
+    if (executionOrchestratorEnabled || !token || !ticketPolymarketClobSyncRequired || ticketLoading || ticketActivationPolling) return;
     const key = `${ticketPolymarketClobReadinessKey}:sync`;
     if (autoPolymarketClobSyncKeyRef.current === key) return;
     autoPolymarketClobSyncKeyRef.current = key;
     void syncPolymarketClobReadiness();
   }, [
     syncPolymarketClobReadiness,
+    executionOrchestratorEnabled,
     ticketActivationPolling,
     ticketLoading,
     ticketPolymarketClobReadinessKey,
@@ -4342,7 +4355,7 @@ export const InfraTradingTerminal = ({
   ]);
 
   React.useEffect(() => {
-    if (!token || !ticketPolymarketClobPropagationPending || ticketLoading || ticketActivationPolling) return;
+    if (executionOrchestratorEnabled || !token || !ticketPolymarketClobPropagationPending || ticketLoading || ticketActivationPolling) return;
     const readinessId = ticketQuote?.quoteId ?? ticketExecutionId;
     if (!readinessId) return;
     let cancelled = false;
@@ -4401,6 +4414,7 @@ export const InfraTradingTerminal = ({
       setTicketReadinessNextCheckAt(null);
     };
   }, [
+    executionOrchestratorEnabled,
     ticketActivationPolling,
     ticketExecutionId,
     ticketLiveReadiness?.expiresAt,
@@ -5548,12 +5562,12 @@ export const InfraTradingTerminal = ({
                               setTicketLiveCandidates(null);
                               setTicketQuote(null);
                               setTicketQuoteAmount(null);
-    setTicketExecutionId(null);
-    setTicketSignatureBundle(null);
-    setTicketOrchestratorOrder(null);
-    setTicketOrchestratorAmount(null);
-    setTicketOrchestratorAutoRenewFailed(false);
-    setTicketStatusMessage(null);
+                              setTicketExecutionId(null);
+                              setTicketSignatureBundle(null);
+                              setTicketOrchestratorOrder(null);
+                              setTicketOrchestratorAmount(null);
+                              setTicketOrchestratorAutoRenewFailed(false);
+                              setTicketStatusMessage(null);
                               setTicketError(null);
                             }}
                           />
@@ -5573,7 +5587,71 @@ export const InfraTradingTerminal = ({
                   </div>
 
                   <div className="flex flex-col gap-2">
-                      {ticketQuote && (
+                      {executionOrchestratorEnabled && (
+                        <div className={`rounded-lg border px-3 py-2.5 transition-colors ${
+                          ticketOrchestratorBlocker
+                            ? 'border-amber-500/30 bg-amber-500/10'
+                            : ticketRouteReady
+                              ? 'border-emerald-500/20 bg-emerald-500/10'
+                              : 'border-zinc-800 bg-zinc-950/40'
+                        }`}>
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className={`flex items-center gap-2 text-[11px] font-bold uppercase tracking-wide ${
+                                ticketOrchestratorBlocker
+                                  ? 'text-amber-200'
+                                  : ticketRouteReady
+                                    ? 'text-emerald-300'
+                                    : 'text-zinc-400'
+                              }`}>
+                                <span className={`h-2 w-2 rounded-full ${
+                                  ticketOrchestratorBlocker
+                                    ? 'bg-amber-300'
+                                    : ticketRouteReady
+                                      ? 'bg-emerald-400'
+                                      : 'bg-zinc-600'
+                                }`} />
+                                {ticketOrchestratorState === 'SUBMITTED'
+                                  ? 'Order submitted'
+                                  : ticketOrchestratorState === 'FILLED'
+                                    ? 'Order filled'
+                                    : ticketOrchestratorState === 'WAITING_FOR_VENUE_READY'
+                                      ? 'Waiting for venue'
+                                      : ticketRouteReady
+                                        ? 'Live route ready'
+                                        : ticketAmount.trim()
+                                          ? 'Pricing route'
+                                          : 'Enter amount'}
+                              </div>
+                              <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] font-semibold text-zinc-400">
+                                {ticketRoutePath.length > 0 ? ticketRoutePath.map((venue, index) => (
+                                  <React.Fragment key={`${venue}-${index}`}>
+                                    {index > 0 && <ChevronRight className="h-3 w-3 text-zinc-600" aria-hidden />}
+                                    <span className="inline-flex items-center gap-1 rounded-md border border-zinc-800 bg-zinc-950/60 px-1.5 py-0.5 text-zinc-200">
+                                      <VenueLogo id={normalizeVenueId(venue)} label={formatVenueLabel(venue)} className="h-3 w-3 rounded-full" />
+                                      {formatVenueLabel(venue)}
+                                    </span>
+                                  </React.Fragment>
+                                )) : (
+                                  <span>{ticketAmount.trim() ? 'Getting backend route and price...' : 'Route appears automatically after amount entry.'}</span>
+                                )}
+                              </div>
+                            </div>
+                            <div className="shrink-0 text-right">
+                              <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Avg price</div>
+                              <div className="font-mono text-sm font-black text-white">{formatProbabilityPrice(ticketEffectivePrice)}</div>
+                            </div>
+                          </div>
+                          {ticketOrchestratorDetail && (
+                            <div className={`mt-2 text-[10px] font-semibold leading-snug ${
+                              ticketOrchestratorBlocker ? 'text-amber-100' : 'text-emerald-100'
+                            }`}>
+                              {ticketOrchestratorDetail}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {!executionOrchestratorEnabled && ticketQuote && (
                         <div
                           className={`flex justify-between items-center p-2.5 rounded-lg transition-colors ${ticketRouteReady ? 'bg-emerald-500/10 border border-emerald-500/20 cursor-pointer hover:bg-emerald-500/20' : 'bg-zinc-900/70 border border-zinc-800'}`}
                           onClick={() => {
@@ -5593,17 +5671,17 @@ export const InfraTradingTerminal = ({
                         </div>
                       )}
 
-                      {ticketError && (
+                      {ticketError && !executionOrchestratorEnabled && (
                         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] font-semibold text-amber-200">
                           {ticketError}
                         </div>
                       )}
-                      {ticketStatusMessage && (
+                      {ticketStatusMessage && !executionOrchestratorEnabled && (
                         <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-[11px] font-semibold text-emerald-200">
                           {ticketStatusMessage}{ticketExecutionId ? ` ${ticketExecutionId}` : ''}
                         </div>
                       )}
-                      {ticketPolymarketClobPropagationPending && (
+                      {ticketPolymarketClobPropagationPending && !executionOrchestratorEnabled && (
                         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[10px] font-semibold text-amber-100">
                           <div className="flex items-center justify-between gap-2">
                             <span className="flex items-center gap-1.5 text-[11px] font-bold text-amber-100">
@@ -5636,12 +5714,12 @@ export const InfraTradingTerminal = ({
                           </div>
                         </div>
                       )}
-                      {ticketBlockedRoutes.slice(0, 3).map((blocked) => (
+                      {!executionOrchestratorEnabled && ticketBlockedRoutes.slice(0, 3).map((blocked) => (
                         <div key={`${blocked.venue}-${blocked.venueMarketId ?? blocked.reason}`} className="rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2 text-[10px] font-semibold text-zinc-400">
                           {formatVenueLabel(blocked.venue)} unavailable: {readableQuoteBlocker(blocked.reason) ?? blocked.reason}
                         </div>
                       ))}
-                      {ticketSignatureBundle && (
+                      {ticketSignatureBundle && !executionOrchestratorEnabled && (
                         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[10px] font-semibold text-amber-100">
                           <div className="flex items-center justify-between gap-2">
                             <span>Wallet signature required</span>
@@ -5653,7 +5731,7 @@ export const InfraTradingTerminal = ({
                         </div>
                       )}
 
-                      {orderAction === 'preview' && ticketRouteReady && ticketQuote && (
+                      {!executionOrchestratorEnabled && orderAction === 'preview' && ticketRouteReady && ticketQuote && (
                           <div className="bg-[#0c0c0e] border border-emerald-500/20 rounded-lg p-3 animate-in slide-in-from-top-2 duration-300 space-y-3 shadow-[0_0_15px_rgba(16,185,129,0.05)]">
                               <div className="flex items-center justify-between pb-2 border-b border-zinc-800/60">
                                   <div className="flex items-center gap-1.5">
@@ -5694,45 +5772,6 @@ export const InfraTradingTerminal = ({
                                    {ticketShareImprovement && (
                                      <span className="text-zinc-300 text-[9px]">Share improvement: +{formatSignedShares(ticketShareImprovement)}</span>
                                    )}
-                                </div>
-                              )}
-                          </div>
-                      )}
-                      {executionOrchestratorEnabled && orderAction === 'preview' && ticketRouteReady && ticketOrchestratorOrder && (
-                          <div className="bg-[#0c0c0e] border border-emerald-500/20 rounded-lg p-3 animate-in slide-in-from-top-2 duration-300 space-y-3 shadow-[0_0_15px_rgba(16,185,129,0.05)]">
-                              <div className="flex items-center justify-between pb-2 border-b border-zinc-800/60">
-                                  <div className="flex items-center gap-1.5">
-                                     <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-                                     <span className="text-[10px] font-bold text-zinc-300 tracking-wide">Route preview: Live</span>
-                                  </div>
-                                  <span className="px-1.5 py-0.5 rounded text-[8px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 uppercase tracking-widest font-mono font-bold">
-                                    {ticketOrchestratorOrder.venuePreference === 'BEST_ROUTE' ? 'BEST_ROUTE' : formatVenueLabel(String(ticketOrchestratorOrder.venuePreference ?? ticketVenuePreference))}
-                                  </span>
-                              </div>
-                              <div className="flex items-center gap-1 font-mono text-[9px] overflow-x-auto custom-scrollbar pb-1">
-                                  {ticketRoutePath.map((venue, index) => (
-                                    <React.Fragment key={`${venue}-${index}`}>
-                                      {index > 0 && (
-                                        <div className="flex items-center justify-center text-zinc-600">
-                                          <ChevronRight className="w-3 h-3" />
-                                        </div>
-                                      )}
-                                      <div className="min-w-[95px] flex-1 bg-[#121214] border border-zinc-800 rounded p-1.5 text-center flex flex-col justify-center">
-                                        <div className="text-zinc-500 w-max mx-auto mb-0.5 text-[8px] tracking-wider uppercase font-sans font-bold">Leg {index + 1}</div>
-                                        <div className="flex items-center justify-center gap-1 text-emerald-400 font-bold tracking-tighter">
-                                          <VenueLogo id={normalizeVenueId(venue)} label={formatVenueLabel(venue)} className="h-3 w-3 rounded-full" />
-                                          {formatVenueLabel(venue)}
-                                        </div>
-                                        <div className="text-zinc-400 mt-1 pb-0.5 border-b border-zinc-800 border-dashed w-max mx-auto text-[10px]">
-                                          {formatProbabilityPrice(ticketEffectivePrice)}
-                                        </div>
-                                      </div>
-                                    </React.Fragment>
-                                  ))}
-                              </div>
-                              {ticketOrchestratorBlocker && (
-                                <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[10px] font-semibold text-amber-100">
-                                  {ticketOrchestratorBlocker}
                                 </div>
                               )}
                           </div>
@@ -5803,7 +5842,7 @@ export const InfraTradingTerminal = ({
                       {ticketActionLabel}
                   </button>
 
-                  <div className="grid grid-cols-2 gap-2 pt-1">
+                  {!executionOrchestratorEnabled && <div className="grid grid-cols-2 gap-2 pt-1">
                       {ticketPolymarketClobPropagationPending ? (
                         <button
                           type="button"
@@ -5821,7 +5860,7 @@ export const InfraTradingTerminal = ({
                       <button type="button" disabled className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg border text-[10px] uppercase font-bold transition-all bg-[#0c0c0e] border-zinc-800 text-zinc-500 cursor-not-allowed">
                           <Zap className="w-3 h-3" /> ROUTE CONTROLLED
                       </button>
-                  </div>
+                  </div>}
               </div>
               {false && (side === 'buy' ? (
                  <div className="p-4 flex flex-col gap-4 animate-in fade-in duration-300">
