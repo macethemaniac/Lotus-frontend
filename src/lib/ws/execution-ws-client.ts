@@ -5,7 +5,10 @@ export type ExecutionTopic =
   | `execution:quote:${string}`
   | `execution:portfolio:${string}`
   | `execution:positions:${string}:${string}:${string}`
-  | `notifications:user:${string}`;
+  | `notifications:user:${string}`
+  | MarketOrderbookTopic;
+
+export type MarketOrderbookTopic = `markets:orderbook:${string}:${string}`;
 
 export type ExecutionWsEvent = {
   type:
@@ -15,7 +18,9 @@ export type ExecutionWsEvent = {
     | "EXECUTION_PORTFOLIO_UPDATE"
     | "EXECUTION_READINESS_UPDATE"
     | "EXECUTION_BALANCE_UPDATE"
-    | "USER_NOTIFICATION";
+    | "USER_NOTIFICATION"
+    | "MARKET_ORDERBOOK_UPDATE"
+    | "MARKET_QUOTE_UPDATE";
   topic: ExecutionTopic;
   emittedAt: string;
   payload: unknown;
@@ -64,6 +69,19 @@ function isExecutionEvent(value: unknown): value is ExecutionWsEvent {
   if (!value || typeof value !== "object") return false;
   const event = value as Record<string, unknown>;
   return typeof event.type === "string" &&
-    (event.type.startsWith("EXECUTION_") || event.type === "USER_NOTIFICATION") &&
+    (event.type.startsWith("EXECUTION_") || event.type.startsWith("MARKET_") || event.type === "USER_NOTIFICATION") &&
     typeof event.topic === "string";
+}
+
+export function marketOrderbookTopic(marketId: string, outcomeId?: string | null): MarketOrderbookTopic {
+  return `markets:orderbook:${base64UrlEncode(marketId)}:${base64UrlEncode(outcomeId?.trim() || "_")}`;
+}
+
+function base64UrlEncode(value: string): string {
+  const bytes = new TextEncoder().encode(value);
+  let binary = "";
+  bytes.forEach((byte) => {
+    binary += String.fromCharCode(byte);
+  });
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }

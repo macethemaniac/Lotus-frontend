@@ -134,6 +134,37 @@ export type MarketOrderbookResponse = {
   blockers: Array<{ venue: string; reason: string; venueMarketId?: string; venueOutcomeId?: string; detailsCode?: string }>;
 };
 
+export type MarketOrderbookSnapshotStatus = "live" | "stale" | "blocked" | "resyncing";
+
+export type MarketOrderbookStreamLevel = {
+  venue?: string;
+  venueMarketId?: string;
+  venueOutcomeId?: string | null;
+  price: string | number;
+  size: string | number;
+  cumulativeSize?: string | number | null;
+  cumulativeNotional?: string | number | null;
+};
+
+export type MarketOrderbookStreamPayload = {
+  canonicalMarketId: string;
+  canonicalOutcomeId?: string | null;
+  venue: string;
+  venueMarketId?: string | null;
+  venueOutcomeId?: string | null;
+  source?: string | null;
+  quoteQuality?: string | null;
+  bestBid?: string | number | null;
+  bestAsk?: string | number | null;
+  bidSize?: string | number | null;
+  askSize?: string | number | null;
+  freshnessMs?: number | null;
+  snapshotStatus?: MarketOrderbookSnapshotStatus;
+  blockers?: unknown[];
+  bids?: MarketOrderbookStreamLevel[];
+  asks?: MarketOrderbookStreamLevel[];
+};
+
 export type MarketChartTimeframe = "1H" | "6H" | "1D" | "1W" | "1M" | "ALL";
 
 export type MarketChartResponse = {
