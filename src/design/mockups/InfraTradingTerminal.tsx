@@ -2,7 +2,7 @@ import React, { useCallback, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   AlertTriangle, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, History, Lock, ShieldAlert, ShieldCheck, Info,
-  Clock, BarChart2, Layers, Share2, Bookmark, Search, Maximize2, Activity, Zap, Ghost,
+  Clock, BarChart2, Layers, Bookmark, Search, Maximize2, Activity, Zap, Ghost,
   Home, Terminal, PieChart, Volleyball, Settings
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceDot } from 'recharts';
@@ -4795,12 +4795,6 @@ export const InfraTradingTerminal = ({
                 </div>
                 <div className="hidden 2xl:block text-zinc-300 font-medium">Jun 13, 2026</div>
                 <div className="text-white font-mono font-bold text-base">$1.5M</div>
-                
-                <div className="flex items-center gap-3 2xl:gap-4 border-l border-zinc-800 pl-3 2xl:pl-6 text-zinc-400">
-                    <Bookmark className="w-5 h-5 hover:text-white cursor-pointer transition-colors" />
-                    <Share2 className="w-5 h-5 hover:text-white cursor-pointer transition-colors" />
-                    <Info className="w-5 h-5 hover:text-white cursor-pointer transition-colors" />
-                </div>
             </div>
          </div>
          
