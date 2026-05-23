@@ -1435,11 +1435,55 @@ const textField = (value: unknown, fields: string[]): string | null => {
   return null;
 };
 
+type ExecutionOrderRouteLegSummary = {
+  venue: string;
+  price: number | null;
+  size: string | null;
+};
+
+const arrayField = (value: unknown, fields: string[]): unknown[] => {
+  const source = recordValue(value);
+  for (const field of fields) {
+    const candidate = source[field];
+    if (Array.isArray(candidate)) return candidate;
+  }
+  return [];
+};
+
+const routeLegsFromExecutionOrder = (order: ExecutionOrderResponse | null): ExecutionOrderRouteLegSummary[] => {
+  const rawLegs = arrayField(order?.routeSummary, ['legs', 'routeLegs', 'venueLegs', 'path', 'venues']);
+  const objectLegs = rawLegs
+    .map((item) => {
+      if (typeof item === 'string') {
+        return { venue: item, price: null, size: null };
+      }
+      const source = recordValue(item);
+      const venue = textField(source, ['venue', 'venueId', 'name', 'selectedVenue']);
+      if (!venue) return null;
+      return {
+        venue,
+        price: numericField(source, ['price', 'effectivePrice', 'averagePrice', 'avgPrice', 'expectedPrice']),
+        size: textField(source, ['size', 'amount', 'executableAmount', 'shares', 'quantity']),
+      };
+    })
+    .filter((item): item is ExecutionOrderRouteLegSummary => Boolean(item));
+  if (objectLegs.length > 0) return objectLegs;
+
+  const routePath = routePathFromExecutionOrder(order);
+  const price = orderEffectivePrice(order);
+  const size = orderReceiveAmount(order);
+  return routePath.map((venue) => ({ venue, price, size }));
+};
+
 const routePathFromExecutionOrder = (order: ExecutionOrderResponse | null): string[] => {
   const direct = stringArrayField(order?.routeSummary, 'venuePath');
   if (direct.length > 0) return direct;
   const venues = stringArrayField(order?.routeSummary, 'venues');
   if (venues.length > 0) return venues;
+  const legVenues = arrayField(order?.routeSummary, ['legs', 'routeLegs', 'venueLegs', 'path'])
+    .map((item) => typeof item === 'string' ? item : textField(item, ['venue', 'venueId', 'name', 'selectedVenue']))
+    .filter((item): item is string => Boolean(item));
+  if (legVenues.length > 0) return legVenues;
   const venue = textField(order?.routeSummary, ['venue', 'selectedVenue']);
   if (venue) return [venue];
   const preference = typeof order?.venuePreference === 'string' && order.venuePreference !== 'BEST_ROUTE'
@@ -1455,6 +1499,14 @@ const orderEffectivePrice = (order: ExecutionOrderResponse | null): number | nul
 const orderReceiveAmount = (order: ExecutionOrderResponse | null): string | null =>
   textField(order?.priceSummary, ['toReceive', 'toWin', 'estimatedReceive', 'estimatedPayout', 'estimatedShares', 'executableAmount']) ??
   textField(order?.routeSummary, ['toReceive', 'toWin', 'estimatedReceive', 'estimatedPayout', 'estimatedShares', 'executableAmount']);
+
+const executionOrderRouteType = (order: ExecutionOrderResponse | null): string =>
+  textField(order?.routeSummary, ['routeType', 'type', 'strategy']) ??
+  (order?.venuePreference === 'BEST_ROUTE' ? 'BEST_ROUTE' : 'SINGLE_VENUE');
+
+const executionOrderEstimatedSavings = (order: ExecutionOrderResponse | null): number | null =>
+  numericField(order?.priceSummary, ['estimatedSavings', 'savings', 'totalSavings']) ??
+  numericField(order?.routeSummary, ['estimatedSavings', 'savings', 'totalSavings']);
 
 const describeOutcomeSchema = (schema: Record<string, unknown> | null | undefined): string => {
   if (!schema) return 'Outcome schema not specified';
@@ -4113,6 +4165,9 @@ export const InfraTradingTerminal = ({
   const ticketAmountValue = ticketAmountNumber(ticketAmount);
   const ticketOrchestratorBlocker = executionOrderBlockerMessage(ticketOrchestratorOrder);
   const ticketOrchestratorState = ticketOrchestratorOrder?.state ?? null;
+  const ticketOrchestratorRouteLegs = routeLegsFromExecutionOrder(ticketOrchestratorOrder);
+  const ticketOrchestratorRouteType = executionOrderRouteType(ticketOrchestratorOrder);
+  const ticketOrchestratorEstimatedSavings = executionOrderEstimatedSavings(ticketOrchestratorOrder);
   const ticketOrchestratorDetail = ticketOrchestratorBlocker
     ?? (ticketOrchestratorState === 'WAITING_FOR_VENUE_READY'
       ? 'Lotus is checking venue readiness in the background.'
@@ -5647,6 +5702,54 @@ export const InfraTradingTerminal = ({
                               ticketOrchestratorBlocker ? 'text-amber-100' : 'text-emerald-100'
                             }`}>
                               {ticketOrchestratorDetail}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {executionOrchestratorEnabled && ticketRouteReady && ticketOrchestratorOrder && ticketOrchestratorRouteLegs.length > 0 && (
+                        <div className="rounded-lg border border-emerald-500/20 bg-[#0c0c0e] p-3 shadow-[0_0_15px_rgba(16,185,129,0.05)]">
+                          <div className="flex items-center justify-between gap-3 border-b border-zinc-800/60 pb-2">
+                            <div className="flex items-center gap-1.5">
+                              <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" aria-hidden />
+                              <span className="text-[10px] font-bold tracking-wide text-zinc-300">Route preview</span>
+                            </div>
+                            <span className="rounded border border-emerald-500/20 bg-emerald-500/10 px-1.5 py-0.5 font-mono text-[8px] font-bold uppercase tracking-widest text-emerald-400">
+                              {ticketOrchestratorRouteType}
+                            </span>
+                          </div>
+                          <div className="mt-3 flex items-center gap-1 overflow-x-auto pb-1 font-mono text-[9px] custom-scrollbar">
+                            {ticketOrchestratorRouteLegs.map((leg, index) => (
+                              <React.Fragment key={`${leg.venue}-${index}`}>
+                                {index > 0 && (
+                                  <div className="flex items-center justify-center text-zinc-600">
+                                    <ChevronRight className="h-3 w-3" aria-hidden />
+                                  </div>
+                                )}
+                                <div className="min-w-[95px] flex-1 rounded border border-zinc-800 bg-[#121214] p-1.5 text-center">
+                                  <div className="mx-auto mb-0.5 w-max font-sans text-[8px] font-bold uppercase tracking-wider text-zinc-500">
+                                    Leg {index + 1}
+                                  </div>
+                                  <div className="flex items-center justify-center gap-1 font-bold tracking-tighter text-emerald-400">
+                                    <VenueLogo id={normalizeVenueId(leg.venue)} label={formatVenueLabel(leg.venue)} className="h-3 w-3 rounded-full" />
+                                    {formatVenueLabel(leg.venue)}
+                                  </div>
+                                  <div className="mx-auto mt-1 w-max border-b border-dashed border-zinc-800 pb-0.5 text-[10px] text-zinc-300">
+                                    {formatProbabilityPrice(leg.price ?? ticketEffectivePrice)}
+                                  </div>
+                                  {leg.size && (
+                                    <div className="mt-1 text-[9px] text-zinc-500">
+                                      {formatCompactMetric(leg.size) ?? leg.size}
+                                    </div>
+                                  )}
+                                </div>
+                              </React.Fragment>
+                            ))}
+                          </div>
+                          {ticketOrchestratorEstimatedSavings !== null && (
+                            <div className="mt-2 rounded border border-[#ccff00]/20 bg-[#ccff00]/10 p-1.5 text-center">
+                              <span className="text-[10px] font-bold text-[#ccff00]">
+                                Estimated savings: {formatUsdc(ticketOrchestratorEstimatedSavings)}
+                              </span>
                             </div>
                           )}
                         </div>
