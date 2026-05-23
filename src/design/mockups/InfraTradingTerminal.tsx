@@ -6153,34 +6153,74 @@ export const InfraTradingTerminal = ({
              ))}
          </div>
 
-         <div className="bg-[#121214] border border-zinc-800 rounded-xl p-3 2xl:p-4 flex flex-col gap-3 min-h-[170px] shrink-0">
+         <div className="bg-[#121214] border border-zinc-800 rounded-xl p-3 2xl:p-4 flex flex-col gap-3 min-h-[250px] shrink-0">
              <div className="flex items-start justify-between gap-3">
                  <div>
                      <div className="flex items-center gap-2">
                          <div className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.7)]" />
                          <h3 className="text-sm font-black text-white">Open Position</h3>
                      </div>
+                     <p className="mt-1 text-[10px] text-zinc-500">Live position summary</p>
                  </div>
+                 <span className="rounded-full border border-emerald-500/25 bg-emerald-500/10 px-2 py-1 text-[9px] font-bold uppercase tracking-widest text-emerald-300">
+                     live
+                 </span>
              </div>
 
              <div className="rounded-xl border border-[#ccff00]/20 bg-[#ccff00]/[0.055] p-3">
-                 <div>
-                     <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500">Position Value</p>
-                     <div className="mt-1 font-mono text-2xl font-black text-emerald-400">{positionValueDisplay}</div>
+                 <div className="flex items-end justify-between gap-3">
+                     <div>
+                         <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500">Position Value</p>
+                         <div className="mt-1 font-mono text-2xl font-black text-emerald-400">{positionValueDisplay}</div>
+                     </div>
+                     <div className="text-right">
+                         <p className="text-[10px] font-semibold text-zinc-500">Share amount</p>
+                         <p className="mt-1 text-[10px] font-semibold text-emerald-300">{positionShareDisplay}</p>
+                         <p className="mt-1 text-[10px] font-semibold text-zinc-400">Avg entry {positionAverageEntryDisplay}</p>
+                     </div>
                  </div>
-                 <div className="mt-3 grid grid-cols-2 gap-2">
-                     <div className="rounded-lg border border-zinc-800/80 bg-zinc-950/30 px-3 py-2">
-                         <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-500">Share Amount</p>
-                         <p className="mt-1 font-mono text-sm font-black text-white">{positionShareDisplay}</p>
-                     </div>
-                     <div className="rounded-lg border border-zinc-800/80 bg-zinc-950/30 px-3 py-2">
-                         <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-zinc-500">Average Entry</p>
-                         <p className="mt-1 font-mono text-sm font-black text-white">{positionAverageEntryDisplay}</p>
-                     </div>
+                 <div className="mt-3 flex h-1.5 overflow-hidden rounded-full bg-zinc-900">
+                     {totalVerifiedSize > 0 ? (
+                       <>
+                         <div className="h-full w-1/2 bg-blue-500" />
+                         <div className="h-full w-1/4 bg-[#ccff00]" />
+                         <div className="h-full w-1/4 bg-purple-500" />
+                       </>
+                     ) : (
+                       <div className="h-full w-full bg-zinc-800" />
+                     )}
                  </div>
              </div>
 
+             <div className="space-y-2">
+                 <div className="rounded-lg border border-zinc-800 bg-[#0c0c0e] px-3 py-2">
+                     <div className="flex items-center justify-between gap-3">
+                         <div className="flex min-w-0 items-center gap-2">
+                             <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#ccff00]/15 text-[#ccff00]">
+                                 <Layers className="h-3 w-3" />
+                             </div>
+                             <div className="min-w-0">
+                                 <p className="truncate text-xs font-bold text-zinc-200">Share Amount</p>
+                             </div>
+                         </div>
+                         <p className="font-mono text-sm font-black text-emerald-400">{positionShareDisplay}</p>
+                     </div>
+                 </div>
 
+                 <div className="rounded-lg border border-zinc-800 bg-[#0c0c0e] px-3 py-2">
+                     <div className="flex items-center justify-between gap-3">
+                         <div className="flex min-w-0 items-center gap-2">
+                             <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-purple-500/15 text-purple-300">
+                                 <BarChart2 className="h-3 w-3" />
+                             </div>
+                             <div className="min-w-0">
+                                 <p className="truncate text-xs font-bold text-zinc-200">Average Entry</p>
+                             </div>
+                         </div>
+                         <p className="font-mono text-sm font-black text-white">{positionAverageEntryDisplay}</p>
+                     </div>
+                 </div>
+             </div>
          </div>
 
 
