@@ -382,6 +382,20 @@ type TerminalChartSeries = {
 
 type TerminalChartRow = Record<string, string | number | null>;
 
+type OutcomeChartInput = {
+  id: string;
+  marketId: string | null;
+  quoteOutcomeId: string;
+  label: string;
+  key: string;
+  color: string;
+  latestValue: number | null;
+};
+
+type OutcomeChartEntry = Omit<OutcomeChartInput, "latestValue"> & {
+  chart: MarketChartResponse;
+};
+
 type TerminalRiskState = {
   loading: boolean;
   error: string | null;
@@ -1819,6 +1833,11 @@ const chartPercentFromDisplayLabel = (value: string | null | undefined): number 
 const liveOutcomeChartPercent = (outcome: TerminalOutcomeRow): number | null =>
   chartPercentFromDisplayLabel(outcome.prob) ?? chartPercentFromDisplayLabel(outcome.yesPrice);
 
+const chartSeriesLabel = (item: { id: string; label: string }): string => {
+  if (item.id === "unified") return "Lotus canonical";
+  return formatVenueLabel(item.label || item.id);
+};
+
 const bucketChartTimestamp = (timestamp: string): number => {
   const parsed = Date.parse(timestamp);
   if (!Number.isFinite(parsed)) return Date.now();
@@ -1844,10 +1863,9 @@ const formatChartAxisTimeLabel = (timestamp: number, timeframe: MarketChartTimef
   return formatChartTimeLabel(new Date(timestamp).toISOString(), timeframe);
 };
 
-const formatChartAxisValue = (value: number, marketType: 'binary' | 'multi'): string => {
-  const suffix = marketType === 'multi' ? 'c' : '%';
+const formatChartAxisValue = (value: number): string => {
   const precision = Math.abs(value) >= 10 ? 0 : Math.abs(value) >= 1 ? 1 : 2;
-  return `${value.toFixed(precision)}${suffix}`;
+  return `${value.toFixed(precision)}%`;
 };
 
 const buildChartTicks = (max: number): number[] => {
@@ -1897,7 +1915,7 @@ const toVenueChartModel = (
   if (!chart) return { rows: [], series: [], historyStatus: null };
   const series = chart.series.map((item) => ({
     id: item.id,
-    label: item.label,
+    label: chartSeriesLabel(item),
     color: item.color,
     emphasis: item.id === "unified",
     dashed: item.id !== "unified"
@@ -1912,7 +1930,8 @@ const toVenueChartModel = (
 };
 
 const toOutcomeChartModel = (
-  charts: Array<{ chart: MarketChartResponse; key: string; label: string; color: string; latestValue: number | null }>,
+  charts: OutcomeChartEntry[],
+  latestValuesByKey: Map<string, number | null>,
   timeframe: MarketChartTimeframe
 ): { rows: TerminalChartRow[]; series: TerminalChartSeries[]; historyStatus: MarketChartResponse["historyStatus"] | null } => {
   const rowsByBucket = new Map<number, TerminalChartRow>();
@@ -1936,7 +1955,9 @@ const toOutcomeChartModel = (
     }
   }
 
-  const liveEntries = charts.filter((entry) => typeof entry.latestValue === 'number' && Number.isFinite(entry.latestValue));
+  const liveEntries = charts
+    .map((entry) => ({ ...entry, latestValue: latestValuesByKey.get(entry.key) ?? null }))
+    .filter((entry) => typeof entry.latestValue === 'number' && Number.isFinite(entry.latestValue));
   if (liveEntries.length > 0) {
     const now = new Date();
     const bucket = bucketChartTimestamp(now.toISOString());
@@ -1945,7 +1966,7 @@ const toOutcomeChartModel = (
       timestamp: bucket
     };
     for (const entry of liveEntries) {
-      liveRow[entry.key] = entry.latestValue;
+      liveRow[entry.key] = entry.latestValue as number;
     }
     rowsByBucket.set(bucket, liveRow);
   }
@@ -1974,7 +1995,7 @@ const LiveCanonicalChart = ({
 }) => {
   const [activeTab, setActiveTab] = useState<MarketChartTimeframe>('ALL');
   const [venueChart, setVenueChart] = useState<MarketChartResponse | null>(null);
-  const [outcomeCharts, setOutcomeCharts] = useState<Array<{ chart: MarketChartResponse; key: string; label: string; color: string; latestValue: number | null }>>([]);
+  const [outcomeCharts, setOutcomeCharts] = useState<OutcomeChartEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notFoundKey, setNotFoundKey] = useState<string | null>(null);
@@ -1988,24 +2009,29 @@ const LiveCanonicalChart = ({
           { id: 'YES', marketId, quoteOutcomeId: 'YES', name: 'Yes' } as TerminalOutcomeRow,
           { id: 'NO', marketId, quoteOutcomeId: 'NO', name: 'No' } as TerminalOutcomeRow
         ];
-    return source.slice(0, 5).map((outcome, index) => {
+    return source.slice(0, 5).map((outcome, index): OutcomeChartInput => {
       const chartMarketId = outcome.marketId ?? marketId;
+      const quoteOutcomeId = outcome.quoteOutcomeId || canonicalQuoteOutcomeId(outcome.name || outcome.id);
       return {
         id: outcome.id,
         marketId: chartMarketId,
-        quoteOutcomeId: outcome.quoteOutcomeId,
+        quoteOutcomeId,
         label: outcome.name,
-        key: normalizeChartKey('outcome', `${chartMarketId ?? 'market'}_${outcome.id}`),
+        key: normalizeChartKey('outcome', `${chartMarketId ?? 'market'}_${quoteOutcomeId}_${outcome.id}_${outcome.name}`),
         color: OUTCOME_CHART_COLORS[index % OUTCOME_CHART_COLORS.length]!,
         latestValue: liveOutcomeChartPercent(outcome),
       };
     });
   }, [marketId, marketType, outcomes]);
+  const liveOutcomeValuesByKey = useMemo(
+    () => new Map(binaryOutcomeInputs.map((outcome) => [outcome.key, outcome.latestValue])),
+    [binaryOutcomeInputs]
+  );
   const chartModel = useMemo(
     () => marketType === 'binary'
-      ? toOutcomeChartModel(outcomeCharts, activeTab)
+      ? toOutcomeChartModel(outcomeCharts, liveOutcomeValuesByKey, activeTab)
       : toVenueChartModel(venueChart, activeTab),
-    [activeTab, marketType, outcomeCharts, venueChart]
+    [activeTab, liveOutcomeValuesByKey, marketType, outcomeCharts, venueChart]
   );
   const { rows, series, historyStatus } = chartModel;
   const yAxis = useMemo(() => buildChartYAxis(rows, series), [rows, series]);
@@ -2024,11 +2050,24 @@ const LiveCanonicalChart = ({
       setError(null);
       try {
         if (marketType === 'binary') {
+          const uniqueInputs = Array.from(new Map(
+            binaryOutcomeInputs
+              .filter((outcome) => outcome.marketId)
+              .map((outcome) => [outcome.key, outcome])
+          ).values());
           const results = await Promise.allSettled(
-            binaryOutcomeInputs.filter((outcome) => outcome.marketId).map(async (outcome) => ({
-              ...outcome,
-              chart: await getMarketChart(outcome.marketId!, { outcomeId: outcome.quoteOutcomeId, timeframe: activeTab })
-            }))
+            uniqueInputs.map(async (outcome): Promise<OutcomeChartEntry> => {
+              const chart = await getMarketChart(outcome.marketId!, { outcomeId: outcome.quoteOutcomeId, timeframe: activeTab });
+              return {
+                id: outcome.id,
+                marketId: outcome.marketId,
+                quoteOutcomeId: outcome.quoteOutcomeId,
+                label: outcome.label,
+                key: outcome.key,
+                color: outcome.color,
+                chart,
+              };
+            })
           );
           const fulfilled = results.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
           if (!cancelled) {
@@ -2088,7 +2127,7 @@ const LiveCanonicalChart = ({
           {[...payload].filter((entry: any) => typeof entry.value === 'number').sort((a: any, b: any) => b.value - a.value).map((entry: any) => (
             <div key={entry.dataKey} className="flex items-center gap-1.5 text-[13px] font-medium">
               <div className="w-2 h-2 rounded-full" style={{ backgroundColor: entry.color }} />
-              <span className="font-bold text-white">{Number(entry.value).toFixed(Number(entry.value) >= 10 ? 1 : 2)}{marketType === 'multi' ? 'c' : '%'}</span>
+              <span className="font-bold text-white">{Number(entry.value).toFixed(Number(entry.value) >= 10 ? 1 : 2)}%</span>
               <span className="text-white ml-0.5">{entry.name}</span>
             </div>
           ))}
@@ -2131,7 +2170,7 @@ const LiveCanonicalChart = ({
             <div key={item.id} className="flex items-center gap-1.5">
               <div className="w-2 h-2 rounded-full" style={{ backgroundColor: item.color }} />
               <span className="text-white font-bold">
-                {item.label} {value === null ? 'pending' : `${value.toFixed(value >= 10 ? 1 : 2)}${marketType === 'multi' ? 'c' : '%'}`}
+                {item.label} {value === null ? 'pending' : `${value.toFixed(value >= 10 ? 1 : 2)}%`}
               </span>
             </div>
           );
@@ -2177,7 +2216,7 @@ const LiveCanonicalChart = ({
               tick={{ fill: '#71717A', fontSize: 11 }}
               width={42}
               dx={8}
-              tickFormatter={(value) => formatChartAxisValue(Number(value), marketType)}
+              tickFormatter={(value) => formatChartAxisValue(Number(value))}
               ticks={yAxis.ticks}
               domain={yAxis.domain}
             />
