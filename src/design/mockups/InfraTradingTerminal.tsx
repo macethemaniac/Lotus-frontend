@@ -4010,6 +4010,14 @@ export const InfraTradingTerminal = ({
       if (!options.quiet) setTicketError(side === 'buy' ? 'Enter a USDC amount.' : 'Enter shares to sell.');
       return null;
     }
+    const backendAmountValue = side === 'buy'
+      ? estimateShares(trimmedAmount, ticketPriceForSide(selectedTicketOutcome, ticketOutcomeSide))
+      : amountValue;
+    if (!backendAmountValue) {
+      if (!options.quiet) setTicketError(side === 'buy' ? 'Enter a USDC amount after a live outcome price is available.' : 'Enter shares to sell.');
+      return null;
+    }
+    const backendAmount = formatRouteAmount(backendAmountValue);
     const previewSeq = ++orchestratorPreviewSeqRef.current;
     if (!options.quiet) setTicketLoading(true);
     setTicketOrchestratorAutoRenewFailed(false);
@@ -4018,7 +4026,7 @@ export const InfraTradingTerminal = ({
         marketId: selectedTicketMarketId,
         outcomeId: selectedTicketQuoteOutcomeId,
         side,
-        amount: trimmedAmount,
+        amount: backendAmount,
         venuePreference: ticketVenuePreference,
       });
       if (previewSeq !== orchestratorPreviewSeqRef.current) return null;
@@ -4050,8 +4058,10 @@ export const InfraTradingTerminal = ({
     executionOrchestratorEnabled,
     selectedTicketMarketId,
     selectedTicketQuoteOutcomeId,
+    selectedTicketOutcome,
     side,
     ticketAmount,
+    ticketOutcomeSide,
     ticketVenuePreference,
     token,
   ]);
