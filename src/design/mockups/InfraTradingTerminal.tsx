@@ -1807,6 +1807,18 @@ const OUTCOME_CHART_COLORS = ["#22C55E", "#EF4444", "#3B82F6", "#F59E0B", "#8B5C
 const normalizeChartKey = (prefix: string, value: string): string =>
   `${prefix}_${value.replace(/[^a-zA-Z0-9_]/g, "_")}`;
 
+const chartPercentFromDisplayLabel = (value: string | null | undefined): number | null => {
+  if (!value || value === 'Quote') return null;
+  const cleaned = value.replace(/[^0-9.-]/g, '');
+  const parsed = Number(cleaned);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  const isAlreadyPercentScale = /[%c]/i.test(value) || value.includes('\u00A2') || value.includes('\u00C2');
+  return isAlreadyPercentScale ? parsed : parsed <= 1 ? parsed * 100 : parsed;
+};
+
+const liveOutcomeChartPercent = (outcome: TerminalOutcomeRow): number | null =>
+  chartPercentFromDisplayLabel(outcome.prob) ?? chartPercentFromDisplayLabel(outcome.yesPrice);
+
 const bucketChartTimestamp = (timestamp: string): number => {
   const parsed = Date.parse(timestamp);
   if (!Number.isFinite(parsed)) return Date.now();
@@ -1900,7 +1912,7 @@ const toVenueChartModel = (
 };
 
 const toOutcomeChartModel = (
-  charts: Array<{ chart: MarketChartResponse; key: string; label: string; color: string }>,
+  charts: Array<{ chart: MarketChartResponse; key: string; label: string; color: string; latestValue: number | null }>,
   timeframe: MarketChartTimeframe
 ): { rows: TerminalChartRow[]; series: TerminalChartSeries[]; historyStatus: MarketChartResponse["historyStatus"] | null } => {
   const rowsByBucket = new Map<number, TerminalChartRow>();
@@ -1922,6 +1934,20 @@ const toOutcomeChartModel = (
       existing[entry.key] = value;
       rowsByBucket.set(bucket, existing);
     }
+  }
+
+  const liveEntries = charts.filter((entry) => typeof entry.latestValue === 'number' && Number.isFinite(entry.latestValue));
+  if (liveEntries.length > 0) {
+    const now = new Date();
+    const bucket = bucketChartTimestamp(now.toISOString());
+    const liveRow = rowsByBucket.get(bucket) ?? {
+      label: formatChartTimeLabel(now.toISOString(), timeframe),
+      timestamp: bucket
+    };
+    for (const entry of liveEntries) {
+      liveRow[entry.key] = entry.latestValue;
+    }
+    rowsByBucket.set(bucket, liveRow);
   }
 
   const rows = [...rowsByBucket.values()].sort((left, right) => Number(left.timestamp ?? 0) - Number(right.timestamp ?? 0));
@@ -1948,7 +1974,7 @@ const LiveCanonicalChart = ({
 }) => {
   const [activeTab, setActiveTab] = useState<MarketChartTimeframe>('ALL');
   const [venueChart, setVenueChart] = useState<MarketChartResponse | null>(null);
-  const [outcomeCharts, setOutcomeCharts] = useState<Array<{ chart: MarketChartResponse; key: string; label: string; color: string }>>([]);
+  const [outcomeCharts, setOutcomeCharts] = useState<Array<{ chart: MarketChartResponse; key: string; label: string; color: string; latestValue: number | null }>>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notFoundKey, setNotFoundKey] = useState<string | null>(null);
@@ -1962,14 +1988,19 @@ const LiveCanonicalChart = ({
           { id: 'YES', marketId, quoteOutcomeId: 'YES', name: 'Yes' } as TerminalOutcomeRow,
           { id: 'NO', marketId, quoteOutcomeId: 'NO', name: 'No' } as TerminalOutcomeRow
         ];
-    return source.slice(0, 5).map((outcome, index) => ({
-      id: outcome.id,
-      quoteOutcomeId: outcome.quoteOutcomeId,
-      label: outcome.name,
-      key: normalizeChartKey('outcome', outcome.id),
-      color: OUTCOME_CHART_COLORS[index % OUTCOME_CHART_COLORS.length]!
-    }));
-  }, [marketType, outcomes]);
+    return source.slice(0, 5).map((outcome, index) => {
+      const chartMarketId = outcome.marketId ?? marketId;
+      return {
+        id: outcome.id,
+        marketId: chartMarketId,
+        quoteOutcomeId: outcome.quoteOutcomeId,
+        label: outcome.name,
+        key: normalizeChartKey('outcome', `${chartMarketId ?? 'market'}_${outcome.id}`),
+        color: OUTCOME_CHART_COLORS[index % OUTCOME_CHART_COLORS.length]!,
+        latestValue: liveOutcomeChartPercent(outcome),
+      };
+    });
+  }, [marketId, marketType, outcomes]);
   const chartModel = useMemo(
     () => marketType === 'binary'
       ? toOutcomeChartModel(outcomeCharts, activeTab)
@@ -1994,9 +2025,9 @@ const LiveCanonicalChart = ({
       try {
         if (marketType === 'binary') {
           const results = await Promise.allSettled(
-            binaryOutcomeInputs.map(async (outcome) => ({
+            binaryOutcomeInputs.filter((outcome) => outcome.marketId).map(async (outcome) => ({
               ...outcome,
-              chart: await getMarketChart(marketId, { outcomeId: outcome.quoteOutcomeId, timeframe: activeTab })
+              chart: await getMarketChart(outcome.marketId!, { outcomeId: outcome.quoteOutcomeId, timeframe: activeTab })
             }))
           );
           const fulfilled = results.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
