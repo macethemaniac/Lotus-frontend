@@ -1777,19 +1777,6 @@ export const DashboardV2Mockup = ({
               >
                 All
               </button>
-              <button
-                type="button"
-                onClick={() => setMarketFilter('live_crypto')}
-                className={`relative flex h-10 items-center gap-2 rounded-full border px-4 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00] ${marketFilter === 'live_crypto' ? 'border-[#ccff00]/65 bg-[#ccff00]/15 text-[#ccff00]' : 'border-[#ccff00]/45 bg-[#ccff00]/10 text-[#ccff00] hover:bg-[#ccff00]/15'}`}
-              >
-                <Radio className="h-4 w-4" /> Live Crypto
-              </button>
-              <button type="button" onClick={() => setMarketFilter('trending')} className={filterButtonClass(marketFilter === 'trending', 'hot')}>
-                <Flame className="w-4 h-4 text-orange-500" /> Trending
-              </button>
-              <button type="button" onClick={() => setMarketFilter('best_routes')} className={filterButtonClass(marketFilter === 'best_routes', 'lotus')}>
-                <ArrowRightLeft className="w-4 h-4 text-[#99cc00]" /> Best Routes
-              </button>
               <button type="button" onClick={() => setMarketFilter('sports')} className={filterButtonClass(marketFilter === 'sports')}>
                 <Trophy className="w-4 h-4 text-zinc-400 dark:text-zinc-500" /> Sports
               </button>
@@ -2617,7 +2604,7 @@ const MarketMediaThumb = ({
 };
 
 const MarketCardSkeleton = () => (
-  <div className="min-h-[260px] rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-[#121214]">
+  <div className="min-h-[452px] rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-[#121214]">
     <div className="flex gap-3">
       <div className="h-10 w-10 rounded-xl bg-zinc-100 dark:bg-zinc-800 animate-pulse" />
       <div className="flex-1 space-y-2">
@@ -2626,8 +2613,8 @@ const MarketCardSkeleton = () => (
       </div>
     </div>
     <div className="mt-5 h-8 rounded-lg bg-zinc-100 dark:bg-zinc-800 animate-pulse" />
-    <div className="mt-5 space-y-3">
-      {[0, 1, 2].map((item) => (
+    <div className="mt-5 space-y-2">
+      {[0, 1, 2, 3, 4].map((item) => (
         <div key={item} className="h-4 rounded bg-zinc-100 dark:bg-zinc-800 animate-pulse" />
       ))}
     </div>
@@ -3034,30 +3021,35 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
         ? 'Route'
         : 'Fallback';
   const terminalPayload = { id, marketId, eventId, canonicalEventId, title, category, icon, volume, venueCount, routeType, venues, venueMarkets, marketType, outcomes, imageUrl, iconUrl, priceLabel, priceVenue, changeLabel };
+  const outcomeRailOverflowClass = outcomesExpanded ? 'overflow-x-hidden overflow-y-auto custom-scrollbar' : 'overflow-hidden';
 
   return (
-    <div className="bg-white dark:bg-[#121214] border border-zinc-200 dark:border-zinc-800 rounded-2xl p-4 flex min-h-[260px] flex-col justify-between gap-3 shadow-sm hover:border-zinc-300 dark:hover:border-zinc-700 hover:shadow-md transition-all group">
+    <div className="flex h-full min-h-[452px] flex-col rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm transition-all hover:border-zinc-300 hover:shadow-md dark:border-zinc-800 dark:bg-[#121214] dark:hover:border-zinc-700 group">
       
       {/* Header */}
-      <div className="flex justify-between items-start">
+      <div className="grid h-[112px] shrink-0 grid-cols-[minmax(0,1fr)_76px] items-start gap-3 overflow-hidden">
         <button
           type="button"
           onClick={() => onOpenTerminal?.(terminalPayload)}
-          className="flex min-w-0 flex-1 gap-3 items-start rounded-xl text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-[#121214]"
+          className="flex h-full min-w-0 gap-3 rounded-xl text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-[#121214]"
           aria-label={`Open ${title} in terminal`}
         >
           <MarketMediaThumb title={title} icon={icon} imageUrl={imageUrl} iconUrl={iconUrl} className="h-10 w-10 text-xl shadow-sm" />
           <span className="flex-1 min-w-0">
-            <span className="block text-sm font-bold text-zinc-900 dark:text-zinc-100 leading-tight mb-1 line-clamp-2 pr-2 transition-colors group-hover:text-[#5c7300] dark:group-hover:text-[#ccff00]">{title}</span>
-            <span className="mb-2.5 flex flex-wrap items-center gap-1.5 text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
-              <span>{category}</span>
+            <span className="mb-1 block h-[34px] pr-2 text-sm font-bold leading-tight text-zinc-900 line-clamp-2 transition-colors group-hover:text-[#5c7300] dark:text-zinc-100 dark:group-hover:text-[#ccff00]">{title}</span>
+            <span className="flex h-4 min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
+              <span className="truncate">{category}</span>
               <span>-</span>
-              <span>{venueCount} venues scanned</span>
-              {statusBadge && (
+              <span className="shrink-0">{venueCount} venues scanned</span>
+            </span>
+            <span className="mt-1 flex h-5 items-center">
+              {statusBadge ? (
                 <span className={`rounded-full border px-1.5 py-0.5 text-[10px] font-bold ${statusBadge.className}`}>{statusBadge.label}</span>
+              ) : (
+                <span className="rounded-full border border-transparent px-1.5 py-0.5 text-[10px] font-bold opacity-0">Ready</span>
               )}
             </span>
-            <span className="flex gap-1.5 mb-3">
+            <span className="mt-1 flex h-5 gap-1.5 overflow-hidden">
               {allVenues.map(v => {
                 const isActive = activeBadgeIds.has(v.id);
                 return (
@@ -3074,7 +3066,7 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
             </span>
           </span>
         </button>
-        <div className="text-right shrink-0 ml-2">
+        <div className="h-full w-[76px] shrink-0 text-right">
           <button
             type="button"
             onClick={() => onToggleWatch?.(id)}
@@ -3091,7 +3083,7 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
             )}
             <span className="text-base font-mono font-bold text-zinc-900 dark:text-zinc-100 leading-none">{displayPrice}</span>
           </div>
-          <div className="text-[10px] font-bold text-zinc-500 dark:text-zinc-400">{displayChange}</div>
+          <div className="line-clamp-2 text-[10px] font-bold leading-tight text-zinc-500 dark:text-zinc-400">{displayChange}</div>
         </div>
         <div className="hidden">
           <div className="text-base font-mono font-bold text-zinc-900 dark:text-zinc-100 leading-none mb-1">{prob}¢</div>
@@ -3102,22 +3094,25 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
       </div>
 
       {/* Lotus Route Strip */}
-      {routeType && (
-        <div className="flex items-center justify-between px-3 py-1.5 bg-[#ccff00]/5 border border-[#ccff00]/20 rounded-lg text-[10px] font-medium">
-          <div className="flex items-center gap-3">
-             <span className="text-zinc-700 dark:text-zinc-300"><span className="text-zinc-500 dark:text-zinc-400">Route:</span> {routeType}</span>
-             <span className="text-zinc-700 dark:text-zinc-300"><span className="text-zinc-500 dark:text-zinc-400">Savings:</span> <span className="text-[#99cc00] font-bold">{savings}</span></span>
-             {spread && <span className="text-zinc-700 dark:text-zinc-300"><span className="text-zinc-500 dark:text-zinc-400">Spread:</span> {spread}</span>}
+      <div className="mt-2 h-[31px] shrink-0">
+        {routeType ? (
+          <div className="grid h-full grid-cols-[minmax(0,1fr)_auto] items-center gap-2 overflow-hidden rounded-lg border border-[#ccff00]/20 bg-[#ccff00]/5 px-3 py-1.5 text-[10px] font-medium">
+            <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+              <span className="text-zinc-700 dark:text-zinc-300"><span className="text-zinc-500 dark:text-zinc-400">Route:</span> {routeType}</span>
+              <span className="text-zinc-700 dark:text-zinc-300"><span className="text-zinc-500 dark:text-zinc-400">Savings:</span> <span className="text-[#99cc00] font-bold">{savings}</span></span>
+              {spread && <span className="text-zinc-700 dark:text-zinc-300"><span className="text-zinc-500 dark:text-zinc-400">Spread:</span> {spread}</span>}
+            </div>
+            <span className="whitespace-nowrap text-zinc-700 dark:text-zinc-300"><span className="text-zinc-500 dark:text-zinc-400">{routeVenueCaption}:</span> {fallbackText}</span>
           </div>
-          <span className="text-zinc-700 dark:text-zinc-300"><span className="text-zinc-500 dark:text-zinc-400">{routeVenueCaption}:</span> {fallbackText}</span>
-        </div>
-      )}
+        ) : null}
+      </div>
 
-      <div className="h-px w-full bg-zinc-100 dark:bg-zinc-800/60 my-0.5"></div>
+      <div className="my-3 h-px w-full shrink-0 bg-zinc-100 dark:bg-zinc-800/60"></div>
 
       {/* Outcomes */}
-      {outcomes && outcomes.length > 0 && (
-        <div className="flex flex-col gap-2 mt-1">
+      <div className={`flex h-[176px] shrink-0 flex-col gap-1.5 pr-1 ${outcomeRailOverflowClass}`}>
+        {outcomes && outcomes.length > 0 && (
+          <>
           {visibleOutcomes.map((outcome: any, idx: number) => {
             const outcomePayload = {
               ...terminalPayload,
@@ -3137,7 +3132,7 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
               initialOutcomeId: outcome.id,
             };
             return (
-              <div key={outcome.id ?? idx} className="flex items-center justify-between text-sm">
+              <div key={outcome.id ?? idx} className="flex h-6 shrink-0 items-center justify-between text-sm">
                 <span className="font-semibold text-zinc-600 dark:text-zinc-400 truncate pr-2 flex-1 text-xs">{outcome.name}</span>
                 <div className="flex items-center gap-3 shrink-0">
                   <span className="font-mono font-bold text-zinc-900 dark:text-zinc-100 w-12 text-right text-xs">{outcome.prob}{/^\d+(\.\d+)?$/.test(String(outcome.prob)) ? '%' : ''}</span>
@@ -3149,7 +3144,7 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
               </div>
             );
           })}
-          
+
           {(outcomes?.length ?? 0) > 5 && (
             <button
               type="button"
@@ -3160,11 +3155,12 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
               <ChevronDown className={`w-3.5 h-3.5 transition-transform ${outcomesExpanded ? 'rotate-180' : ''}`} />
             </button>
           )}
-        </div>
-      )}
+          </>
+        )}
+      </div>
 
       {/* Footer / Buy Sell Txns */}
-      <div className="pt-2 flex flex-col gap-2">
+      <div className="mt-auto flex flex-col gap-2 pt-2">
         <div className="flex items-center gap-3 text-[11px] font-medium text-zinc-500 dark:text-zinc-400 pb-1">
           <span>{volumeLabel} <span className="text-zinc-700 dark:text-zinc-300 font-mono">{volume}</span></span>
         </div>

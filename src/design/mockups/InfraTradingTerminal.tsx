@@ -2240,6 +2240,7 @@ export const InfraTradingTerminal = ({
   const [ticketOrchestratorOrder, setTicketOrchestratorOrder] = useState<ExecutionOrderResponse | null>(null);
   const [ticketOrchestratorAmount, setTicketOrchestratorAmount] = useState<string | null>(null);
   const [ticketOrchestratorAutoRenewFailed, setTicketOrchestratorAutoRenewFailed] = useState(false);
+  const [ticketConfirmArmed, setTicketConfirmArmed] = useState(false);
   const [ticketPolymarketClobSyncConfirmed, setTicketPolymarketClobSyncConfirmed] = useState(false);
   const [ticketStatusMessage, setTicketStatusMessage] = useState<string | null>(null);
   const [ticketLoading, setTicketLoading] = useState(false);
@@ -4495,6 +4496,17 @@ export const InfraTradingTerminal = ({
     : ticketQuote
       ? side === 'buy' ? 'Place market order' : 'Place sell order'
       : 'Preview market order';
+  const ticketActionNeedsConfirmation = !ticketActionDisabled && (
+    executionOrchestratorEnabled
+      ? ticketOrchestratorState === 'READY_TO_PLACE' && Boolean(ticketOrchestratorOrder?.orderId)
+      : Boolean(
+        (ticketSignatureBundle && ticketExecutionId) ||
+        (ticketQuote && !ticketExecutionId && !ticketRequiresSignature && !ticketNeedsFundingAction && !ticketLiveReadinessBlocked)
+      )
+  );
+  const ticketActionDisplayLabel = ticketActionNeedsConfirmation && ticketConfirmArmed
+    ? 'Press to confirm'
+    : ticketActionLabel;
   const ticketRouteReady = executionOrchestratorEnabled
     ? Boolean(ticketOrchestratorOrder && ticketRoutePath.length > 0)
     : Boolean(ticketQuote && ticketRoutePath.length > 0);
@@ -4517,6 +4529,26 @@ export const InfraTradingTerminal = ({
     ticketPolymarketClobSyncRequired,
     token,
   ]);
+
+  React.useEffect(() => {
+    setTicketConfirmArmed(false);
+  }, [
+    selectedTicketMarketId,
+    selectedTicketQuoteOutcomeId,
+    side,
+    ticketAmount,
+    ticketOutcomeSide,
+    ticketOrchestratorOrder?.orderId,
+    ticketQuote?.quoteId,
+    ticketSignatureBundle?.quoteId,
+    ticketVenuePreference,
+  ]);
+
+  React.useEffect(() => {
+    if (!ticketConfirmArmed) return undefined;
+    const timeoutId = window.setTimeout(() => setTicketConfirmArmed(false), 8_000);
+    return () => window.clearTimeout(timeoutId);
+  }, [ticketConfirmArmed]);
 
   React.useEffect(() => {
     if (executionOrchestratorEnabled || !token || !ticketPolymarketClobPropagationPending || ticketLoading || ticketActivationPolling) return;
@@ -4599,9 +4631,11 @@ export const InfraTradingTerminal = ({
     : executionOrchestratorEnabled && ticketOrchestratorReceiveText
       ? `${ticketOrchestratorReceiveText} USDC`
       : formatTradeUsdc(ticketReceiveEstimate);
-  const ticketPrimaryButtonClass = side === 'buy'
-    ? 'bg-[#ccff00] hover:bg-[#b0dc00] text-black shadow-[0_0_15px_rgba(204,255,0,0.15)]'
-    : 'bg-[#E52B50] hover:bg-[#ff3366] text-white shadow-[0_0_15px_rgba(229,43,80,0.15)]';
+  const ticketPrimaryButtonClass = ticketActionNeedsConfirmation && ticketConfirmArmed
+    ? 'bg-amber-400 hover:bg-amber-300 text-black shadow-[0_0_15px_rgba(251,191,36,0.18)]'
+    : side === 'buy'
+      ? 'bg-[#ccff00] hover:bg-[#b0dc00] text-black shadow-[0_0_15px_rgba(204,255,0,0.15)]'
+      : 'bg-[#E52B50] hover:bg-[#ff3366] text-white shadow-[0_0_15px_rgba(229,43,80,0.15)]';
   const ticketPrimaryDisabledClass = ticketActionDisabled ? 'opacity-50 cursor-not-allowed hover:bg-zinc-700' : '';
 
   return (
@@ -5936,6 +5970,11 @@ export const InfraTradingTerminal = ({
                   <button
                     type="button"
                     onClick={() => {
+                      if (ticketActionNeedsConfirmation && !ticketConfirmArmed) {
+                        setTicketConfirmArmed(true);
+                        return;
+                      }
+                      setTicketConfirmArmed(false);
                       if (executionOrchestratorEnabled) {
                         void placeOrchestratorOrder();
                       } else if (ticketActivationRequired) {
@@ -5971,7 +6010,7 @@ export const InfraTradingTerminal = ({
                     disabled={ticketActionDisabled}
                     className={`w-full font-bold py-3.5 rounded-lg text-sm transition-colors mt-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 focus-visible:ring-offset-2 focus-visible:ring-offset-[#09090b] ${ticketPrimaryButtonClass} ${ticketPrimaryDisabledClass}`}
                   >
-                      {ticketActionLabel}
+                      {ticketActionDisplayLabel}
                   </button>
 
                   {!executionOrchestratorEnabled && <div className="grid grid-cols-2 gap-2 pt-1">
