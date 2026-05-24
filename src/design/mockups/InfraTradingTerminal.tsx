@@ -403,6 +403,10 @@ type ResolutionRuleFallback = {
   venueTitle: string;
   marketClass: string;
   outcomes: string;
+  resolutionRulesText: string | null;
+  resolutionSource: string | null;
+  resolutionTitle: string | null;
+  sourceUrl: string | null;
   expiresAt: string | null;
   resolvesAt: string | null;
 };
@@ -1569,6 +1573,10 @@ const catalogRuleFallbacks = (venueMarkets: readonly MarketCatalogVenueMarket[])
       venueTitle: venueMarket.venueTitle || venueMarket.canonicalMarketTitle || "Venue market",
       marketClass: venueMarket.marketClass || "Market",
       outcomes: describeCatalogOutcomes(venueMarket.outcomes),
+      resolutionRulesText: venueMarket.resolutionRulesText?.trim() || null,
+      resolutionSource: venueMarket.resolutionSource?.trim() || null,
+      resolutionTitle: venueMarket.resolutionTitle?.trim() || null,
+      sourceUrl: venueMarket.sourceUrl?.trim() || null,
       expiresAt: venueMarket.expiresAt,
       resolvesAt: venueMarket.resolvesAt,
     }));
@@ -2460,6 +2468,10 @@ export const InfraTradingTerminal = ({
   const resolutionRuleFallbacks = useMemo(
     () => catalogRuleFallbacks(selectedVenueMarkets),
     [selectedVenueMarkets]
+  );
+  const catalogRuleTextCount = useMemo(
+    () => resolutionRuleFallbacks.filter((rule) => Boolean(rule.resolutionRulesText)).length,
+    [resolutionRuleFallbacks]
   );
   const token = session?.userJwt ?? null;
 
@@ -5461,13 +5473,19 @@ export const InfraTradingTerminal = ({
                                                     ))
                                                 ) : resolutionRuleFallbacks.length > 0 ? (
                                                     <div className="space-y-4 max-w-3xl">
-                                                        <div className="rounded-xl border border-amber-500/25 bg-amber-500/10 p-4">
+                                                        <div className={`rounded-xl border p-4 ${catalogRuleTextCount > 0 ? 'border-emerald-500/25 bg-emerald-500/10' : 'border-amber-500/25 bg-amber-500/10'}`}>
                                                             <div className="flex items-start gap-3">
-                                                                <Info className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
+                                                                {catalogRuleTextCount > 0
+                                                                    ? <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-300" />
+                                                                    : <Info className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />}
                                                                 <div>
-                                                                    <div className="text-sm font-bold text-amber-100">Backend rule profile pending</div>
-                                                                    <p className="mt-1 text-xs leading-relaxed text-amber-100/75">
-                                                                        Lotus has catalog metadata for these venue markets, but the backend has not returned full resolution rule text yet. Treat this as context only, not a pooling approval.
+                                                                    <div className={`text-sm font-bold ${catalogRuleTextCount > 0 ? 'text-emerald-100' : 'text-amber-100'}`}>
+                                                                        {catalogRuleTextCount > 0 ? 'Catalog resolution rules loaded' : 'Backend rule profile pending'}
+                                                                    </div>
+                                                                    <p className={`mt-1 text-xs leading-relaxed ${catalogRuleTextCount > 0 ? 'text-emerald-100/75' : 'text-amber-100/75'}`}>
+                                                                        {catalogRuleTextCount > 0
+                                                                            ? 'Lotus is showing the resolution rules ingested with the market catalog. Backend risk profiles may add richer source metadata when available.'
+                                                                            : 'Lotus has catalog metadata for these venue markets, but no rule text has been returned yet. Treat this as context only, not a pooling approval.'}
                                                                     </p>
                                                                 </div>
                                                             </div>
@@ -5487,9 +5505,37 @@ export const InfraTradingTerminal = ({
                                                                     </div>
                                                                 </div>
                                                                 <div className="grid gap-3 text-xs text-zinc-400 md:grid-cols-2">
+                                                                    <div className="rounded-lg border border-zinc-800 bg-[#0c0c0e] p-3 md:col-span-2">
+                                                                        <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500">Resolution rule text</div>
+                                                                        <div className="mt-2 leading-relaxed text-zinc-200">
+                                                                            {rule.resolutionRulesText
+                                                                                ? renderLinkedText(rule.resolutionRulesText)
+                                                                                : <p className="text-zinc-500">Catalog has not returned explicit rule text for this venue market.</p>}
+                                                                        </div>
+                                                                    </div>
                                                                     <div className="rounded-lg border border-zinc-800 bg-[#0c0c0e] p-3">
                                                                         <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500">Outcome schema</div>
                                                                         <div className="mt-2 font-medium text-zinc-200">{rule.outcomes}</div>
+                                                                    </div>
+                                                                    <div className="rounded-lg border border-zinc-800 bg-[#0c0c0e] p-3">
+                                                                        <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500">Resolution source</div>
+                                                                        <div className="mt-2 space-y-1">
+                                                                            <div><span className="text-zinc-500">Source:</span> {rule.resolutionSource ?? formatVenueLabel(rule.venue)}</div>
+                                                                            <div><span className="text-zinc-500">Title:</span> {rule.resolutionTitle ?? rule.venueTitle}</div>
+                                                                            {rule.sourceUrl && (
+                                                                                <div>
+                                                                                    <span className="text-zinc-500">Link:</span>{' '}
+                                                                                    <a
+                                                                                        href={rule.sourceUrl}
+                                                                                        target="_blank"
+                                                                                        rel="noreferrer"
+                                                                                        className="font-semibold text-sky-300 underline decoration-sky-300/40 underline-offset-2 transition-colors hover:text-sky-200"
+                                                                                    >
+                                                                                        Open market
+                                                                                    </a>
+                                                                                </div>
+                                                                            )}
+                                                                        </div>
                                                                     </div>
                                                                     <div className="rounded-lg border border-zinc-800 bg-[#0c0c0e] p-3">
                                                                         <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500">Timing</div>

@@ -23,9 +23,15 @@ export type MarketCatalogVenueMarket = MarketCatalogMedia & MarketCatalogMetrics
   venue: string;
   venueMarketProfileId: string;
   venueMarketId: string;
+  marketSlug?: string | null;
+  eventSlug?: string | null;
+  sourceUrl?: string | null;
   venueTitle: string;
   marketClass: string;
   outcomes: Array<{ id: string; label: string }>;
+  resolutionSource?: string | null;
+  resolutionTitle?: string | null;
+  resolutionRulesText?: string | null;
   network: string | null;
   chain: string | null;
   change24h: string | null;
