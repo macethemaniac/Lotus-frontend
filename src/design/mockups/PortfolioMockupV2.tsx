@@ -16,7 +16,7 @@ import {
   Download, ArrowDownToLine, ArrowUpFromLine, Sparkles,
   BarChart2, Calendar, ChevronLeft, ChevronRight, Search, Share, ShieldCheck, Copy, Check
 } from 'lucide-react';
-import { ChainLogo, CryptoLogo, VenueLogo } from '@/components/icons/asset-logo';
+import { ChainLogo, CryptoLogo, VenueLogo, resolveTopicAssetLogoId } from '@/components/icons/asset-logo';
 import type { AuthSession } from '@/features/auth/types';
 import {
   completeVenueSetupBatch,
@@ -312,7 +312,10 @@ const PositionMarketImage = ({
   venue: string;
 }) => {
   const [failed, setFailed] = useState(false);
-  const mediaUrl = !failed ? imageUrl ?? iconUrl : null;
+  const rawMediaUrl = imageUrl ?? iconUrl;
+  useEffect(() => setFailed(false), [rawMediaUrl]);
+  const mediaUrl = !failed ? rawMediaUrl : null;
+  const topicLogoId = resolveTopicAssetLogoId(title);
   return (
     <div className="relative h-11 w-11 shrink-0 overflow-hidden rounded-lg border border-zinc-700/50 bg-zinc-900">
       {mediaUrl ? (
@@ -324,6 +327,8 @@ const PositionMarketImage = ({
           referrerPolicy="no-referrer"
           onError={() => setFailed(true)}
         />
+      ) : topicLogoId ? (
+        <CryptoLogo id={topicLogoId} label={title} className="h-full w-full rounded-lg" />
       ) : (
         <div className="flex h-full w-full items-center justify-center text-sm font-black text-zinc-300">
           {title.slice(0, 1).toUpperCase()}

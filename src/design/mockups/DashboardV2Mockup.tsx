@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useTurnkey } from '@turnkey/react-wallet-kit';
 import { OAuthProviders } from '@turnkey/sdk-types';
 import { LotusLogo } from '@/components/icons/lotus-icons';
-import { VenueLogo } from '@/components/icons/asset-logo';
+import { CryptoLogo, VenueLogo, resolveTopicAssetLogoId } from '@/components/icons/asset-logo';
 import { InfraTradingTerminal, type TerminalMarketSelection } from '@/design/mockups/InfraTradingTerminal';
 import { PortfolioMockupV2 } from '@/design/mockups/PortfolioMockupV2';
 import type { AuthSession } from '@/features/auth/types';
@@ -2753,7 +2753,10 @@ const MarketMediaThumb = ({
 }) => {
   const mediaUrl = imageUrl ?? iconUrl;
   const [imageFailed, setImageFailed] = useState(false);
+  useEffect(() => setImageFailed(false), [mediaUrl]);
   const showMedia = mediaUrl && !imageFailed;
+  const topicLogoId = resolveTopicAssetLogoId(title);
+  const useTopicFallback = Boolean(topicLogoId) || icon === 'L' || !icon;
 
   return (
     <span className={`relative flex shrink-0 items-center justify-center overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-800 ${className}`}>
@@ -2765,6 +2768,12 @@ const MarketMediaThumb = ({
           loading="lazy"
           className="h-full w-full object-cover"
           onError={() => setImageFailed(true)}
+        />
+      ) : useTopicFallback ? (
+        <CryptoLogo
+          id={topicLogoId ?? title}
+          label={title}
+          className="h-full w-full rounded-[inherit]"
         />
       ) : (
         <span aria-hidden="true">{icon}</span>

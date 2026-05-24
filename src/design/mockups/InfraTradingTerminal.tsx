@@ -8,7 +8,7 @@ import {
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceDot } from 'recharts';
 import { useTurnkey, type Wallet as TurnkeyWallet, type WalletAccount } from '@turnkey/react-wallet-kit';
 import { JsonRpcProvider, Transaction } from 'ethers';
-import { VenueLogo } from '@/components/icons/asset-logo';
+import { CryptoLogo, VenueLogo, resolveTopicAssetLogoId } from '@/components/icons/asset-logo';
 import { LotusLogo } from '@/components/icons/lotus-icons';
 import { FundingDeposit } from '@/design/mockups/FundingDeposit';
 import { env } from '@/config/env';
@@ -396,6 +396,17 @@ type OutcomeChartEntry = Omit<OutcomeChartInput, "latestValue"> & {
   chart: MarketChartResponse;
 };
 
+type ResolutionRuleFallback = {
+  key: string;
+  venue: string;
+  venueMarketId: string;
+  venueTitle: string;
+  marketClass: string;
+  outcomes: string;
+  expiresAt: string | null;
+  resolvesAt: string | null;
+};
+
 type TerminalRiskState = {
   loading: boolean;
   error: string | null;
@@ -452,10 +463,11 @@ const isOpenExecutionPosition = (position: { verifiedSize?: string | number | nu
 
 const parseProbabilityLabel = (value: string | null | undefined): number | null => {
   if (!value || value === 'Quote') return null;
-  const cleaned = value.replace(/[Â¢c%,$\s]/g, '');
+  const hasDisplayUnit = /[%c¢]/i.test(value) || value.includes('Â');
+  const cleaned = value.replace(/[^0-9.-]/g, '');
   const parsed = Number(cleaned);
   if (!Number.isFinite(parsed) || parsed <= 0) return null;
-  return parsed > 1 ? parsed / 100 : parsed;
+  return hasDisplayUnit || parsed > 1 ? parsed / 100 : parsed;
 };
 
 const formatTerminalCurrency = (value: number | null | undefined): string => {
@@ -557,7 +569,11 @@ const TerminalMarketThumb = ({
   className?: string;
 }) => {
   const [failed, setFailed] = useState(false);
-  const mediaUrl = !failed ? imageUrl ?? iconUrl : null;
+  const rawMediaUrl = imageUrl ?? iconUrl;
+  React.useEffect(() => setFailed(false), [rawMediaUrl]);
+  const mediaUrl = !failed ? rawMediaUrl : null;
+  const topicLogoId = resolveTopicAssetLogoId(title);
+  const useTopicFallback = Boolean(topicLogoId) || icon === 'L' || !icon;
 
   return (
     <span className={`flex shrink-0 items-center justify-center overflow-hidden rounded-full border border-amber-500/30 bg-amber-500/10 text-base ${className}`}>
@@ -569,6 +585,12 @@ const TerminalMarketThumb = ({
           loading="lazy"
           referrerPolicy="no-referrer"
           onError={() => setFailed(true)}
+        />
+      ) : useTopicFallback ? (
+        <CryptoLogo
+          id={topicLogoId ?? title}
+          label={title}
+          className="h-full w-full rounded-full"
         />
       ) : (
         <span aria-hidden="true">{icon || title.slice(0, 1).toUpperCase()}</span>
@@ -1532,6 +1554,25 @@ const describeOutcomeSchema = (schema: Record<string, unknown> | null | undefine
   return `${shape} - ${yes} / ${no}`;
 };
 
+const describeCatalogOutcomes = (outcomes: MarketCatalogVenueMarket["outcomes"]): string =>
+  outcomes.length > 0
+    ? outcomes.map((outcome) => outcome.label || outcome.id).filter(Boolean).join(" / ")
+    : "Outcome schema not specified";
+
+const catalogRuleFallbacks = (venueMarkets: readonly MarketCatalogVenueMarket[]): ResolutionRuleFallback[] =>
+  venueMarkets
+    .filter((venueMarket) => venueMarket.venue && venueMarket.venueMarketId)
+    .map((venueMarket) => ({
+      key: `${venueMarket.venue}:${venueMarket.venueMarketId}`,
+      venue: venueMarket.venue,
+      venueMarketId: venueMarket.venueMarketId,
+      venueTitle: venueMarket.venueTitle || venueMarket.canonicalMarketTitle || "Venue market",
+      marketClass: venueMarket.marketClass || "Market",
+      outcomes: describeCatalogOutcomes(venueMarket.outcomes),
+      expiresAt: venueMarket.expiresAt,
+      resolvesAt: venueMarket.resolvesAt,
+    }));
+
 const semanticComparisonSummary = (profiles: ResolutionRiskProfile[], assessment: ResolutionRiskAssessment | null): string => {
   if (profiles.length < 2) {
     return 'Backend needs at least two venue rule profiles before Lotus can explain aggregation compatibility.';
@@ -1811,9 +1852,14 @@ const CanonicalChart = ({ marketType }: { marketType: 'binary' | 'multi' }) => {
   );
 };
 
-const chartPointValue = (value: string | null | undefined): number | null => {
+const chartPointValue = (
+  value: string | null | undefined,
+  options: { zeroAsMissing?: boolean } = {}
+): number | null => {
   const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed * 100 : null;
+  if (!Number.isFinite(parsed)) return null;
+  if (options.zeroAsMissing && parsed <= 0) return null;
+  return parsed * 100;
 };
 
 const OUTCOME_CHART_COLORS = ["#22C55E", "#EF4444", "#3B82F6", "#F59E0B", "#8B5CF6", "#EC4899"];
@@ -1943,7 +1989,7 @@ const toOutcomeChartModel = (
 
   for (const entry of charts) {
     for (const point of entry.chart.points) {
-      const value = chartPointValue(point.unified);
+      const value = chartPointValue(point.unified, { zeroAsMissing: true });
       if (value === null) continue;
       const bucket = bucketChartTimestamp(point.timestamp);
       const existing = rowsByBucket.get(bucket) ?? {
@@ -2227,7 +2273,7 @@ const LiveCanonicalChart = ({
             {series.map((item) => (
               <Line
                 key={item.id}
-                type="monotone"
+                type="linear"
                 dataKey={item.id}
                 name={item.label}
                 stroke={item.color}
@@ -2411,6 +2457,10 @@ export const InfraTradingTerminal = ({
   const terminalMarketId = executionMarketId(terminalMarket);
   const terminalCanonicalEventId = selectedMarket?.canonicalEventId ?? selectedMarket?.eventId ?? null;
   const selectedVenueMarkets = selectedMarket?.venueMarkets ?? EMPTY_VENUE_MARKETS;
+  const resolutionRuleFallbacks = useMemo(
+    () => catalogRuleFallbacks(selectedVenueMarkets),
+    [selectedVenueMarkets]
+  );
   const token = session?.userJwt ?? null;
 
   React.useEffect(() => {
@@ -5409,8 +5459,55 @@ export const InfraTradingTerminal = ({
                                                             </div>
                                                         </div>
                                                     ))
+                                                ) : resolutionRuleFallbacks.length > 0 ? (
+                                                    <div className="space-y-4 max-w-3xl">
+                                                        <div className="rounded-xl border border-amber-500/25 bg-amber-500/10 p-4">
+                                                            <div className="flex items-start gap-3">
+                                                                <Info className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
+                                                                <div>
+                                                                    <div className="text-sm font-bold text-amber-100">Backend rule profile pending</div>
+                                                                    <p className="mt-1 text-xs leading-relaxed text-amber-100/75">
+                                                                        Lotus has catalog metadata for these venue markets, but the backend has not returned full resolution rule text yet. Treat this as context only, not a pooling approval.
+                                                                    </p>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                        {resolutionRuleFallbacks.map((rule) => (
+                                                            <div key={rule.key} className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-950/40 p-4">
+                                                                <div className="flex flex-wrap items-center justify-between gap-3">
+                                                                    <div className="flex min-w-0 items-center gap-2">
+                                                                        <VenueLogo id={normalizeVenueId(rule.venue)} label={formatVenueLabel(rule.venue)} className="h-5 w-5 rounded-full" />
+                                                                        <div className="min-w-0">
+                                                                            <div className="text-sm font-bold text-zinc-100">{formatVenueLabel(rule.venue)}</div>
+                                                                            <div className="truncate text-xs text-zinc-500">{rule.venueTitle}</div>
+                                                                        </div>
+                                                                    </div>
+                                                                    <div className="rounded-full border border-zinc-700 px-2 py-1 text-[10px] font-bold uppercase tracking-widest text-zinc-300">
+                                                                        {rule.marketClass}
+                                                                    </div>
+                                                                </div>
+                                                                <div className="grid gap-3 text-xs text-zinc-400 md:grid-cols-2">
+                                                                    <div className="rounded-lg border border-zinc-800 bg-[#0c0c0e] p-3">
+                                                                        <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500">Outcome schema</div>
+                                                                        <div className="mt-2 font-medium text-zinc-200">{rule.outcomes}</div>
+                                                                    </div>
+                                                                    <div className="rounded-lg border border-zinc-800 bg-[#0c0c0e] p-3">
+                                                                        <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500">Timing</div>
+                                                                        <div className="mt-2 space-y-1">
+                                                                            <div><span className="text-zinc-500">Expires:</span> {formatDateTime(rule.expiresAt)}</div>
+                                                                            <div><span className="text-zinc-500">Resolves:</span> {formatDateTime(rule.resolvesAt)}</div>
+                                                                        </div>
+                                                                    </div>
+                                                                    <div className="rounded-lg border border-zinc-800 bg-[#0c0c0e] p-3 md:col-span-2">
+                                                                        <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500">Venue market id</div>
+                                                                        <div className="mt-2 break-all font-mono text-[11px] text-zinc-300">{rule.venueMarketId}</div>
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        ))}
+                                                    </div>
                                                 ) : (
-                                                    emptyCopy('No rules returned', 'The backend has not returned venue resolution profiles for this selected market.')
+                                                    emptyCopy('No rules returned', 'The backend has not returned venue resolution profiles for this selected market, and no catalog venue rule context is available.')
                                                 )
                                             )}
                                             {rulesInnerTab === 'aggregation' && (
@@ -5454,7 +5551,44 @@ export const InfraTradingTerminal = ({
                                                         ))}
                                                     </div>
                                                 ) : (
-                                                    emptyCopy('No aggregation assessment', 'The backend has not returned a canonical pooling assessment for this market.')
+                                                    <div className="max-w-3xl rounded-xl border border-zinc-800 bg-zinc-950/40 p-4">
+                                                        <div className="flex items-start gap-3">
+                                                            <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
+                                                            <div>
+                                                                <div className="text-sm font-bold text-zinc-100">Aggregation pending</div>
+                                                                <p className="mt-2 text-xs leading-relaxed text-zinc-400">
+                                                                    Backend has not returned a canonical pooling assessment for this market yet. Lotus should not treat venue markets as semantically equivalent until that assessment is available.
+                                                                </p>
+                                                            </div>
+                                                        </div>
+                                                        <div className="mt-4 grid gap-3 text-xs text-zinc-400 md:grid-cols-3">
+                                                            <div className="rounded-lg border border-zinc-800 bg-[#0c0c0e] p-3">
+                                                                <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500">Venues scanned</div>
+                                                                <div className="mt-2 font-bold text-zinc-100">{marketVenueList.length || terminalMarket.venueCount}</div>
+                                                            </div>
+                                                            <div className="rounded-lg border border-zinc-800 bg-[#0c0c0e] p-3">
+                                                                <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500">Rule profiles</div>
+                                                                <div className="mt-2 font-bold text-zinc-100">{riskState.profiles.length}</div>
+                                                            </div>
+                                                            <div className="rounded-lg border border-zinc-800 bg-[#0c0c0e] p-3">
+                                                                <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500">Catalog venues</div>
+                                                                <div className="mt-2 font-bold text-zinc-100">{resolutionRuleFallbacks.length}</div>
+                                                            </div>
+                                                        </div>
+                                                        {resolutionRuleFallbacks.length > 0 && (
+                                                            <div className="mt-4 rounded-lg border border-zinc-800 bg-[#0c0c0e] p-3">
+                                                                <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500">Available venue context</div>
+                                                                <div className="mt-2 flex flex-wrap gap-2">
+                                                                    {resolutionRuleFallbacks.map((rule) => (
+                                                                        <span key={rule.key} className="inline-flex items-center gap-1.5 rounded-full border border-zinc-700 px-2 py-1 text-[11px] font-semibold text-zinc-300">
+                                                                            <VenueLogo id={normalizeVenueId(rule.venue)} label={formatVenueLabel(rule.venue)} className="h-3.5 w-3.5 rounded-full" />
+                                                                            {formatVenueLabel(rule.venue)}
+                                                                        </span>
+                                                                    ))}
+                                                                </div>
+                                                            </div>
+                                                        )}
+                                                    </div>
                                                 )
                                             )}
                                         </div>

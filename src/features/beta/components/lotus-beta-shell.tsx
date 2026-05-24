@@ -15,7 +15,7 @@ import {
   Terminal,
   Wallet,
 } from "lucide-react";
-import { VenueLogo } from "@/components/icons/asset-logo";
+import { CryptoLogo, VenueLogo, resolveTopicAssetLogoId } from "@/components/icons/asset-logo";
 import { LotusLogo } from "@/components/icons/lotus-icons";
 import type { AuthSession } from "@/features/auth/types";
 import {
@@ -821,7 +821,10 @@ function ActionButton({ disabled, onClick, children }: { disabled?: boolean; onC
 
 function MarketMedia({ item, category, title, className }: { item: { imageUrl?: string | null; iconUrl?: string | null }; category: string; title: string; className: string }) {
   const [failed, setFailed] = useState(false);
-  const src = !failed ? item.imageUrl ?? item.iconUrl : null;
+  const rawSrc = item.imageUrl ?? item.iconUrl;
+  useEffect(() => setFailed(false), [rawSrc]);
+  const src = !failed ? rawSrc : null;
+  const topicLogoId = resolveTopicAssetLogoId(title);
   if (src) {
     return (
       <img
@@ -833,6 +836,9 @@ function MarketMedia({ item, category, title, className }: { item: { imageUrl?: 
         onError={() => setFailed(true)}
       />
     );
+  }
+  if (topicLogoId) {
+    return <CryptoLogo id={topicLogoId} label={title} className={`${className} shrink-0 rounded-lg`} />;
   }
   return (
     <span className={`${className} flex shrink-0 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-950 text-xl`} aria-label={`${title} market`}>

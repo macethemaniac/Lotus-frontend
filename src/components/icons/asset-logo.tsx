@@ -63,6 +63,34 @@ const fallbackText = (label: string) => {
   return cleaned.slice(0, 1).toUpperCase() || '?';
 };
 
+export const resolveTopicAssetLogoId = (...values: Array<string | null | undefined>): string | null => {
+  const text = values.filter(Boolean).join(' ').toLowerCase();
+  if (!text.trim()) return null;
+
+  const aliases: Array<[RegExp, string]> = [
+    [/\b(bitcoin|btc)\b/, 'btc'],
+    [/\b(ethereum|ether|eth)\b/, 'eth'],
+    [/\b(solana|sol)\b/, 'sol'],
+    [/\b(bnb|binance)\b/, 'bnb'],
+    [/\b(base)\b/, 'base'],
+    [/\b(monad)\b/, 'monad'],
+    [/\b(polygon|matic)\b/, 'polygon'],
+    [/\b(arbitrum|arb)\b/, 'arbitrum'],
+    [/\b(optimism|op)\b/, 'optimism'],
+    [/\b(usdc)\b/, 'usdc'],
+    [/\b(usdt)\b/, 'usdt'],
+  ];
+
+  for (const [pattern, id] of aliases) {
+    if (pattern.test(text)) return id;
+  }
+
+  const fdvTopic = text.match(/^\s*([a-z0-9][a-z0-9 ._-]{1,32}?)\s+fdv\b/);
+  if (fdvTopic?.[1]) return fdvTopic[1].trim();
+
+  return null;
+};
+
 export const AssetLogo = ({ id, label, kind = 'asset', className = 'h-5 w-5' }: AssetLogoProps) => {
   const displayLabel = label ?? id;
   const src = resolveLogo(id, kind);
