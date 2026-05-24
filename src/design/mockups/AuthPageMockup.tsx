@@ -1,5 +1,5 @@
 import type { FormEvent, ReactNode } from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { GoogleIcon, TwitterIcon, MailIcon } from '@/components/icons/lotus-icons';
 
 const AuthButton = ({ icon, label, onClick, disabled = false }: { icon: ReactNode; label: string; onClick?: () => void; disabled?: boolean }) => (
@@ -18,22 +18,38 @@ const AuthButton = ({ icon, label, onClick, disabled = false }: { icon: ReactNod
 
 export function AuthPageMockup({
   onEmailSubmit,
+  emailOtpContact,
+  onEmailOtpSubmit,
+  onEmailOtpCancel,
   onGoogleLogin,
   onTwitterLogin,
   loading = false,
   error,
 }: {
   onEmailSubmit?: (email: string) => Promise<void> | void;
+  emailOtpContact?: string | null;
+  onEmailOtpSubmit?: (otpCode: string) => Promise<void> | void;
+  onEmailOtpCancel?: () => void;
   onGoogleLogin?: () => Promise<void> | void;
   onTwitterLogin?: () => Promise<void> | void;
   loading?: boolean;
   error?: string | null;
 }) {
   const [email, setEmail] = useState("");
+  const [otpCode, setOtpCode] = useState("");
+
+  useEffect(() => {
+    setOtpCode("");
+  }, [emailOtpContact]);
 
   const submitEmail = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     void onEmailSubmit?.(email);
+  };
+
+  const submitEmailOtp = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void onEmailOtpSubmit?.(otpCode);
   };
 
   return (
@@ -55,29 +71,64 @@ export function AuthPageMockup({
 
             {/* Content */}
             <div className="space-y-3">
-              {/* Email Input Row */}
-              <form className="relative group" onSubmit={submitEmail}>
-                <div className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400">
-                  <MailIcon className="w-5 h-5" />
-                </div>
-                <label htmlFor="lotus-auth-email" className="sr-only">Email address</label>
-                <input 
-                  id="lotus-auth-email"
-                  type="email" 
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                  placeholder="name@example.com" 
-                  autoComplete="email"
-                  className="w-full pl-12 pr-20 py-3.5 bg-zinc-50 dark:bg-black border border-zinc-200 dark:border-zinc-800 rounded-xl text-zinc-900 dark:text-white placeholder-zinc-400 outline-none focus:ring-2 focus:ring-lotus-500/50 focus:border-lotus-500 transition-all"
-                />
-                <button
-                  type="submit"
-                  disabled={loading || !email}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 px-3 py-1.5 bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 rounded-md text-xs font-semibold text-zinc-700 dark:text-zinc-300 transition-colors disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lotus-500"
-                >
-                  {loading ? "..." : "Submit"}
-                </button>
-              </form>
+              {emailOtpContact ? (
+                <form className="space-y-3" onSubmit={submitEmailOtp}>
+                  <div className="rounded-lg border border-lotus-500/25 bg-lotus-500/10 px-3 py-2 text-xs font-medium text-lotus-100">
+                    Enter the code sent to <span className="text-white">{emailOtpContact}</span>.
+                  </div>
+                  <label htmlFor="lotus-auth-email-otp" className="sr-only">Email verification code</label>
+                  <input
+                    id="lotus-auth-email-otp"
+                    type="text"
+                    inputMode="text"
+                    value={otpCode}
+                    onChange={(event) => setOtpCode(event.target.value)}
+                    placeholder="Verification code"
+                    autoComplete="one-time-code"
+                    className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3.5 text-center text-lg font-semibold tracking-[0.3em] text-zinc-900 outline-none transition-all placeholder:text-sm placeholder:font-medium placeholder:normal-case placeholder:tracking-normal placeholder:text-zinc-400 focus:border-lotus-500 focus:ring-2 focus:ring-lotus-500/50 dark:border-zinc-800 dark:bg-black dark:text-white"
+                  />
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={onEmailOtpCancel}
+                      disabled={loading}
+                      className="rounded-lg border border-zinc-800 px-3 py-2 text-sm font-semibold text-zinc-300 transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lotus-500"
+                    >
+                      Back
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={loading || !otpCode.trim()}
+                      className="rounded-lg bg-lotus-500 px-3 py-2 text-sm font-semibold text-black transition hover:bg-lotus-400 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lotus-500"
+                    >
+                      {loading ? "Verifying..." : "Verify"}
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <form className="relative group" onSubmit={submitEmail}>
+                  <div className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400">
+                    <MailIcon className="w-5 h-5" />
+                  </div>
+                  <label htmlFor="lotus-auth-email" className="sr-only">Email address</label>
+                  <input 
+                    id="lotus-auth-email"
+                    type="email" 
+                    value={email}
+                    onChange={(event) => setEmail(event.target.value)}
+                    placeholder="name@example.com" 
+                    autoComplete="email"
+                    className="w-full pl-12 pr-20 py-3.5 bg-zinc-50 dark:bg-black border border-zinc-200 dark:border-zinc-800 rounded-xl text-zinc-900 dark:text-white placeholder-zinc-400 outline-none focus:ring-2 focus:ring-lotus-500/50 focus:border-lotus-500 transition-all"
+                  />
+                  <button
+                    type="submit"
+                    disabled={loading || !email}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 px-3 py-1.5 bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 rounded-md text-xs font-semibold text-zinc-700 dark:text-zinc-300 transition-colors disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lotus-500"
+                  >
+                    {loading ? "..." : "Submit"}
+                  </button>
+                </form>
+              )}
 
               {error ? (
                 <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs font-medium text-red-300">
@@ -85,17 +136,21 @@ export function AuthPageMockup({
                 </div>
               ) : null}
 
-              <div className="relative py-2">
-                <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-zinc-200 dark:border-zinc-800"></div>
-                </div>
-                <div className="relative flex justify-center text-xs uppercase tracking-wider">
-                  <span className="bg-white dark:bg-zinc-900 px-3 text-zinc-400">or</span>
-                </div>
-              </div>
+              {!emailOtpContact ? (
+                <>
+                  <div className="relative py-2">
+                    <div className="absolute inset-0 flex items-center">
+                      <div className="w-full border-t border-zinc-200 dark:border-zinc-800"></div>
+                    </div>
+                    <div className="relative flex justify-center text-xs uppercase tracking-wider">
+                      <span className="bg-white dark:bg-zinc-900 px-3 text-zinc-400">or</span>
+                    </div>
+                  </div>
 
-              <AuthButton icon={<GoogleIcon />} label="Continue with Google" onClick={onGoogleLogin} disabled={loading} />
-              <AuthButton icon={<TwitterIcon />} label="Continue with Twitter" onClick={onTwitterLogin} disabled={loading} />
+                  <AuthButton icon={<GoogleIcon />} label="Continue with Google" onClick={onGoogleLogin} disabled={loading} />
+                  <AuthButton icon={<TwitterIcon />} label="Continue with Twitter" onClick={onTwitterLogin} disabled={loading} />
+                </>
+              ) : null}
             </div>
 
             <div className="mt-8 text-center">

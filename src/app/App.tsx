@@ -714,10 +714,6 @@ export function App() {
     setAuthError(null);
   };
 
-  const handleEmailSubmit = async (_email: string) => {
-    setAuthError("Email login needs the approved backend user auth endpoint before it can issue a Lotus JWT.");
-  };
-
   const handleLogout = () => {
     clearStoredSession();
     setSession(null);
@@ -789,7 +785,6 @@ export function App() {
     >
       {!session ? (
         <TurnkeyAuthScreen
-          onEmailSubmit={handleEmailSubmit}
           loading={authLoading}
           error={authError}
           onError={setAuthError}
