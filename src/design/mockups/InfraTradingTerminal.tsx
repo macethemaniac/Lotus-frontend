@@ -4768,12 +4768,9 @@ export const InfraTradingTerminal = ({
   const ticketAmountLabel = side === 'buy' ? 'Amount' : 'Shares to Sell';
   const ticketAmountUnit = side === 'buy' ? 'USDC' : 'Shares';
   const ticketReceiveLabel = side === 'buy' ? 'To Win' : 'To Receive';
-  const ticketOrchestratorReceiveText = orderReceiveAmount(ticketOrchestratorOrder);
   const ticketReceiveText = side === 'buy'
     ? formatUsdc(ticketEstimatedPayout)
-    : executionOrchestratorEnabled && ticketOrchestratorReceiveText
-      ? `${ticketOrchestratorReceiveText} USDC`
-      : formatTradeUsdc(ticketReceiveEstimate);
+    : formatTradeUsdc(ticketReceiveEstimate);
   const ticketPrimaryButtonClass = ticketActionNeedsConfirmation && ticketConfirmArmed
     ? 'bg-amber-400 hover:bg-amber-300 text-black shadow-[0_0_15px_rgba(251,191,36,0.18)]'
     : side === 'buy'
