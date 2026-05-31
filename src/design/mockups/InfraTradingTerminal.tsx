@@ -2378,6 +2378,9 @@ export const InfraTradingTerminal = ({
   const [ticketOrchestratorPlacing, setTicketOrchestratorPlacing] = useState(false);
   const [ticketOrchestratorSigning, setTicketOrchestratorSigning] = useState(false);
   const [ticketConfirmArmed, setTicketConfirmArmed] = useState(false);
+  const [ticketSettingsOpen, setTicketSettingsOpen] = useState(false);
+  const [ticketOrderPolicy, setTicketOrderPolicy] = useState<'FOK' | 'FAK'>('FOK');
+  const [ticketSlippageTolerance, setTicketSlippageTolerance] = useState('0.50');
   const [ticketPolymarketClobSyncConfirmed, setTicketPolymarketClobSyncConfirmed] = useState(false);
   const [ticketStatusMessage, setTicketStatusMessage] = useState<string | null>(null);
   const [ticketLoading, setTicketLoading] = useState(false);
@@ -6010,9 +6013,99 @@ export const InfraTradingTerminal = ({
                      <button type="button" onClick={() => switchTicketSide('buy')} className={`pb-1 text-sm font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${side === 'buy' ? 'text-white border-b-2 border-white' : 'text-zinc-500 hover:text-zinc-300'}`}>Buy</button>
                      <button type="button" onClick={() => switchTicketSide('sell')} className={`pb-1 text-sm font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${side === 'sell' ? 'text-white border-b-2 border-white' : 'text-zinc-500 hover:text-zinc-300'}`}>Sell</button>
                  </div>
-                 <button type="button" disabled className="text-zinc-300 text-xs font-semibold flex items-center gap-1 pr-2 cursor-not-allowed" title="Limit orders are disabled for production until the backend limit-order contract is implemented.">
-                     {orderType === 'market' ? 'Market' : 'Limit'} <Lock className="w-3.5 h-3.5 text-zinc-600" />
-                 </button>
+                 <div className="relative flex items-center gap-1.5 pr-1">
+                   <button
+                     type="button"
+                     onClick={() => setTicketSettingsOpen((open) => !open)}
+                     className={`flex h-7 w-7 items-center justify-center rounded-lg border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${ticketSettingsOpen ? 'border-[#ccff00]/40 bg-[#ccff00]/10 text-[#ccff00]' : 'border-zinc-800 bg-zinc-950/40 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200'}`}
+                     aria-label="Order settings"
+                     aria-expanded={ticketSettingsOpen}
+                   >
+                     <Settings className="h-3.5 w-3.5" />
+                   </button>
+                   <button type="button" disabled className="text-zinc-300 text-xs font-semibold flex items-center gap-1 cursor-not-allowed" title="Limit orders are disabled for production until the backend limit-order contract is implemented.">
+                       {orderType === 'market' ? 'Market' : 'Limit'} <Lock className="w-3.5 h-3.5 text-zinc-600" />
+                   </button>
+                   {ticketSettingsOpen && (
+                     <div className="absolute right-0 top-9 z-40 w-[330px] max-w-[calc(100vw-2rem)] rounded-xl border border-zinc-800 bg-[#151517] p-2.5 shadow-2xl shadow-black/40">
+                       <div className="mb-2 flex items-center justify-between border-b border-zinc-800/70 px-1 pb-2">
+                         <div>
+                           <div className="text-xs font-black text-white">Order settings</div>
+                           <div className="text-[10px] font-semibold text-zinc-500">Applies to this trade ticket</div>
+                         </div>
+                         <div className="rounded-full border border-[#ccff00]/20 bg-[#ccff00]/10 px-2 py-1 font-mono text-[10px] font-bold text-[#ccff00]">
+                           {ticketOrderPolicy}
+                         </div>
+                       </div>
+
+                       <div className="space-y-2">
+                         {([
+                           {
+                             id: 'FAK' as const,
+                             title: 'Fill and Kill (FAK) Order',
+                             copy: 'Fills as much as possible at the best available prices and cancels any remaining unfilled portion.',
+                           },
+                           {
+                             id: 'FOK' as const,
+                             title: 'Fill or Kill (FOK) Order',
+                             copy: 'Executes the entire order immediately at specified price or cancels it completely.',
+                           },
+                         ]).map((option) => {
+                           const active = ticketOrderPolicy === option.id;
+                           return (
+                             <button
+                               key={option.id}
+                               type="button"
+                               onClick={() => setTicketOrderPolicy(option.id)}
+                               className={`flex w-full gap-3 rounded-lg border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/60 ${active ? 'border-[#ccff00]/30 bg-[#ccff00]/10' : 'border-zinc-800 bg-zinc-900/40 hover:border-zinc-700 hover:bg-zinc-900'}`}
+                             >
+                               <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${active ? 'border-[#ccff00] bg-[#ccff00]/10' : 'border-zinc-600'}`}>
+                                 {active && <span className="h-2.5 w-2.5 rounded-full bg-[#ccff00]" />}
+                               </span>
+                               <span>
+                                 <span className="block text-sm font-black text-zinc-100">{option.title}</span>
+                                 <span className="mt-1 block text-xs font-medium leading-relaxed text-zinc-400">{option.copy}</span>
+                               </span>
+                             </button>
+                           );
+                         })}
+                       </div>
+
+                       <div className="mt-2 rounded-lg border border-zinc-800 bg-zinc-950/40 p-3">
+                         <div className="mb-2 flex items-center justify-between gap-3">
+                           <span className="text-sm font-black text-zinc-200">Slippage Tolerance</span>
+                           <label className="flex items-center gap-1 rounded-full bg-[#2b2b3d] px-3 py-1.5 font-mono text-sm font-black text-cyan-300">
+                             <span>Auto:</span>
+                             <input
+                               value={ticketSlippageTolerance}
+                               onChange={(event) => {
+                                 const next = event.target.value.replace(/[^\d.]/g, '').slice(0, 5);
+                                 setTicketSlippageTolerance(next);
+                               }}
+                               className="w-12 bg-transparent text-right outline-none"
+                               inputMode="decimal"
+                               aria-label="Slippage tolerance percent"
+                             />
+                             <span>%</span>
+                           </label>
+                         </div>
+                         <div className="grid grid-cols-4 gap-1.5">
+                           {['0.10', '0.50', '1.00', '2.00'].map((value) => (
+                             <button
+                               key={value}
+                               type="button"
+                               onClick={() => setTicketSlippageTolerance(value)}
+                               className={`rounded-md border px-2 py-1.5 font-mono text-[11px] font-bold transition-colors ${ticketSlippageTolerance === value ? 'border-cyan-300/40 bg-cyan-300/10 text-cyan-200' : 'border-zinc-800 bg-zinc-900/60 text-zinc-400 hover:text-zinc-200'}`}
+                             >
+                               {value}%
+                             </button>
+                           ))}
+                         </div>
+                       </div>
+
+                     </div>
+                   )}
+                 </div>
              </div>
 
               <div className="flex flex-col gap-3 p-3 animate-in fade-in duration-300 2xl:p-4 xl:min-h-0 xl:flex-1 xl:overflow-y-auto xl:pr-3 custom-scrollbar">
