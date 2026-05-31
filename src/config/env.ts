@@ -6,7 +6,7 @@ const turnkeyAuthProxyConfigId = import.meta.env.VITE_TURNKEY_AUTH_PROXY_CONFIG_
 const turnkeyAuthProxyUrl = import.meta.env.VITE_TURNKEY_AUTH_PROXY_URL;
 const lotusAuthExchangePath = import.meta.env.VITE_LOTUS_AUTH_EXCHANGE_PATH;
 const executionOrchestratorV1Enabled = import.meta.env.VITE_EXECUTION_ORCHESTRATOR_V1_ENABLED;
-const lotusBackendApiBaseUrl = "https://lotus-backend-g1e1.onrender.com";
+const lotusBackendApiBaseUrl = "https://api.uselotus.xyz";
 
 function isEnabledFlag(value: unknown): boolean {
   return typeof value === "string" && value.trim().toLowerCase() === "true";

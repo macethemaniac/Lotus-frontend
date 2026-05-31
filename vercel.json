@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://lotus-backend-g1e1.onrender.com/:path*"
+      "destination": "https://api.uselotus.xyz/:path*"
     },
     {
       "source": "/:path*",

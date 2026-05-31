@@ -400,6 +400,8 @@ type ResolutionRuleFallback = {
   key: string;
   venue: string;
   venueMarketId: string;
+  venueMarketIds: string[];
+  venueMarketCount: number;
   venueTitle: string;
   marketClass: string;
   outcomes: string;
@@ -1563,23 +1565,63 @@ const describeCatalogOutcomes = (outcomes: MarketCatalogVenueMarket["outcomes"])
     ? outcomes.map((outcome) => outcome.label || outcome.id).filter(Boolean).join(" / ")
     : "Outcome schema not specified";
 
-const catalogRuleFallbacks = (venueMarkets: readonly MarketCatalogVenueMarket[]): ResolutionRuleFallback[] =>
-  venueMarkets
-    .filter((venueMarket) => venueMarket.venue && venueMarket.venueMarketId)
-    .map((venueMarket) => ({
-      key: `${venueMarket.venue}:${venueMarket.venueMarketId}`,
+const mergeCatalogOutcomeLabels = (left: string, right: string): string => {
+  const labels = new Set(
+    [...left.split(" / "), ...right.split(" / ")]
+      .map((label) => label.trim())
+      .filter((label) => label && label !== "Outcome schema not specified")
+  );
+  return labels.size > 0 ? Array.from(labels).join(" / ") : "Outcome schema not specified";
+};
+
+const firstCatalogText = (current: string | null, next: string | null | undefined): string | null =>
+  current ?? (next?.trim() || null);
+
+const catalogRuleFallbacks = (venueMarkets: readonly MarketCatalogVenueMarket[]): ResolutionRuleFallback[] => {
+  const grouped = new Map<string, ResolutionRuleFallback>();
+
+  for (const venueMarket of venueMarkets) {
+    if (!venueMarket.venue || !venueMarket.venueMarketId) continue;
+    const key = normalizeVenueId(venueMarket.venue);
+    const existing = grouped.get(key);
+    const venueMarketId = venueMarket.venueMarketId;
+    const outcomes = describeCatalogOutcomes(venueMarket.outcomes);
+
+    if (existing) {
+      if (!existing.venueMarketIds.includes(venueMarketId)) {
+        existing.venueMarketIds.push(venueMarketId);
+        existing.venueMarketCount += 1;
+      }
+      existing.outcomes = mergeCatalogOutcomeLabels(existing.outcomes, outcomes);
+      existing.resolutionRulesText = firstCatalogText(existing.resolutionRulesText, venueMarket.resolutionRulesText);
+      existing.resolutionSource = firstCatalogText(existing.resolutionSource, venueMarket.resolutionSource);
+      existing.resolutionTitle = firstCatalogText(existing.resolutionTitle, venueMarket.resolutionTitle);
+      existing.sourceUrl = firstCatalogText(existing.sourceUrl, venueMarket.sourceUrl);
+      existing.expiresAt = existing.expiresAt ?? venueMarket.expiresAt;
+      existing.resolvesAt = existing.resolvesAt ?? venueMarket.resolvesAt;
+      continue;
+    }
+
+    grouped.set(key, {
+      key,
       venue: venueMarket.venue,
-      venueMarketId: venueMarket.venueMarketId,
+      venueMarketId,
+      venueMarketIds: [venueMarketId],
+      venueMarketCount: 1,
       venueTitle: venueMarket.venueTitle || venueMarket.canonicalMarketTitle || "Venue market",
       marketClass: venueMarket.marketClass || "Market",
-      outcomes: describeCatalogOutcomes(venueMarket.outcomes),
+      outcomes,
       resolutionRulesText: venueMarket.resolutionRulesText?.trim() || null,
       resolutionSource: venueMarket.resolutionSource?.trim() || null,
       resolutionTitle: venueMarket.resolutionTitle?.trim() || null,
       sourceUrl: venueMarket.sourceUrl?.trim() || null,
       expiresAt: venueMarket.expiresAt,
       resolvesAt: venueMarket.resolvesAt,
-    }));
+    });
+  }
+
+  return Array.from(grouped.values());
+};
 
 const semanticComparisonSummary = (profiles: ResolutionRiskProfile[], assessment: ResolutionRiskAssessment | null): string => {
   if (profiles.length < 2) {
@@ -5497,7 +5539,9 @@ export const InfraTradingTerminal = ({
                                                                         <VenueLogo id={normalizeVenueId(rule.venue)} label={formatVenueLabel(rule.venue)} className="h-5 w-5 rounded-full" />
                                                                         <div className="min-w-0">
                                                                             <div className="text-sm font-bold text-zinc-100">{formatVenueLabel(rule.venue)}</div>
-                                                                            <div className="truncate text-xs text-zinc-500">{rule.venueTitle}</div>
+                                                                            <div className="truncate text-xs text-zinc-500">
+                                                                                {rule.venueMarketCount > 1 ? `${rule.venueMarketCount} catalog markets covered` : rule.venueTitle}
+                                                                            </div>
                                                                         </div>
                                                                     </div>
                                                                     <div className="rounded-full border border-zinc-700 px-2 py-1 text-[10px] font-bold uppercase tracking-widest text-zinc-300">
@@ -5510,7 +5554,7 @@ export const InfraTradingTerminal = ({
                                                                         <div className="mt-2 leading-relaxed text-zinc-200">
                                                                             {rule.resolutionRulesText
                                                                                 ? renderLinkedText(rule.resolutionRulesText)
-                                                                                : <p className="text-zinc-500">Catalog has not returned explicit rule text for this venue market.</p>}
+                                                                                : <p className="text-zinc-500">Catalog has not returned explicit event-level rule text for this venue.</p>}
                                                                         </div>
                                                                     </div>
                                                                     <div className="rounded-lg border border-zinc-800 bg-[#0c0c0e] p-3">
@@ -5545,8 +5589,13 @@ export const InfraTradingTerminal = ({
                                                                         </div>
                                                                     </div>
                                                                     <div className="rounded-lg border border-zinc-800 bg-[#0c0c0e] p-3 md:col-span-2">
-                                                                        <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500">Venue market id</div>
-                                                                        <div className="mt-2 break-all font-mono text-[11px] text-zinc-300">{rule.venueMarketId}</div>
+                                                                        <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500">Catalog coverage</div>
+                                                                        <div className="mt-2 text-zinc-300">
+                                                                            This event-level rule card covers {rule.venueMarketCount} {rule.venueMarketCount === 1 ? 'catalog market' : 'catalog markets'} for {formatVenueLabel(rule.venue)}.
+                                                                        </div>
+                                                                        {rule.venueMarketCount === 1 && (
+                                                                            <div className="mt-2 break-all font-mono text-[11px] text-zinc-500">{rule.venueMarketId}</div>
+                                                                        )}
                                                                     </div>
                                                                 </div>
                                                             </div>
