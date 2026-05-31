@@ -29,9 +29,7 @@ import { TurnkeyAuthScreen } from "@/features/auth/components/turnkey-auth-scree
 import { DashboardV2Mockup, type LotusAppPage } from "@/design/mockups/DashboardV2Mockup";
 import { DenseStripFooter } from "@/design/mockups/GlobalFooterVariations";
 import { getPortfolioSummary, type PortfolioSummary } from "@/features/trading/api/execution-api";
-import { getVenueBalances, getVenueCapabilities, mergeVenueBalanceSnapshots, type VenueBalance } from "@/features/funding/api/funding-api";
-import { getMarketBatchQuotes, listEvents, listMarkets } from "@/features/markets/api/market-api";
-import { getNotifications } from "@/features/notifications/api/notification-api";
+import { getVenueBalances, mergeVenueBalanceSnapshots, type VenueBalance } from "@/features/funding/api/funding-api";
 import { listWallets, mergeUserWalletBalanceSnapshots, type UserWallet } from "@/features/wallets/api/wallet-api";
 
 const lotusPageRouteByPage: Record<LotusAppPage, string> = {
@@ -159,15 +157,6 @@ function walletAddressEquals(left?: string | null, right?: string | null): boole
   return left === right;
 }
 
-function canonicalQuoteOutcomeId(label: string): string {
-  const trimmed = label.trim();
-  const normalized = trimmed.toUpperCase().replace(/\s+/g, "_");
-  if (normalized === "YES" || normalized === "NO" || normalized === "UP" || normalized === "DOWN") {
-    return normalized;
-  }
-  return trimmed;
-}
-
 type TurnkeyWalletMatch = {
   wallet: TurnkeyWallet;
   account: WalletAccount;
@@ -232,6 +221,7 @@ function AccountDropdown({
   }, [displayId, session.userId]);
 
   useEffect(() => {
+    if (!open) return;
     let cancelled = false;
     setStatsLoading(true);
     setStatsError(null);
@@ -256,7 +246,7 @@ function AccountDropdown({
     return () => {
       cancelled = true;
     };
-  }, [session.userJwt]);
+  }, [open, session.userJwt]);
 
   useEffect(() => {
     if (!open) return;
@@ -753,30 +743,6 @@ export function App() {
       })
       .finally(() => setAuthLoading(false));
   };
-
-  useEffect(() => {
-    if (!session?.userJwt) return;
-    void getPortfolioSummary(session.userJwt).catch(() => undefined);
-    void getVenueBalances(session.userJwt).catch(() => undefined);
-    void getVenueCapabilities(session.userJwt).catch(() => undefined);
-    void getNotifications(session.userJwt, { limit: 8 }).catch(() => undefined);
-    void listEvents({ limit: 24 }).catch(() => undefined);
-    void listMarkets({ limit: 24, quoteReadyOnly: true, routeCoverage: "all" })
-      .then((response) => {
-        const items = response.markets.slice(0, 12).flatMap((market) => {
-          const outcomes = market.venueMarkets
-            .flatMap((venueMarket) => venueMarket.outcomes)
-            .filter((outcome) => ["YES", "NO"].includes(outcome.label.trim().toUpperCase()))
-            .slice(0, 2);
-          return outcomes.flatMap((outcome) => [
-            { marketId: market.canonicalMarketIds[0] ?? market.canonicalEventId, outcomeId: canonicalQuoteOutcomeId(outcome.label), side: "buy" as const, amount: "1" },
-            { marketId: market.canonicalMarketIds[0] ?? market.canonicalEventId, outcomeId: canonicalQuoteOutcomeId(outcome.label), side: "sell" as const, amount: "1" },
-          ]);
-        });
-        if (items.length > 0) void getMarketBatchQuotes({ items }).catch(() => undefined);
-      })
-      .catch(() => undefined);
-  }, [session?.userJwt]);
 
   return (
     <LotusTurnkeyProvider

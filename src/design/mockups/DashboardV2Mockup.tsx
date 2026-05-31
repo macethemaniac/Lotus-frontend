@@ -1321,7 +1321,7 @@ export const DashboardV2Mockup = ({
       listMarkets({
         category: filterCategory,
         search: searchQuery.trim() || undefined,
-        limit: 250,
+        limit: activePage === 'markets' ? 250 : 80,
         quoteReadyOnly: true,
         routeCoverage,
       })
