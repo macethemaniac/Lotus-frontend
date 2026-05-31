@@ -189,7 +189,7 @@ export type MarkedExecutionPosition = ExecutionPosition & {
   markValue: string | null;
   unrealizedPnl: string | null;
   markSource: "LIVE_QUOTE_SOURCE" | null;
-  markFreshness: "live" | "unavailable";
+  markFreshness: "live" | "stale" | "unavailable";
   markGeneratedAt: string | null;
   markBlocker: string | null;
 };

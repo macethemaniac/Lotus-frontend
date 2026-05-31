@@ -2375,6 +2375,8 @@ export const InfraTradingTerminal = ({
   const [ticketOrchestratorOrder, setTicketOrchestratorOrder] = useState<ExecutionOrderResponse | null>(null);
   const [ticketOrchestratorAmount, setTicketOrchestratorAmount] = useState<string | null>(null);
   const [ticketOrchestratorAutoRenewFailed, setTicketOrchestratorAutoRenewFailed] = useState(false);
+  const [ticketOrchestratorPlacing, setTicketOrchestratorPlacing] = useState(false);
+  const [ticketOrchestratorSigning, setTicketOrchestratorSigning] = useState(false);
   const [ticketConfirmArmed, setTicketConfirmArmed] = useState(false);
   const [ticketPolymarketClobSyncConfirmed, setTicketPolymarketClobSyncConfirmed] = useState(false);
   const [ticketStatusMessage, setTicketStatusMessage] = useState<string | null>(null);
@@ -2418,6 +2420,8 @@ export const InfraTradingTerminal = ({
   const autoPolymarketClobSyncKeyRef = React.useRef<string | null>(null);
   const orchestratorPreviewSeqRef = React.useRef(0);
   const orchestratorPollTimeoutRef = React.useRef<number | null>(null);
+  const orchestratorPlacePromiseRef = React.useRef<Promise<void> | null>(null);
+  const orchestratorSignaturePromiseRef = React.useRef<Promise<ExecutionOrderResponse | null> | null>(null);
   const [localSelectedMarket, setLocalSelectedMarket] = useState<TerminalMarketSelection | null>(null);
   const executionOrchestratorEnabled = env.executionOrchestratorV1Enabled;
 
@@ -4246,21 +4250,36 @@ export const InfraTradingTerminal = ({
   }, [executionOrchestratorEnabled, previewOrchestratorOrder, refreshAccountData, token]);
 
   const submitOrchestratorSignatures = useCallback(async (order: ExecutionOrderResponse): Promise<ExecutionOrderResponse | null> => {
-    if (!token) return null;
-    const signatureRequests = order.signatureRequests ?? [];
-    if (signatureRequests.length === 0) {
-      setTicketError('This order requires a wallet signature, but no signature request was returned.');
-      return null;
+    if (orchestratorSignaturePromiseRef.current) {
+      return orchestratorSignaturePromiseRef.current;
     }
-    setTicketStatusMessage('Turnkey signature requested. Review and sign to place the order.');
-    const signedPayloads = await signTicketSignatureRequests(signatureRequests);
-    setTicketStatusMessage('Signature collected. Lotus backend is submitting the order.');
-    const signedOrder = await submitExecutionOrderSignatures(token, order.orderId, signedPayloads);
-    setTicketOrchestratorOrder(signedOrder);
-    setTicketStatusMessage(executionOrderStatusMessage(signedOrder));
-    if (signedOrder.executionId) setTicketExecutionId(signedOrder.executionId);
-    scheduleOrchestratorStatusPoll(signedOrder);
-    return signedOrder;
+    if (!token) return null;
+    const run = async () => {
+      const signatureRequests = order.signatureRequests ?? [];
+      if (signatureRequests.length === 0) {
+        setTicketError('This order requires a wallet signature, but no signature request was returned.');
+        return null;
+      }
+      setTicketOrchestratorSigning(true);
+      setTicketStatusMessage('Turnkey signature requested. Review and sign to place this order.');
+      const signedPayloads = await signTicketSignatureRequests(signatureRequests);
+      setTicketStatusMessage('Signature collected. Lotus backend is submitting the order.');
+      const signedOrder = await submitExecutionOrderSignatures(token, order.orderId, signedPayloads);
+      setTicketOrchestratorOrder(signedOrder);
+      setTicketStatusMessage(executionOrderStatusMessage(signedOrder));
+      setTicketError(signedOrder.state === 'FAILED'
+        ? executionOrderBlockerMessage(signedOrder) ?? executionOrderStatusMessage(signedOrder)
+        : null);
+      if (signedOrder.executionId) setTicketExecutionId(signedOrder.executionId);
+      scheduleOrchestratorStatusPoll(signedOrder);
+      return signedOrder;
+    };
+    const promise = run().finally(() => {
+      orchestratorSignaturePromiseRef.current = null;
+      setTicketOrchestratorSigning(false);
+    });
+    orchestratorSignaturePromiseRef.current = promise;
+    return promise;
   }, [scheduleOrchestratorStatusPoll, signTicketSignatureRequests, token]);
 
   const runOrchestratorVenueSetup = useCallback(() => {
@@ -4286,10 +4305,13 @@ export const InfraTradingTerminal = ({
   ]);
 
   const placeOrchestratorOrder = useCallback(async () => {
+    if (orchestratorPlacePromiseRef.current) return orchestratorPlacePromiseRef.current;
     if (!executionOrchestratorEnabled || !token) return;
-    setTicketLoading(true);
-    setTicketError(null);
-    try {
+    const run = async () => {
+      setTicketOrchestratorPlacing(true);
+      setTicketLoading(true);
+      setTicketError(null);
+      try {
       const currentAmount = ticketAmount.trim();
       let order = ticketOrchestratorOrder && ticketOrchestratorAmount === currentAmount
         ? ticketOrchestratorOrder
@@ -4345,11 +4367,17 @@ export const InfraTradingTerminal = ({
         return;
       }
       scheduleOrchestratorStatusPoll(placed);
-    } catch (error) {
-      setTicketError(error instanceof Error ? error.message : 'Order placement failed.');
-    } finally {
-      setTicketLoading(false);
-    }
+      } catch (error) {
+        setTicketError(error instanceof Error ? error.message : 'Order placement failed.');
+      } finally {
+        setTicketLoading(false);
+        setTicketOrchestratorPlacing(false);
+        orchestratorPlacePromiseRef.current = null;
+      }
+    };
+    const promise = run();
+    orchestratorPlacePromiseRef.current = promise;
+    return promise;
   }, [
     executionOrchestratorEnabled,
     previewOrchestratorOrder,
@@ -4547,6 +4575,8 @@ export const InfraTradingTerminal = ({
   const ticketNeedsFundingAction = ticketActivationRequired || ticketDepositRequired || ticketLimitlessSetupRequired || ticketPredictFunAuthRequired || ticketOpinionSetupRequired || ticketRouteApprovalRequired || ticketPolymarketClobSyncRequired || ticketPolymarketClobPropagationPending || ticketLimitlessBalanceBlocked;
   const ticketActionDisabled = executionOrchestratorEnabled
     ? !token || !terminalMarketId || !selectedTicketOutcomeId || ticketLoading || ticketActivationPolling ||
+      ticketOrchestratorPlacing ||
+      ticketOrchestratorSigning ||
       ticketSellUnavailable ||
       ticketOrchestratorWaiting ||
       ticketOrchestratorState === 'BLOCKED_ACTION_REQUIRED' ||
@@ -4561,12 +4591,14 @@ export const InfraTradingTerminal = ({
   const ticketActionLabel = executionOrchestratorEnabled
     ? ticketActivationPolling
       ? 'Confirming venue readiness...'
-      : ticketLoading
+      : ticketOrchestratorSigning
         ? ticketOrchestratorState === 'NEEDS_SIGNATURE'
           ? 'Waiting for signature...'
-          : ticketOrchestratorState === 'SUBMITTING'
-            ? 'Submitting order...'
-            : 'Placing order...'
+          : 'Submitting order...'
+      : ticketOrchestratorPlacing || ticketLoading
+        ? ticketOrchestratorState === 'SUBMITTING'
+          ? 'Submitting order...'
+          : 'Placing order...'
       : ticketSellUnavailable
         ? 'No sellable shares'
       : ticketOrchestratorState === 'NEEDS_VENUE_SETUP'
