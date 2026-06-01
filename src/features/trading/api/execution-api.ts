@@ -384,12 +384,13 @@ export function getExecutionStatus(token: string, executionId: string) {
   return apiRequest<ExecutionStatus>(`/execution/${encodeURIComponent(executionId)}/status`, { token });
 }
 
-export function getPositions(token: string, input: { marketId?: string; outcomeId?: string; venue?: string; limit?: number } = {}) {
+export function getPositions(token: string, input: { marketId?: string; outcomeId?: string; venue?: string; limit?: number; markMode?: "cached" | "live" } = {}) {
   const params = new URLSearchParams();
   if (input.marketId) params.set("marketId", input.marketId);
   if (input.outcomeId) params.set("outcomeId", input.outcomeId);
   if (input.venue) params.set("venue", input.venue);
   if (input.limit) params.set("limit", String(input.limit));
+  if (input.markMode) params.set("markMode", input.markMode);
   const query = params.toString();
   return apiRequest<{ generatedAt: string; marketId: string | null; outcomeId: string | null; positions: ExecutionPosition[] }>(
     `/execution/positions${query ? `?${query}` : ""}`,
@@ -402,7 +403,7 @@ type PortfolioReadOptions = {
 };
 
 export function getPortfolioSummary(token: string, options: PortfolioReadOptions = {}) {
-  const request = () => apiRequest<PortfolioSummary>("/execution/portfolio/summary", { token });
+  const request = () => apiRequest<PortfolioSummary>("/execution/portfolio/summary?markMode=cached", { token });
   return options.force
     ? request()
     : staleWhileRevalidate(`execution:portfolio:summary:${token}`, request, { ttlMs: 8_000, maxStaleMs: 90_000 });
@@ -411,6 +412,7 @@ export function getPortfolioSummary(token: string, options: PortfolioReadOptions
 export function getPortfolioTimeSeries(token: string, input: { range?: PortfolioTimeSeriesResponse["range"]; force?: boolean } = {}) {
   const params = new URLSearchParams();
   if (input.range) params.set("range", input.range);
+  params.set("markMode", "cached");
   const query = params.toString();
   const path = `/execution/portfolio/timeseries${query ? `?${query}` : ""}`;
   const request = () => apiRequest<PortfolioTimeSeriesResponse>(path, { token });

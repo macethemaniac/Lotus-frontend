@@ -7,6 +7,7 @@ import { InfraTradingTerminal, type TerminalMarketSelection } from '@/design/moc
 import { PortfolioMockupV2 } from '@/design/mockups/PortfolioMockupV2';
 import type { AuthSession } from '@/features/auth/types';
 import {
+  getMarket,
   getMarketBatchQuotes,
   listMarkets,
   type MarketBatchQuoteItem,
@@ -677,6 +678,27 @@ const marketIdForCatalogMarket = (market: MarketCatalogMarket): string => market
 const venuesForCatalogMarket = (market: MarketCatalogMarket): string[] =>
   Array.from(new Set((market.venues.length ? market.venues : market.venueMarkets.map((item) => item.venue)).map(normalizeVenueId)));
 
+const compactFallbackOutcome = (market: MarketCatalogMarket): DashboardOutcomeRow => {
+  const marketId = marketIdForCatalogMarket(market);
+  const label = market.displayOutcome?.trim() || deriveCandidateOutcomeLabel(market);
+  return {
+    id: market.displayOutcomeKey || canonicalQuoteOutcomeId(label) || 'YES',
+    marketId,
+    eventId: market.eventId ?? market.canonicalEventId,
+    canonicalEventId: market.canonicalEventId,
+    quoteOutcomeId: canonicalQuoteOutcomeId(label),
+    name: normalizeMarketOutcomeLabel(market.title, label),
+    prob: 'Quote',
+    liveStatus: 'not_requested',
+    venues: venuesForCatalogMarket(market),
+    venueMarkets: [],
+    marketType: market.outcomeCount > 2 ? 'multi' : 'binary',
+    marketTitle: market.title,
+    imageUrl: getSafeMediaUrl(market.imageUrl),
+    iconUrl: getSafeMediaUrl(market.iconUrl),
+  };
+};
+
 const binaryCandidateOutcomeRow = (market: MarketCatalogMarket): DashboardOutcomeRow => {
   const marketId = marketIdForCatalogMarket(market);
   return {
@@ -750,7 +772,12 @@ const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardM
       });
     }
   }
-  const outcomeRows = (isBinaryOutcomeMarket ? [binaryCandidateOutcomeRow(market)] : Array.from(outcomeByLabel.values()))
+  const rawOutcomeRows = market.venueMarkets.length === 0
+    ? [compactFallbackOutcome(market)]
+    : isBinaryOutcomeMarket
+      ? [binaryCandidateOutcomeRow(market)]
+      : Array.from(outcomeByLabel.values());
+  const outcomeRows = rawOutcomeRows
     .sort((left, right) => {
       const order = ['YES', 'NO'];
       const leftIndex = order.indexOf(left.quoteOutcomeId);
@@ -1275,6 +1302,25 @@ export const DashboardV2Mockup = ({
       marketType: market.marketType ?? inferTerminalMarketType(market.title),
     });
     onNavigate?.('terminal');
+    if ((market.venueMarkets?.length ?? 0) > 0 || !market.marketId) return;
+    getMarket(market.marketId)
+      .then((response) => {
+        const fullMarket = response.market;
+        setSelectedTerminalMarket((current) => {
+          if (!current || current.marketId !== market.marketId) return current;
+          return {
+            ...current,
+            venueMarkets: fullMarket.venueMarkets,
+            venues: venuesForCatalogMarket(fullMarket),
+            marketType: fullMarket.outcomeCount > 2 ? 'multi' : 'binary',
+            imageUrl: getSafeMediaUrl(fullMarket.imageUrl) ?? current.imageUrl,
+            iconUrl: getSafeMediaUrl(fullMarket.iconUrl) ?? current.iconUrl,
+          };
+        });
+      })
+      .catch(() => {
+        // Terminal can still render compact display data; detail panels will show unavailable metadata.
+      });
   };
 
   const toggleMarketWatch = (marketId: string) => {
@@ -1324,6 +1370,7 @@ export const DashboardV2Mockup = ({
         limit: activePage === 'markets' ? 250 : 80,
         quoteReadyOnly: true,
         routeCoverage,
+        view: 'compact',
       })
         .then((response) => {
           if (cancelled) return;

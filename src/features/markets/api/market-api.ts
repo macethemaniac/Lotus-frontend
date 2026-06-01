@@ -66,6 +66,7 @@ export type MarketCatalogMarket = MarketCatalogMedia & MarketCatalogMetrics & {
   };
   quoteStatus?: "live" | "partial" | "stale" | "unavailable";
   quoteReadyVenueCount?: number;
+  quoteReadyVenues?: string[];
   quoteBlockers?: unknown[];
   lastQuoteAt?: string | null;
   venueMarkets: MarketCatalogVenueMarket[];
@@ -272,6 +273,7 @@ export type MarketListInput = {
   limit?: number;
   quoteReadyOnly?: boolean;
   routeCoverage?: "all" | "single" | "pair" | "tri" | "strict_all";
+  view?: "full" | "compact";
 };
 
 export function listMarketCategories() {
@@ -281,7 +283,11 @@ export function listMarketCategories() {
 export function listMarkets(input: MarketListInput = {}) {
   const params = buildMarketParams(input);
   return staleWhileRevalidate(`markets:${params}`, () =>
-    apiRequest<{ markets: MarketCatalogMarket[]; count: number }>(`/markets${params}`),
+    apiRequest<{ markets: MarketCatalogMarket[]; count: number; view?: "compact" }>(`/markets${params}`)
+      .then((response) => ({
+        ...response,
+        markets: response.markets.map(normalizeMarketCatalogMarket),
+      })),
     { ttlMs: 20_000, maxStaleMs: 5 * 60_000 }
   );
 }
@@ -373,6 +379,14 @@ function buildMarketParams(input: MarketListInput): string {
   if (input.limit) params.set("limit", String(input.limit));
   if (typeof input.quoteReadyOnly === "boolean") params.set("quoteReadyOnly", String(input.quoteReadyOnly));
   if (input.routeCoverage) params.set("routeCoverage", input.routeCoverage);
+  if (input.view === "compact") params.set("view", "compact");
   const query = params.toString();
   return query ? `?${query}` : "";
+}
+
+function normalizeMarketCatalogMarket(market: MarketCatalogMarket): MarketCatalogMarket {
+  return {
+    ...market,
+    venueMarkets: Array.isArray(market.venueMarkets) ? market.venueMarkets : [],
+  };
 }
