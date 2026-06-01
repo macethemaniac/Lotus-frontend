@@ -464,6 +464,12 @@ const parseFiniteNumber = (value: string | number | null | undefined): number | 
   return Number.isFinite(parsed) ? parsed : null;
 };
 
+const slippageTolerancePercentToBps = (value: string): number => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 100;
+  return Math.max(0, Math.min(500, Math.round(parsed * 100)));
+};
+
 const isOpenExecutionPosition = (position: { verifiedSize?: string | number | null }) =>
   (parsePositiveNumber(position.verifiedSize) ?? 0) > 0;
 
@@ -4179,6 +4185,8 @@ export const InfraTradingTerminal = ({
         side,
         amount: backendAmount,
         venuePreference: ticketVenuePreference,
+        orderPolicy: 'FOK',
+        slippageToleranceBps: slippageTolerancePercentToBps(ticketSlippageTolerance),
       });
       if (previewSeq !== orchestratorPreviewSeqRef.current) return null;
       if (order.state === 'EXPIRED' && order.canAutoRenew && options.allowAutoRenew !== false) {
@@ -4212,6 +4220,7 @@ export const InfraTradingTerminal = ({
     selectedTicketOutcome,
     side,
     ticketAmount,
+    ticketSlippageTolerance,
     ticketOutcomeSide,
     ticketVenuePreference,
     token,
@@ -6052,18 +6061,25 @@ export const InfraTradingTerminal = ({
                            },
                          ]).map((option) => {
                            const active = ticketOrderPolicy === option.id;
+                           const disabled = option.id === 'FAK';
                            return (
                              <button
                                key={option.id}
                                type="button"
-                               onClick={() => setTicketOrderPolicy(option.id)}
-                               className={`flex w-full gap-3 rounded-lg border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/60 ${active ? 'border-[#ccff00]/30 bg-[#ccff00]/10' : 'border-zinc-800 bg-zinc-900/40 hover:border-zinc-700 hover:bg-zinc-900'}`}
+                               onClick={() => {
+                                 if (!disabled) setTicketOrderPolicy(option.id);
+                               }}
+                               disabled={disabled}
+                               className={`flex w-full gap-3 rounded-lg border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/60 ${active ? 'border-[#ccff00]/30 bg-[#ccff00]/10' : 'border-zinc-800 bg-zinc-900/40'} ${disabled ? 'cursor-not-allowed opacity-55' : 'hover:border-zinc-700 hover:bg-zinc-900'}`}
                              >
                                <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${active ? 'border-[#ccff00] bg-[#ccff00]/10' : 'border-zinc-600'}`}>
                                  {active && <span className="h-2.5 w-2.5 rounded-full bg-[#ccff00]" />}
                                </span>
                                <span>
-                                 <span className="block text-sm font-black text-zinc-100">{option.title}</span>
+                                 <span className="flex items-center gap-2 text-sm font-black text-zinc-100">
+                                   {option.title}
+                                   {disabled && <span className="rounded-full border border-zinc-700 px-1.5 py-0.5 text-[9px] font-bold uppercase text-zinc-500">Soon</span>}
+                                 </span>
                                  <span className="mt-1 block text-xs font-medium leading-relaxed text-zinc-400">{option.copy}</span>
                                </span>
                              </button>
