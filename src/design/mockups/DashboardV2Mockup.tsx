@@ -131,6 +131,11 @@ type MarketRouteCoverage = NonNullable<MarketListInput['routeCoverage']>;
 type DashboardSortKey = 'volume' | 'liquidity' | 'closing' | 'buys' | 'sells' | 'best_route';
 type ToastPosition = 'top-left' | 'top-center' | 'top-right' | 'bottom-left' | 'bottom-center' | 'bottom-right';
 
+const HOME_MARKET_INITIAL_LIMIT = 30;
+const HOME_MARKET_LOAD_MORE_SIZE = 30;
+const MARKET_CATALOG_FETCH_LIMIT = 250;
+const HOME_LIVE_QUOTE_BATCH_LIMIT = 24;
+
 const watchlistStorageKey = 'lotus.watchlist.marketIds';
 const notificationSettingsStorageKey = 'lotus.notification.settings';
 
@@ -1125,7 +1130,7 @@ export const DashboardV2Mockup = ({
   const [marketQuotes, setMarketQuotes] = useState<Record<string, DashboardMarketQuote>>({});
   const [marketCount, setMarketCount] = useState(0);
   const [marketFilter, setMarketFilter] = useState<MarketQuickFilter>('all');
-  const [homeMarketLimit, setHomeMarketLimit] = useState(15);
+  const [homeMarketLimit, setHomeMarketLimit] = useState(HOME_MARKET_INITIAL_LIMIT);
   const [watchlistIds, setWatchlistIds] = useState<string[]>(loadWatchlistIds);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [notificationsError, setNotificationsError] = useState<string | null>(null);
@@ -1354,7 +1359,7 @@ export const DashboardV2Mockup = ({
   ];
 
   useEffect(() => {
-    setHomeMarketLimit(15);
+    setHomeMarketLimit(HOME_MARKET_INITIAL_LIMIT);
   }, [filterCategory, marketFilter, marketSortKey, searchQuery, selectedCategories, selectedRouteTypes]);
 
   useEffect(() => {
@@ -1367,7 +1372,7 @@ export const DashboardV2Mockup = ({
       listMarkets({
         category: filterCategory,
         search: searchQuery.trim() || undefined,
-        limit: activePage === 'markets' ? 250 : 80,
+        limit: MARKET_CATALOG_FETCH_LIMIT,
         quoteReadyOnly: true,
         routeCoverage,
         view: 'compact',
@@ -1401,7 +1406,9 @@ export const DashboardV2Mockup = ({
     }
 
     let cancelled = false;
-    const quoteLimit = activePage === 'markets' ? 60 : Math.max(homeMarketLimit, 15);
+    const quoteLimit = activePage === 'markets'
+      ? 60
+      : Math.min(homeMarketLimit, HOME_LIVE_QUOTE_BATCH_LIMIT);
     const marketsToQuote = marketRows
       .slice(0, quoteLimit)
       .map((market) => ({
@@ -2172,10 +2179,10 @@ export const DashboardV2Mockup = ({
                 <div className="mt-4 mb-10 flex justify-center">
                   <button
                     type="button"
-                    onClick={() => setHomeMarketLimit((current) => Math.min(current + 15, filteredMarketRows.length))}
+                    onClick={() => setHomeMarketLimit((current) => Math.min(current + HOME_MARKET_LOAD_MORE_SIZE, filteredMarketRows.length))}
                     className="rounded-lg border border-[#ccff00]/40 bg-[#ccff00]/10 px-4 py-2 text-xs font-bold text-[#ccff00] transition hover:bg-[#ccff00]/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
                   >
-                    Load 15 more
+                    Load {HOME_MARKET_LOAD_MORE_SIZE} more
                   </button>
                 </div>
               )}
