@@ -1,10 +1,6 @@
 {
   "rewrites": [
     {
-      "source": "/api/:path*",
-      "destination": "https://api.uselotus.xyz/:path*"
-    },
-    {
       "source": "/:path*",
       "destination": "/index.html"
     }

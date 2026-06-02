@@ -6,7 +6,8 @@ const turnkeyAuthProxyConfigId = import.meta.env.VITE_TURNKEY_AUTH_PROXY_CONFIG_
 const turnkeyAuthProxyUrl = import.meta.env.VITE_TURNKEY_AUTH_PROXY_URL;
 const lotusAuthExchangePath = import.meta.env.VITE_LOTUS_AUTH_EXCHANGE_PATH;
 const executionOrchestratorV1Enabled = import.meta.env.VITE_EXECUTION_ORCHESTRATOR_V1_ENABLED;
-const lotusBackendApiBaseUrl = "https://api.uselotus.xyz";
+const lotusProductionBackendApiBaseUrl = "https://api.uselotus.xyz";
+const lotusStagingBackendApiBaseUrl = "https://staging-api.uselotus.xyz";
 
 function isEnabledFlag(value: unknown): boolean {
   return typeof value === "string" && value.trim().toLowerCase() === "true";
@@ -15,7 +16,7 @@ function isEnabledFlag(value: unknown): boolean {
 export const env = {
   lotusApiBaseUrl: typeof apiBaseUrl === "string" && apiBaseUrl.length > 0
     ? apiBaseUrl.replace(/\/$/, "")
-    : "http://localhost:3000",
+    : defaultLotusApiBaseUrl(),
   turnkeyAuthEnabled: turnkeyEnabled === "true",
   turnkeyApiBaseUrl: typeof turnkeyApiBaseUrl === "string" && turnkeyApiBaseUrl.length > 0
     ? turnkeyApiBaseUrl.replace(/\/$/, "")
@@ -53,13 +54,26 @@ function resolveLotusWsBaseUrl(): string {
       configuredHostname === "127.0.0.1" ||
       configuredHostname === appHostname
     ) {
-      return lotusBackendApiBaseUrl;
+      return deployedLotusApiBaseUrl(appHostname) ?? env.lotusApiBaseUrl;
     }
   } catch {
-    return lotusBackendApiBaseUrl;
+    return deployedLotusApiBaseUrl(appHostname) ?? env.lotusApiBaseUrl;
   }
 
   return env.lotusApiBaseUrl;
+}
+
+function defaultLotusApiBaseUrl(): string {
+  if (typeof window === "undefined") return "http://localhost:3000";
+  return deployedLotusApiBaseUrl(window.location.hostname.toLowerCase()) ?? "http://localhost:3000";
+}
+
+function deployedLotusApiBaseUrl(hostname: string): string | undefined {
+  if (hostname === "app.uselotus.xyz") return lotusProductionBackendApiBaseUrl;
+  if (hostname === "staging.uselotus.xyz" || hostname.endsWith(".vercel.app")) {
+    return lotusStagingBackendApiBaseUrl;
+  }
+  return undefined;
 }
 
 function isDeployedFrontendHost(hostname: string): boolean {
