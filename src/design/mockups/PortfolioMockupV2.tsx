@@ -924,7 +924,7 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
         getPortfolioTimeSeries(token, { range: performanceRange, force: options.force }),
         getAccountSnapshot(token, { force: options.force }),
         getVenueBalances(token, { force: options.force }),
-        listMarkets({ limit: 250 }),
+        listMarkets({ limit: 250, view: 'compact' }),
       ]);
       if (portfolioRefreshSeq.current !== requestSeq) {
         return;
