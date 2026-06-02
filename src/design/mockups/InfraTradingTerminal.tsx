@@ -4325,7 +4325,11 @@ export const InfraTradingTerminal = ({
       setTicketError(null);
       try {
       const currentAmount = ticketAmount.trim();
-      let order = ticketOrchestratorOrder && ticketOrchestratorAmount === currentAmount
+      const reusableCurrentOrder = ticketOrchestratorOrder && ticketOrchestratorAmount === currentAmount &&
+        ticketOrchestratorOrder.state !== 'FAILED' &&
+        ticketOrchestratorOrder.state !== 'EXPIRED' &&
+        ticketOrchestratorOrder.state !== 'BLOCKED_ACTION_REQUIRED';
+      let order = reusableCurrentOrder
         ? ticketOrchestratorOrder
         : await previewOrchestratorOrder({ quiet: true });
       if (!order) {
@@ -4593,7 +4597,8 @@ export const InfraTradingTerminal = ({
       ticketOrchestratorWaiting ||
       ticketOrchestratorState === 'BLOCKED_ACTION_REQUIRED' ||
       ticketOrchestratorState === 'SUBMITTING' ||
-      ticketOrchestratorTerminal
+      ticketOrchestratorState === 'SUBMITTED' ||
+      ticketOrchestratorState === 'FILLED'
     : !token || !terminalMarketId || !selectedTicketOutcomeId || ticketLoading || ticketActivationPolling ||
       ticketSellUnavailable ||
       ticketPolymarketClobSyncRequired ||
@@ -4626,7 +4631,7 @@ export const InfraTradingTerminal = ({
       : ticketOrchestratorState === 'FILLED'
         ? 'Filled'
       : ticketOrchestratorState === 'FAILED'
-        ? 'Order failed'
+        ? 'Refresh route'
       : ticketOrchestratorState === 'EXPIRED' || ticketOrchestratorAutoRenewFailed
         ? 'Refresh route'
       : 'Place order'
