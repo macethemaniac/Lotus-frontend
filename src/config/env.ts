@@ -14,9 +14,7 @@ function isEnabledFlag(value: unknown): boolean {
 }
 
 export const env = {
-  lotusApiBaseUrl: typeof apiBaseUrl === "string" && apiBaseUrl.length > 0
-    ? apiBaseUrl.replace(/\/$/, "")
-    : defaultLotusApiBaseUrl(),
+  lotusApiBaseUrl: configuredLotusApiBaseUrl(apiBaseUrl),
   turnkeyAuthEnabled: turnkeyEnabled === "true",
   turnkeyApiBaseUrl: typeof turnkeyApiBaseUrl === "string" && turnkeyApiBaseUrl.length > 0
     ? turnkeyApiBaseUrl.replace(/\/$/, "")
@@ -66,6 +64,27 @@ function resolveLotusWsBaseUrl(): string {
 function defaultLotusApiBaseUrl(): string {
   if (typeof window === "undefined") return "http://localhost:3000";
   return deployedLotusApiBaseUrl(window.location.hostname.toLowerCase()) ?? "http://localhost:3000";
+}
+
+function configuredLotusApiBaseUrl(value: unknown): string {
+  if (typeof value !== "string" || value.length === 0) return defaultLotusApiBaseUrl();
+  const trimmed = value.replace(/\/$/, "");
+
+  try {
+    const configured = new URL(trimmed);
+    const configuredHostname = configured.hostname.toLowerCase();
+    const appHostname = typeof window === "undefined" ? "" : window.location.hostname.toLowerCase();
+
+    if (isDeployedFrontendHost(configuredHostname)) {
+      return deployedLotusApiBaseUrl(appHostname) ??
+        deployedLotusApiBaseUrl(configuredHostname) ??
+        defaultLotusApiBaseUrl();
+    }
+  } catch {
+    return trimmed;
+  }
+
+  return trimmed;
 }
 
 function deployedLotusApiBaseUrl(hostname: string): string | undefined {

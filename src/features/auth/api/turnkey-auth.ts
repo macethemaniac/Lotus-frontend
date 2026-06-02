@@ -26,26 +26,12 @@ export async function exchangeTurnkeySessionForLotusJwt(input: {
     turnkeyOrganizationId: input.turnkeyOrganizationId,
   };
 
-  try {
-    return await retryTurnkeyExchange(() =>
-      apiRequest<TurnkeyLoginResult>(env.lotusAuthExchangePath, {
-        method: "POST",
-        body: payload,
-      }),
-    );
-  } catch (error) {
-    if (!isRetryableLotusExchangeError(error)) {
-      throw error;
-    }
-
-    return retryTurnkeyExchange(() =>
-      apiRequest<TurnkeyLoginResult>(env.lotusAuthExchangePath, {
-        baseUrl: "/api",
-        method: "POST",
-        body: payload,
-      }),
-    );
-  }
+  return retryTurnkeyExchange(() =>
+    apiRequest<TurnkeyLoginResult>(env.lotusAuthExchangePath, {
+      method: "POST",
+      body: payload,
+    }),
+  );
 }
 
 export function assertTurnkeyConfigured(): void {
