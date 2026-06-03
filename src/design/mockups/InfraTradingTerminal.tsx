@@ -78,6 +78,8 @@ import {
 import { ApiClientError } from '@/lib/api/http-client';
 import { openExecutionSocket, type ExecutionTopic, type ExecutionWsState } from '@/lib/ws/execution-ws-client';
 
+const ORDERBOOK_DISPLAY_REST_FALLBACK_DELAY_MS = 1_500;
+
 const walletAddressEquals = (left?: string | null, right?: string | null): boolean => {
   if (!left || !right) return false;
   if (left.startsWith('0x') && right.startsWith('0x')) return left.toLowerCase() === right.toLowerCase();
@@ -4095,7 +4097,7 @@ export const InfraTradingTerminal = ({
     const fallbackTimer = window.setTimeout(() => {
       if (cancelled || lastOrderbookWsUpdateAtRef.current !== null) return;
       void loadFallbackOrderbook();
-    }, 3_500);
+    }, ORDERBOOK_DISPLAY_REST_FALLBACK_DELAY_MS);
     return () => {
       cancelled = true;
       window.clearTimeout(fallbackTimer);
@@ -4184,7 +4186,6 @@ export const InfraTradingTerminal = ({
           setOrderbookWsState(state);
           if (state === 'open') {
             reconnectAttempt = 0;
-            lastOrderbookWsUpdateAtRef.current = Date.now();
           }
           if (state === 'closed' || state === 'error') {
             if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
@@ -4225,6 +4226,7 @@ export const InfraTradingTerminal = ({
           }
         },
       });
+      subscribeAll();
       client.socket.addEventListener('open', subscribeAll);
       client.socket.addEventListener('message', subscribeOnGatewayReady);
       if (client.socket.readyState === WebSocket.OPEN) subscribeAll();

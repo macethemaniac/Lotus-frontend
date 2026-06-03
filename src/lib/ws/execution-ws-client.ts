@@ -38,7 +38,17 @@ export function openExecutionSocket(input: {
 } {
   input.onStateChange("connecting");
   const socket = new WebSocket(lotusWsUrl());
-  socket.addEventListener("open", () => input.onStateChange("open"));
+  const activeTopics = new Set<ExecutionTopic>();
+  const send = (message: unknown) => {
+    if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
+  };
+  const flushSubscriptions = () => {
+    for (const topic of activeTopics) send({ action: "subscribe", topic });
+  };
+  socket.addEventListener("open", () => {
+    input.onStateChange("open");
+    flushSubscriptions();
+  });
   socket.addEventListener("close", () => input.onStateChange("closed"));
   socket.addEventListener("error", () => input.onStateChange("error"));
   socket.addEventListener("message", (event) => {
@@ -49,10 +59,12 @@ export function openExecutionSocket(input: {
   return {
     socket,
     subscribe: (topic) => {
-      if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ action: "subscribe", topic }));
+      activeTopics.add(topic);
+      send({ action: "subscribe", topic });
     },
     unsubscribe: (topic) => {
-      if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ action: "unsubscribe", topic }));
+      activeTopics.delete(topic);
+      send({ action: "unsubscribe", topic });
     },
   };
 }
