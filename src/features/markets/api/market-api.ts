@@ -139,6 +139,10 @@ export type MarketOrderbookResponse = {
   spread: string | null;
   status: "live" | "partial" | "stale" | "unavailable";
   blockers: Array<{ venue: string; reason: string; venueMarketId?: string; venueOutcomeId?: string; detailsCode?: string }>;
+  stream?: {
+    primaryTopic?: string | null;
+    topics?: string[];
+  } | null;
 };
 
 export type MarketOrderbookSnapshotStatus = "live" | "stale" | "blocked" | "resyncing";
@@ -154,8 +158,10 @@ export type MarketOrderbookStreamLevel = {
 };
 
 export type MarketOrderbookStreamPayload = {
-  canonicalMarketId: string;
+  canonicalMarketId?: string;
+  marketId?: string;
   canonicalOutcomeId?: string | null;
+  outcomeId?: string | null;
   venue: string;
   venueMarketId?: string | null;
   venueOutcomeId?: string | null;
