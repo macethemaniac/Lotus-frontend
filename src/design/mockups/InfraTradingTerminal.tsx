@@ -4001,6 +4001,7 @@ export const InfraTradingTerminal = ({
       setOrderbookStreamTopics([]);
       setOrderbookLoading(true);
       setOrderbookError(null);
+      lastOrderbookWsUpdateAtRef.current = null;
       try {
         const response = await getMarketOrderbook(orderbookMarketId, {
           outcomeId: orderbookQuoteOutcomeId,
@@ -4026,17 +4027,10 @@ export const InfraTradingTerminal = ({
       }
     };
     void refreshOrderbook();
-    const shouldPollRestFallback = orderbookWsState === 'idle' || orderbookWsState === 'closed' || orderbookWsState === 'error';
-    const interval = shouldPollRestFallback
-      ? window.setInterval(() => {
-        void refreshOrderbook();
-      }, 10_000)
-      : null;
     return () => {
       cancelled = true;
-      if (interval !== null) window.clearInterval(interval);
     };
-  }, [orderbookMarketId, orderbookNotFoundKey, orderbookQuoteOutcomeId, orderbookWsState]);
+  }, [orderbookMarketId, orderbookNotFoundKey, orderbookQuoteOutcomeId]);
 
   React.useEffect(() => {
     if (!orderbookMarketId || orderbookStreamTopics.length === 0) {
@@ -4056,6 +4050,15 @@ export const InfraTradingTerminal = ({
 
     const subscribeAll = () => {
       for (const topic of topics) client?.subscribe(topic);
+    };
+
+    const subscribeOnGatewayReady = (message: MessageEvent) => {
+      try {
+        const parsed = JSON.parse(String(message.data)) as { type?: string };
+        if (parsed.type === 'GATEWAY_READY') subscribeAll();
+      } catch {
+        // Ignore non-JSON keepalive frames.
+      }
     };
 
     const connect = () => {
@@ -4132,6 +4135,7 @@ export const InfraTradingTerminal = ({
         },
       });
       client.socket.addEventListener('open', subscribeAll);
+      client.socket.addEventListener('message', subscribeOnGatewayReady);
       if (client.socket.readyState === WebSocket.OPEN) subscribeAll();
     };
 
@@ -4142,6 +4146,7 @@ export const InfraTradingTerminal = ({
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
       if (client) {
         client.socket.removeEventListener('open', subscribeAll);
+        client.socket.removeEventListener('message', subscribeOnGatewayReady);
         for (const topic of topics) client.unsubscribe(topic);
         client.socket.close();
       }
