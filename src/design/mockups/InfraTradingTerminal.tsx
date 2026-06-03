@@ -825,23 +825,22 @@ const orderbookStatusFromSnapshot = (
 const mergeOrderbookStreamUpdate = (
   current: MarketOrderbookResponse | null,
   payload: MarketOrderbookStreamPayload,
-  selectedVenue: string,
   depth = 20
 ): MarketOrderbookResponse => {
   const receivedAt = new Date().toISOString();
   const venueBook = normalizeStreamVenueBook(payload, receivedAt, current?.depth ?? depth);
   const sameVenue = (venue: MarketOrderbookVenue) =>
     toBackendVenueId(venue.venue) === toBackendVenueId(venueBook.venue);
-  const existingVenues = selectedVenue === 'ALL' ? current?.venues ?? [] : [];
+  const existingVenues = current?.venues ?? [];
   const venues = [...existingVenues.filter((venue) => !sameVenue(venue)), venueBook];
   const activeVenues = venues.filter((venue) => venue.blockers.length === 0 && (venue.bids.length > 0 || venue.asks.length > 0));
   const bids = sortAndCumulativeLevels(
-    selectedVenue === 'ALL' ? activeVenues.flatMap((venue) => venue.bids) : venueBook.bids,
+    activeVenues.flatMap((venue) => venue.bids),
     'bid',
     current?.depth ?? depth
   );
   const asks = sortAndCumulativeLevels(
-    selectedVenue === 'ALL' ? activeVenues.flatMap((venue) => venue.asks) : venueBook.asks,
+    activeVenues.flatMap((venue) => venue.asks),
     'ask',
     current?.depth ?? depth
   );
@@ -867,8 +866,34 @@ const mergeOrderbookStreamUpdate = (
     bestAsk: stats.bestAsk,
     midpoint: stats.midpoint,
     spread: stats.spread,
-    status: orderbookStatusFromSnapshot(payload.snapshotStatus, hasLevels, selectedVenue === 'ALL' && activeVenues.length > 0),
+    status: orderbookStatusFromSnapshot(payload.snapshotStatus, hasLevels, activeVenues.length > 0),
     blockers,
+  };
+};
+
+const filterOrderbookForVenue = (
+  orderbook: MarketOrderbookResponse | null,
+  selectedVenue: string,
+): MarketOrderbookResponse | null => {
+  if (!orderbook || selectedVenue === 'ALL') return orderbook;
+  const backendVenue = toBackendVenueId(selectedVenue);
+  const venues = orderbook.venues.filter((venue) => toBackendVenueId(venue.venue) === backendVenue);
+  const activeVenues = venues.filter((venue) => venue.blockers.length === 0 && (venue.bids.length > 0 || venue.asks.length > 0));
+  const bids = sortAndCumulativeLevels(activeVenues.flatMap((venue) => venue.bids), 'bid', orderbook.depth);
+  const asks = sortAndCumulativeLevels(activeVenues.flatMap((venue) => venue.asks), 'ask', orderbook.depth);
+  const stats = bookStats(bids, asks);
+  const hasLevels = bids.length > 0 || asks.length > 0;
+  return {
+    ...orderbook,
+    venues,
+    bids,
+    asks,
+    bestBid: stats.bestBid,
+    bestAsk: stats.bestAsk,
+    midpoint: stats.midpoint,
+    spread: stats.spread,
+    status: hasLevels ? 'live' : 'unavailable',
+    blockers: orderbook.blockers.filter((blocker) => toBackendVenueId(blocker.venue) === backendVenue),
   };
 };
 
@@ -2706,18 +2731,20 @@ export const InfraTradingTerminal = ({
     () => [...new Set([...(orderbook?.venues.map((venue) => venue.venue) ?? []), ...marketVenueList.map((venue) => venue.toUpperCase())])].sort(),
     [marketVenueList, orderbook?.venues]
   );
+  const displayOrderbook = useMemo(
+    () => filterOrderbookForVenue(orderbook, orderbookVenue),
+    [orderbook, orderbookVenue]
+  );
   const orderbookLiveVenues = useMemo(() => {
-    const selectedVenue = toBackendVenueId(orderbookVenue);
-    return (orderbook?.venues ?? []).filter((venue) => {
-      if (selectedVenue !== 'ALL' && toBackendVenueId(venue.venue) !== selectedVenue) return false;
+    return (displayOrderbook?.venues ?? []).filter((venue) => {
       return venue.blockers.length === 0 && (venue.bids.length > 0 || venue.asks.length > 0 || Boolean(venue.bestBid || venue.bestAsk));
     });
-  }, [orderbook?.venues, orderbookVenue]);
+  }, [displayOrderbook?.venues]);
   const orderbookLiveVenueCount = orderbookLiveVenues.length;
   const orderbookSnapshotStatus = orderbookLiveVenueCount > 0
     ? 'live'
     : latestOrderbookStream?.snapshotStatus
-      ?? (orderbook?.status === 'stale' ? 'stale' : orderbook?.status === 'unavailable' ? 'blocked' : orderbook ? 'live' : undefined);
+      ?? (displayOrderbook?.status === 'stale' ? 'stale' : displayOrderbook?.status === 'unavailable' ? 'blocked' : displayOrderbook ? 'live' : undefined);
   const orderbookFreshness = streamFreshnessLabel(latestOrderbookStream?.freshnessMs);
   const orderbookStreamBlockers = latestOrderbookStream?.blockers
     ?.map(normalizeStreamBlocker)
@@ -4138,9 +4165,8 @@ export const InfraTradingTerminal = ({
               return;
             }
             if (!payload.venue) return;
-            if (orderbookVenue !== 'ALL' && toBackendVenueId(payload.venue) !== toBackendVenueId(orderbookVenue)) return;
             setLatestOrderbookStream(payload);
-            setOrderbook((current) => mergeOrderbookStreamUpdate(current, payload, orderbookVenue));
+            setOrderbook((current) => mergeOrderbookStreamUpdate(current, payload));
             applyStreamPriceToOutcomes(payload);
             setOrderbookError(null);
             return;
@@ -4168,7 +4194,7 @@ export const InfraTradingTerminal = ({
         client.socket.close();
       }
     };
-  }, [marketType, orderbookMarketId, orderbookQuoteOutcomeId, orderbookStreamTopics, orderbookVenue]);
+  }, [marketType, orderbookMarketId, orderbookQuoteOutcomeId, orderbookStreamTopics]);
 
   React.useEffect(() => {
     if (!orderbookMarketId || orderbookWsState !== 'open') return;
@@ -5300,16 +5326,16 @@ export const InfraTradingTerminal = ({
                            <div className="absolute left-1/2 -translate-x-1/2 top-full mt-2 hidden group-hover:flex flex-col w-[260px] bg-zinc-900 border border-zinc-700/50 rounded-lg p-3 shadow-xl z-50 pointer-events-none">
                                <div className="text-zinc-200 text-[11px] font-sans pb-2 border-b border-zinc-800 mb-2">
                                    <div className="flex justify-between items-center">
-                                       <span className="font-semibold text-white">Spread: {formatBookPrice(orderbook?.spread)}</span>
+                                       <span className="font-semibold text-white">Spread: {formatBookPrice(displayOrderbook?.spread)}</span>
                                        <span className="text-[10px] text-zinc-500">(Combined effective spread)</span>
                                    </div>
                                </div>
                                <div className="flex justify-between text-[11px] font-sans mb-1 text-zinc-300">
-                                   <span>Best Bid: <span className="text-emerald-400 font-mono font-bold">{formatBookPrice(orderbook?.bestBid)}</span></span>
-                                   <span>Best Ask: <span className="text-pink-400 font-mono font-bold">{formatBookPrice(orderbook?.bestAsk)}</span></span>
+                                   <span>Best Bid: <span className="text-emerald-400 font-mono font-bold">{formatBookPrice(displayOrderbook?.bestBid)}</span></span>
+                                   <span>Best Ask: <span className="text-pink-400 font-mono font-bold">{formatBookPrice(displayOrderbook?.bestAsk)}</span></span>
                                </div>
                                <div className="text-[11px] font-sans text-zinc-400">
-                                   Status: <span className="font-mono text-zinc-300 font-bold">{orderbookLiveVenueCount > 0 ? `${orderbookLiveVenueCount} live venue${orderbookLiveVenueCount === 1 ? '' : 's'}` : orderbook?.status ?? 'pending'}</span>
+                                   Status: <span className="font-mono text-zinc-300 font-bold">{orderbookLiveVenueCount > 0 ? `${orderbookLiveVenueCount} live venue${orderbookLiveVenueCount === 1 ? '' : 's'}` : displayOrderbook?.status ?? 'pending'}</span>
                                </div>
                                <div className="text-[11px] font-sans text-zinc-400 mt-1">
                                    Feed: <span className="font-mono text-zinc-300 font-bold">{orderbookWsLabel}</span>
@@ -5356,12 +5382,12 @@ export const InfraTradingTerminal = ({
                        Live quotes reconnecting{orderbookFreshness ? ` (${orderbookFreshness})` : ''}.
                      </div>
                    )}
-                   {!orderbookLoading && !orderbookError && orderbook && orderbook.asks.length === 0 && orderbook.bids.length === 0 && (
+                   {!orderbookLoading && !orderbookError && displayOrderbook && displayOrderbook.asks.length === 0 && displayOrderbook.bids.length === 0 && (
                      <div className="px-4 py-6 text-center text-[11px] font-semibold text-zinc-500">
                        Live quotes reconnecting...
                      </div>
                    )}
-                   {orderbook?.asks.slice().reverse().map((level, i) => (
+                   {displayOrderbook?.asks.slice().reverse().map((level, i) => (
                      <div key={`ask-${level.venue}-${level.price}-${i}`} className={`flex justify-between px-4 py-0.5 hover:bg-zinc-800/50 ${i === 0 ? 'mb-1' : ''} ${i < 3 ? 'bg-[#E52B50]/5' : ''}`}>
                        <span className="w-12 text-pink-500 font-bold">{formatBookPrice(level.price)}</span>
                        <span className="w-16 flex items-center gap-1.5 text-zinc-500 uppercase text-[9px] font-bold tracking-wider">
@@ -5391,10 +5417,10 @@ export const InfraTradingTerminal = ({
                    
                    <div className="flex justify-between px-4 py-1 bg-zinc-950 text-[10px] text-zinc-500 border-y border-zinc-800 font-sans tracking-wide">
                        <span className="font-bold">Spread</span>
-                       <span className="font-mono">{formatBookPrice(orderbook?.spread)}</span>
+                       <span className="font-mono">{formatBookPrice(displayOrderbook?.spread)}</span>
                    </div>
 
-                   {orderbook?.bids.map((level, i) => (
+                   {displayOrderbook?.bids.map((level, i) => (
                      <div key={`bid-${level.venue}-${level.price}-${i}`} className={`flex justify-between px-4 py-0.5 hover:bg-zinc-800/50 ${i === 0 ? 'mt-1' : ''} ${i < 3 ? 'bg-[#ccff00]/5' : ''}`}>
                        <span className="w-12 text-emerald-400 font-bold">{formatBookPrice(level.price)}</span>
                        <span className="w-16 flex items-center gap-1.5 text-zinc-500 uppercase text-[9px] font-bold tracking-wider">
