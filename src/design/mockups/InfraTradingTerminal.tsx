@@ -902,7 +902,7 @@ const isMarketOrderbookStreamPayload = (payload: unknown): payload is MarketOrde
   const record = payload as Record<string, unknown>;
   const hasMarketId = typeof record.canonicalMarketId === 'string' || typeof record.marketId === 'string';
   const isInitialSnapshot = isOrderbookInitialSnapshotPayload(payload);
-  return hasMarketId && (isInitialSnapshot || typeof record.venue === 'string');
+  return isInitialSnapshot || (hasMarketId && typeof record.venue === 'string');
 };
 
 const streamOutcomeMatches = (streamOutcomeId: string | null | undefined, selectedOutcomeId: string | null | undefined): boolean => {
@@ -4088,9 +4088,10 @@ export const InfraTradingTerminal = ({
       const blocker = (payload.blockers ?? []).map(normalizeStreamBlocker).find(Boolean) ?? null;
       if (quotePrice === null && !blocker) return;
       const payloadVenue = payload.venue ?? null;
+      const effectiveOutcomeId = streamPayloadOutcomeId(payload) ?? expectedOutcomeId;
       setTerminalOutcomes((current) => current.map((outcome) => {
         if (outcome.marketId !== expectedMarketId) return outcome;
-        if (!streamOutcomeMatches(streamPayloadOutcomeId(payload), outcome.quoteOutcomeId)) return outcome;
+        if (!streamOutcomeMatches(effectiveOutcomeId, outcome.quoteOutcomeId)) return outcome;
         const yesPrice = quotePrice !== null ? formatProbabilityPrice(quotePrice) : 'Quote';
         const noPrice = quotePrice !== null && marketType === 'binary' ? formatProbabilityPrice(1 - quotePrice) : 'Quote';
         if (!payloadVenue) {
@@ -4160,8 +4161,10 @@ export const InfraTradingTerminal = ({
         onEvent: (event) => {
           if (!active || !topicSet.has(event.topic) || !isMarketOrderbookStreamPayload(event.payload)) return;
           const payload = event.payload;
-          if (streamPayloadMarketId(payload) !== expectedMarketId) return;
-          if (!streamOutcomeMatches(streamPayloadOutcomeId(payload), expectedOutcomeId)) return;
+          const payloadMarketId = streamPayloadMarketId(payload);
+          const payloadOutcomeId = streamPayloadOutcomeId(payload);
+          if (payloadMarketId && payloadMarketId !== expectedMarketId) return;
+          if (payloadOutcomeId && !streamOutcomeMatches(payloadOutcomeId, expectedOutcomeId)) return;
 
           lastOrderbookWsUpdateAtRef.current = Date.now();
 
