@@ -4048,6 +4048,50 @@ export const InfraTradingTerminal = ({
     const expectedMarketId = orderbookMarketId;
     const expectedOutcomeId = orderbookQuoteOutcomeId ?? null;
 
+    const applyStreamPriceToOutcomes = (payload: MarketOrderbookStreamPayload) => {
+      const quotePrice = orderbookNumericValue(payload.bestAsk ?? payload.bestBid);
+      const blocker = (payload.blockers ?? []).map(normalizeStreamBlocker).find(Boolean) ?? null;
+      if (quotePrice === null && !blocker) return;
+      const payloadVenue = payload.venue ?? null;
+      setTerminalOutcomes((current) => current.map((outcome) => {
+        if (outcome.marketId !== expectedMarketId) return outcome;
+        if (!streamOutcomeMatches(streamPayloadOutcomeId(payload), outcome.quoteOutcomeId)) return outcome;
+        const yesPrice = quotePrice !== null ? formatProbabilityPrice(quotePrice) : 'Quote';
+        const noPrice = quotePrice !== null && marketType === 'binary' ? formatProbabilityPrice(1 - quotePrice) : 'Quote';
+        if (!payloadVenue) {
+          return {
+            ...outcome,
+            yesPrice: yesPrice !== 'Quote' ? yesPrice : outcome.yesPrice,
+            noPrice: noPrice !== 'Quote' ? noPrice : outcome.noPrice,
+            status: quotePrice !== null ? 'live' : outcome.status,
+            blocker: blocker ?? outcome.blocker,
+          };
+        }
+        const nextVenueQuote: TerminalVenueQuote = {
+          venue: payloadVenue,
+          yesPrice,
+          noPrice,
+          blocker,
+        };
+        const venueQuotes = [
+          ...outcome.venueQuotes.filter((quote) => toBackendVenueId(quote.venue) !== toBackendVenueId(payloadVenue)),
+          nextVenueQuote,
+        ];
+        const primaryQuote = quotePrice !== null && (!outcome.primaryVenue || toBackendVenueId(outcome.primaryVenue) === toBackendVenueId(payloadVenue))
+          ? nextVenueQuote
+          : null;
+        return {
+          ...outcome,
+          yesPrice: primaryQuote?.yesPrice ?? outcome.yesPrice,
+          noPrice: primaryQuote?.noPrice ?? outcome.noPrice,
+          primaryVenue: outcome.primaryVenue ?? payloadVenue,
+          venueQuotes,
+          status: quotePrice !== null ? 'live' : outcome.status,
+          blocker: blocker ?? outcome.blocker,
+        };
+      }));
+    };
+
     const subscribeAll = () => {
       for (const topic of topics) client?.subscribe(topic);
     };
@@ -4089,6 +4133,7 @@ export const InfraTradingTerminal = ({
           if (event.type === 'MARKET_ORDERBOOK_UPDATE') {
             if (isOrderbookInitialSnapshotPayload(payload)) {
               setOrderbook((current) => normalizeOrderbookInitialSnapshot(payload, current, expectedMarketId, expectedOutcomeId));
+              applyStreamPriceToOutcomes(payload);
               setOrderbookError(null);
               return;
             }
@@ -4096,41 +4141,13 @@ export const InfraTradingTerminal = ({
             if (orderbookVenue !== 'ALL' && toBackendVenueId(payload.venue) !== toBackendVenueId(orderbookVenue)) return;
             setLatestOrderbookStream(payload);
             setOrderbook((current) => mergeOrderbookStreamUpdate(current, payload, orderbookVenue));
+            applyStreamPriceToOutcomes(payload);
             setOrderbookError(null);
             return;
           }
 
           if (event.type === 'MARKET_QUOTE_UPDATE') {
-            if (!payload.venue) return;
-            const quotePrice = orderbookNumericValue(payload.bestAsk ?? payload.bestBid);
-            const blocker = (payload.blockers ?? []).map(normalizeStreamBlocker).find(Boolean) ?? null;
-            if (quotePrice === null && !blocker) return;
-            setTerminalOutcomes((current) => current.map((outcome) => {
-              if (outcome.marketId !== expectedMarketId) return outcome;
-              if (!streamOutcomeMatches(streamPayloadOutcomeId(payload), outcome.quoteOutcomeId)) return outcome;
-              const nextVenueQuote: TerminalVenueQuote = {
-                venue: payload.venue ?? 'UNKNOWN',
-                yesPrice: quotePrice !== null ? formatProbabilityPrice(quotePrice) : 'Quote',
-                noPrice: quotePrice !== null && marketType === 'binary' ? formatProbabilityPrice(1 - quotePrice) : 'Quote',
-                blocker,
-              };
-              const venueQuotes = [
-                ...outcome.venueQuotes.filter((quote) => toBackendVenueId(quote.venue) !== toBackendVenueId(payload.venue ?? 'UNKNOWN')),
-                nextVenueQuote,
-              ];
-              const primaryQuote = quotePrice !== null && (!outcome.primaryVenue || toBackendVenueId(outcome.primaryVenue) === toBackendVenueId(payload.venue ?? 'UNKNOWN'))
-                ? nextVenueQuote
-                : null;
-              return {
-                ...outcome,
-                yesPrice: primaryQuote?.yesPrice ?? outcome.yesPrice,
-                noPrice: primaryQuote?.noPrice ?? outcome.noPrice,
-                primaryVenue: outcome.primaryVenue ?? payload.venue,
-                venueQuotes,
-                status: quotePrice !== null ? 'live' : outcome.status,
-                blocker: blocker ?? outcome.blocker,
-              };
-            }));
+            applyStreamPriceToOutcomes(payload);
           }
         },
       });
