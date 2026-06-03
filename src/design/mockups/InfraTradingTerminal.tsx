@@ -4040,21 +4040,20 @@ export const InfraTradingTerminal = ({
 
   React.useEffect(() => {
     let cancelled = false;
-    const refreshOrderbook = async () => {
-      const requestKey = `${orderbookMarketId ?? 'none'}:${orderbookQuoteOutcomeId ?? 'none'}`;
-      if (!orderbookMarketId) {
-        setOrderbook(null);
-        setOrderbookError(null);
-        setOrderbookStreamTopics([]);
-        return;
-      }
-      if (orderbookNotFoundKey === requestKey) return;
-      const localTopics = [orderbookTopicForSelection(orderbookMarketId, orderbookQuoteOutcomeId)];
-      setLatestOrderbookStream(null);
-      setOrderbookStreamTopics((current) => sameTopicList(current, localTopics) ? current : localTopics);
-      setOrderbookLoading(true);
+    const requestKey = `${orderbookMarketId ?? 'none'}:${orderbookQuoteOutcomeId ?? 'none'}`;
+    if (!orderbookMarketId) {
+      setOrderbook(null);
       setOrderbookError(null);
-      lastOrderbookWsUpdateAtRef.current = null;
+      setOrderbookStreamTopics([]);
+      setOrderbookLoading(false);
+      return;
+    }
+    if (orderbookNotFoundKey === requestKey) return;
+
+    const localTopics = [orderbookTopicForSelection(orderbookMarketId, orderbookQuoteOutcomeId)];
+    const loadFallbackOrderbook = async () => {
+      if (orderbookRestRecoveryInFlightRef.current) return;
+      orderbookRestRecoveryInFlightRef.current = true;
       try {
         const response = await getMarketOrderbook(orderbookMarketId, {
           outcomeId: orderbookQuoteOutcomeId,
@@ -4065,6 +4064,8 @@ export const InfraTradingTerminal = ({
           const nextTopics = mergeOrderbookStreamTopics(localTopics, normalizeOrderbookStreamTopics(response.stream?.topics));
           setOrderbookStreamTopics((current) => sameTopicList(current, nextTopics) ? current : nextTopics);
           setOrderbookNotFoundKey(null);
+          setOrderbookError(null);
+          lastOrderbookWsUpdateAtRef.current = Date.now();
         }
       } catch (error) {
         if (!cancelled) {
@@ -4078,12 +4079,26 @@ export const InfraTradingTerminal = ({
           setOrderbookError(safeMarketDataError(error, 'orderbook'));
         }
       } finally {
+        orderbookRestRecoveryInFlightRef.current = false;
         if (!cancelled) setOrderbookLoading(false);
       }
     };
+
+    const refreshOrderbook = () => {
+      setLatestOrderbookStream(null);
+      setOrderbookStreamTopics((current) => sameTopicList(current, localTopics) ? current : localTopics);
+      setOrderbookLoading(true);
+      setOrderbookError(null);
+      lastOrderbookWsUpdateAtRef.current = null;
+    };
     void refreshOrderbook();
+    const fallbackTimer = window.setTimeout(() => {
+      if (cancelled || lastOrderbookWsUpdateAtRef.current !== null) return;
+      void loadFallbackOrderbook();
+    }, 3_500);
     return () => {
       cancelled = true;
+      window.clearTimeout(fallbackTimer);
     };
   }, [orderbookMarketId, orderbookNotFoundKey, orderbookQuoteOutcomeId]);
 
@@ -4192,6 +4207,7 @@ export const InfraTradingTerminal = ({
             if (isOrderbookInitialSnapshotPayload(payload)) {
               setOrderbook((current) => normalizeOrderbookInitialSnapshot(payload, current, expectedMarketId, expectedOutcomeId));
               applyStreamPriceToOutcomes(payload);
+              setOrderbookLoading(false);
               setOrderbookError(null);
               return;
             }
@@ -4199,6 +4215,7 @@ export const InfraTradingTerminal = ({
             setLatestOrderbookStream(payload);
             setOrderbook((current) => mergeOrderbookStreamUpdate(current, payload));
             applyStreamPriceToOutcomes(payload);
+            setOrderbookLoading(false);
             setOrderbookError(null);
             return;
           }
