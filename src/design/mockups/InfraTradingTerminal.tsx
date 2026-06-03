@@ -937,8 +937,25 @@ const normalizeOrderbookStreamTopics = (topics: unknown): ExecutionTopic[] =>
     ? topics.filter((topic): topic is ExecutionTopic => typeof topic === 'string' && topic.startsWith('markets:orderbook:'))
     : [];
 
+const encodeOrderbookTopicPart = (value: string): string => {
+  const bytes = new TextEncoder().encode(value);
+  let binary = '';
+  bytes.forEach((byte) => {
+    binary += String.fromCharCode(byte);
+  });
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+};
+
+const orderbookTopicForSelection = (marketId: string, outcomeId: string | null | undefined): ExecutionTopic =>
+  `markets:orderbook:${encodeOrderbookTopicPart(marketId)}:${encodeOrderbookTopicPart(outcomeId && outcomeId !== '_' ? outcomeId : '_')}` as ExecutionTopic;
+
+const uniqueOrderbookTopics = (topics: readonly ExecutionTopic[]): ExecutionTopic[] => [...new Set(topics)];
+
+const mergeOrderbookStreamTopics = (...topicGroups: readonly ExecutionTopic[][]): ExecutionTopic[] =>
+  uniqueOrderbookTopics(topicGroups.flat());
+
 const sameTopicList = (left: ExecutionTopic[], right: ExecutionTopic[]): boolean =>
-  left.length === right.length && left.every((topic, index) => topic === right[index]);
+  left.length === right.length && left.every((topic) => right.includes(topic));
 
 const bestCandidate = (candidates: TradeRouteCandidate[]): TradeRouteCandidate | null =>
   [...candidates].filter((candidate) => Number.isFinite(candidate.price)).sort((left, right) => left.price - right.price)[0] ?? null;
@@ -4032,8 +4049,9 @@ export const InfraTradingTerminal = ({
         return;
       }
       if (orderbookNotFoundKey === requestKey) return;
+      const localTopics = [orderbookTopicForSelection(orderbookMarketId, orderbookQuoteOutcomeId)];
       setLatestOrderbookStream(null);
-      setOrderbookStreamTopics([]);
+      setOrderbookStreamTopics((current) => sameTopicList(current, localTopics) ? current : localTopics);
       setOrderbookLoading(true);
       setOrderbookError(null);
       lastOrderbookWsUpdateAtRef.current = null;
@@ -4044,16 +4062,18 @@ export const InfraTradingTerminal = ({
         });
         if (!cancelled) {
           setOrderbook(response);
-          const nextTopics = normalizeOrderbookStreamTopics(response.stream?.topics);
+          const nextTopics = mergeOrderbookStreamTopics(localTopics, normalizeOrderbookStreamTopics(response.stream?.topics));
           setOrderbookStreamTopics((current) => sameTopicList(current, nextTopics) ? current : nextTopics);
           setOrderbookNotFoundKey(null);
         }
       } catch (error) {
         if (!cancelled) {
           setOrderbook(null);
-          setOrderbookStreamTopics([]);
           if (isApiNotFound(error, 'MARKET_NOT_FOUND')) {
             setOrderbookNotFoundKey(requestKey);
+            setOrderbookStreamTopics([]);
+          } else {
+            setOrderbookStreamTopics((current) => sameTopicList(current, localTopics) ? current : localTopics);
           }
           setOrderbookError(safeMarketDataError(error, 'orderbook'));
         }
@@ -4209,9 +4229,10 @@ export const InfraTradingTerminal = ({
 
   React.useEffect(() => {
     if (!orderbookMarketId || orderbookWsState !== 'open') return;
+    const localTopics = [orderbookTopicForSelection(orderbookMarketId, orderbookQuoteOutcomeId)];
     const interval = window.setInterval(() => {
       const lastUpdateAt = lastOrderbookWsUpdateAtRef.current;
-      if (lastUpdateAt !== null && Date.now() - lastUpdateAt < 7_000) return;
+      if (lastUpdateAt !== null && Date.now() - lastUpdateAt < 15_000) return;
       if (orderbookRestRecoveryInFlightRef.current) return;
       orderbookRestRecoveryInFlightRef.current = true;
       void getMarketOrderbook(orderbookMarketId, {
@@ -4220,7 +4241,7 @@ export const InfraTradingTerminal = ({
       })
         .then((response) => {
           setOrderbook(response);
-          const nextTopics = normalizeOrderbookStreamTopics(response.stream?.topics);
+          const nextTopics = mergeOrderbookStreamTopics(localTopics, normalizeOrderbookStreamTopics(response.stream?.topics));
           setOrderbookStreamTopics((current) => sameTopicList(current, nextTopics) ? current : nextTopics);
           setOrderbookError(null);
           lastOrderbookWsUpdateAtRef.current = Date.now();
@@ -4231,7 +4252,7 @@ export const InfraTradingTerminal = ({
         .finally(() => {
           orderbookRestRecoveryInFlightRef.current = false;
         });
-    }, 6_000);
+    }, 10_000);
     return () => window.clearInterval(interval);
   }, [orderbookMarketId, orderbookQuoteOutcomeId, orderbookWsState]);
 
