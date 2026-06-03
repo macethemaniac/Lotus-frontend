@@ -932,6 +932,14 @@ const streamStatusClass = (status: MarketOrderbookStreamPayload['snapshotStatus'
   return 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300';
 };
 
+const normalizeOrderbookStreamTopics = (topics: unknown): ExecutionTopic[] =>
+  Array.isArray(topics)
+    ? topics.filter((topic): topic is ExecutionTopic => typeof topic === 'string' && topic.startsWith('markets:orderbook:'))
+    : [];
+
+const sameTopicList = (left: ExecutionTopic[], right: ExecutionTopic[]): boolean =>
+  left.length === right.length && left.every((topic, index) => topic === right[index]);
+
 const bestCandidate = (candidates: TradeRouteCandidate[]): TradeRouteCandidate | null =>
   [...candidates].filter((candidate) => Number.isFinite(candidate.price)).sort((left, right) => left.price - right.price)[0] ?? null;
 
@@ -4036,8 +4044,8 @@ export const InfraTradingTerminal = ({
         });
         if (!cancelled) {
           setOrderbook(response);
-          setOrderbookStreamTopics((response.stream?.topics ?? [])
-            .filter((topic): topic is ExecutionTopic => typeof topic === 'string' && topic.startsWith('markets:orderbook:')));
+          const nextTopics = normalizeOrderbookStreamTopics(response.stream?.topics);
+          setOrderbookStreamTopics((current) => sameTopicList(current, nextTopics) ? current : nextTopics);
           setOrderbookNotFoundKey(null);
         }
       } catch (error) {
@@ -4209,8 +4217,8 @@ export const InfraTradingTerminal = ({
       })
         .then((response) => {
           setOrderbook(response);
-          setOrderbookStreamTopics((response.stream?.topics ?? [])
-            .filter((topic): topic is ExecutionTopic => typeof topic === 'string' && topic.startsWith('markets:orderbook:')));
+          const nextTopics = normalizeOrderbookStreamTopics(response.stream?.topics);
+          setOrderbookStreamTopics((current) => sameTopicList(current, nextTopics) ? current : nextTopics);
           setOrderbookError(null);
           lastOrderbookWsUpdateAtRef.current = Date.now();
         })

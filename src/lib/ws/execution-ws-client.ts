@@ -72,16 +72,3 @@ function isExecutionEvent(value: unknown): value is ExecutionWsEvent {
     (event.type.startsWith("EXECUTION_") || event.type.startsWith("MARKET_") || event.type === "USER_NOTIFICATION") &&
     typeof event.topic === "string";
 }
-
-export function marketOrderbookTopic(marketId: string, outcomeId?: string | null): MarketOrderbookTopic {
-  return `markets:orderbook:${base64UrlEncode(marketId)}:${base64UrlEncode(outcomeId?.trim() || "_")}`;
-}
-
-function base64UrlEncode(value: string): string {
-  const bytes = new TextEncoder().encode(value);
-  let binary = "";
-  bytes.forEach((byte) => {
-    binary += String.fromCharCode(byte);
-  });
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
-}
