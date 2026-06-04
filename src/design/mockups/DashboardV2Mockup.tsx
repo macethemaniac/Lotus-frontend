@@ -1490,6 +1490,9 @@ export const DashboardV2Mockup = ({
           parentMarketId: market.id,
           outcomeId: outcome.id,
           marketId: outcome.marketId ?? market.marketId,
+          canonicalMarketIds: market.venueMarkets.length > 0
+            ? Array.from(new Set(market.venueMarkets.map((venueMarket) => venueMarket.canonicalMarketId).filter(Boolean)))
+            : [outcome.marketId ?? market.marketId],
           quoteOutcomeId: outcome.quoteOutcomeId,
         }))
       );
@@ -1501,6 +1504,7 @@ export const DashboardV2Mockup = ({
             const response = await getMarketLivePrices({
               items: chunk.map((item) => ({
                 marketId: item.marketId,
+                canonicalMarketIds: item.canonicalMarketIds,
                 outcomeId: item.quoteOutcomeId,
               })),
             });

@@ -244,6 +244,7 @@ export type MarketBatchQuoteResponse = {
 
 export type MarketLivePriceRequestItem = {
   marketId: string;
+  canonicalMarketIds?: string[];
   outcomeId?: string | null;
 };
 
@@ -398,6 +399,7 @@ export function getMarketLivePrices(input: { items: MarketLivePriceRequestItem[]
   const params = new URLSearchParams();
   params.set("items", JSON.stringify(input.items.map((item) => ({
     marketId: item.marketId,
+    ...(item.canonicalMarketIds?.length ? { canonicalMarketIds: item.canonicalMarketIds } : {}),
     ...(item.outcomeId ? { outcomeId: item.outcomeId } : {}),
   }))));
   const path = `/markets/live-prices?${params.toString()}`;
