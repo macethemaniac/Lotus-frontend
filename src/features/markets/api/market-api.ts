@@ -242,6 +242,32 @@ export type MarketBatchQuoteResponse = {
   quotes: MarketBatchQuoteItem[];
 };
 
+export type MarketLivePriceRequestItem = {
+  marketId: string;
+  outcomeId?: string | null;
+};
+
+export type MarketLivePriceItem = {
+  marketId: string;
+  outcomeId: string | null;
+  generatedAt: string;
+  status: "live" | "no_live_price";
+  price: string | null;
+  bestBid: string | null;
+  bestAsk: string | null;
+  midpoint: string | null;
+  spread: string | null;
+  bestVenue: string | null;
+  venueCount: number;
+  venues: string[];
+  freshnessMs: number | null;
+};
+
+export type MarketLivePricesResponse = {
+  generatedAt: string;
+  prices: MarketLivePriceItem[];
+};
+
 export type ResolutionRiskAssessment = {
   label: string;
   riskScore: string;
@@ -365,6 +391,19 @@ export function getMarketBatchQuotes(input: { items: MarketBatchQuoteRequestItem
       body: input,
     }),
     { ttlMs: 3_000, maxStaleMs: 30_000 }
+  );
+}
+
+export function getMarketLivePrices(input: { items: MarketLivePriceRequestItem[] }) {
+  const params = new URLSearchParams();
+  params.set("items", JSON.stringify(input.items.map((item) => ({
+    marketId: item.marketId,
+    ...(item.outcomeId ? { outcomeId: item.outcomeId } : {}),
+  }))));
+  const path = `/markets/live-prices?${params.toString()}`;
+  return staleWhileRevalidate(`market-live-prices:${params.toString()}`, () =>
+    apiRequest<MarketLivePricesResponse>(path),
+    { ttlMs: 2_000, maxStaleMs: 15_000 }
   );
 }
 

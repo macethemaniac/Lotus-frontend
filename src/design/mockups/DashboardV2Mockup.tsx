@@ -9,10 +9,12 @@ import type { AuthSession } from '@/features/auth/types';
 import {
   getMarket,
   getMarketBatchQuotes,
+  getMarketLivePrices,
   listMarkets,
   type MarketBatchQuoteItem,
   type MarketCatalogMarket,
   type MarketListInput,
+  type MarketLivePriceItem,
 } from '@/features/markets/api/market-api';
 import { getNotifications, markNotificationRead, type UserNotification } from '@/features/notifications/api/notification-api';
 import { NotificationToast, type NotificationToastTone } from '@/features/notifications/components/notification-toast';
@@ -1026,6 +1028,38 @@ const toOutcomeQuoteFromBatch = (quote: MarketBatchQuoteItem): DashboardOutcomeQ
   };
 };
 
+const toOutcomeQuoteFromLivePrice = (
+  outcomeId: string,
+  price: MarketLivePriceItem | undefined
+): DashboardOutcomeQuote => {
+  const numericPrice = price?.price !== null && price?.price !== undefined ? Number(price.price) : NaN;
+  const hasDisplayPrice = Number.isFinite(numericPrice) && numericPrice > 0;
+  const livePrice = hasDisplayPrice && price ? price : null;
+  const candidate: TradeRouteCandidate | null = livePrice
+    ? {
+        venue: livePrice.bestVenue ?? livePrice.venues[0] ?? 'LOTUS',
+        venueMarketId: livePrice.marketId,
+        price: numericPrice,
+        availableSize: '0',
+        ...(livePrice.spread && livePrice.price ? { spreadBps: (Number(livePrice.spread) / Math.max(Number(livePrice.price), 0.000001)) * 10_000 } : {}),
+        quoteQuality: 'DISPLAY_LIVE_PRICE',
+        ...(livePrice.freshnessMs !== null ? { freshnessMs: livePrice.freshnessMs } : {}),
+        quoteBlockers: [],
+      }
+    : null;
+  return {
+    outcomeId,
+    status: hasDisplayPrice ? 'live' : 'unavailable',
+    price: hasDisplayPrice ? numericPrice : null,
+    priceLabel: formatProbabilityPercent(hasDisplayPrice ? numericPrice : null),
+    generatedAt: price?.generatedAt ?? null,
+    bestCandidate: candidate,
+    candidates: candidate ? [candidate] : [],
+    blocked: [],
+    blocker: null,
+  };
+};
+
 const applyLiveQuoteToMarket = (market: DashboardMarketRow, quote: DashboardMarketQuote | undefined): DashboardMarketRow => {
   if (!quote) return market;
   const diagnosticsEnabled = lotusMarketDiagnosticsEnabled();
@@ -1448,7 +1482,8 @@ export const DashboardV2Mockup = ({
       return;
     }
 
-    const displayMode = lotusMarketDiagnosticsEnabled() ? 'debug' as const : 'user' as const;
+    const diagnosticsEnabled = lotusMarketDiagnosticsEnabled();
+    const displayMode = diagnosticsEnabled ? 'debug' as const : 'user' as const;
     const loadQuotes = async () => {
       const requestItems = marketsToQuote.flatMap(({ market, outcomes }) =>
         outcomes.map((outcome) => ({
@@ -1462,6 +1497,39 @@ export const DashboardV2Mockup = ({
       const chunks = chunkArray(requestItems, 18);
       await Promise.all(chunks.map(async (chunk) => {
         try {
+          if (!diagnosticsEnabled) {
+            const response = await getMarketLivePrices({
+              items: chunk.map((item) => ({
+                marketId: item.marketId,
+                outcomeId: item.quoteOutcomeId,
+              })),
+            });
+            if (cancelled) return;
+            const priceByKey = new Map(response.prices.map((price) => [`${price.marketId}:${price.outcomeId ?? ''}`, price]));
+            const nextByMarket = new Map<string, Record<string, DashboardOutcomeQuote>>();
+            for (const item of chunk) {
+              const price = priceByKey.get(`${item.marketId}:${item.quoteOutcomeId}`);
+              const bucket = nextByMarket.get(item.parentMarketId) ?? {};
+              bucket[item.outcomeId] = toOutcomeQuoteFromLivePrice(item.outcomeId, price);
+              nextByMarket.set(item.parentMarketId, bucket);
+            }
+            setMarketQuotes((current) => {
+              const next = { ...current };
+              for (const [marketId, outcomes] of nextByMarket.entries()) {
+                next[marketId] = {
+                  marketId,
+                  outcomes: {
+                    ...(next[marketId]?.outcomes ?? {}),
+                    ...outcomes,
+                  },
+                  sellOutcomes: next[marketId]?.sellOutcomes,
+                };
+              }
+              return next;
+            });
+            return;
+          }
+
           const response = await getMarketBatchQuotes({
             items: chunk.map((item) => ({
               marketId: item.marketId,
