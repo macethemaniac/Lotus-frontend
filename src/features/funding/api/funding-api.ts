@@ -1,5 +1,5 @@
 import { apiRequest } from "@/lib/api/http-client";
-import { peekCachedData, staleWhileRevalidate } from "@/lib/api/stale-cache";
+import { dedupeInFlight, peekCachedData, staleWhileRevalidate } from "@/lib/api/stale-cache";
 import type { ExecutionStatus, OpenOrdersResponse } from "@/features/trading/api/execution-api";
 import type { SetupBatchResponse, UserVenueAccount, UserWallet } from "@/features/wallets/api/wallet-api";
 
@@ -418,7 +418,7 @@ export function getVenueBalances(token: string, options: FundingReadOptions = {}
     return previous && rows.length === 0 && previousRows.length > 0 ? previous : response;
   };
   return options.force
-    ? request()
+    ? dedupeInFlight(`${cacheKey}:force`, request)
     : staleWhileRevalidate(cacheKey, request, { ttlMs: 10_000, maxStaleMs: 90_000 });
 }
 
@@ -432,14 +432,14 @@ export function getVenueCapabilities(token: string) {
 export function getVenueActivations(token: string, options: FundingReadOptions = {}) {
   const request = () => apiRequest<{ activations?: VenueActivation[]; venues?: VenueActivation[] }>("/funding/venue-activations", { token });
   return options.force
-    ? request()
+    ? dedupeInFlight(`funding:activations:${token}:force`, request)
     : staleWhileRevalidate(`funding:activations:${token}`, request, { ttlMs: 10_000, maxStaleMs: 90_000 });
 }
 
 export function getAccountSnapshot(token: string, options: FundingReadOptions = {}) {
   const request = () => apiRequest<AccountSnapshotResponse>("/account/snapshot", { token });
   return options.force
-    ? request()
+    ? dedupeInFlight(`account:snapshot:${token}:force`, request)
     : staleWhileRevalidate(`account:snapshot:${token}`, request, { ttlMs: 8_000, maxStaleMs: 90_000 });
 }
 
