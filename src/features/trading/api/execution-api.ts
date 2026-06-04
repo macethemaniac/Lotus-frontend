@@ -1,5 +1,5 @@
 import { apiRequest } from "@/lib/api/http-client";
-import { staleWhileRevalidate } from "@/lib/api/stale-cache";
+import { dedupeInFlight, staleWhileRevalidate } from "@/lib/api/stale-cache";
 
 export type TradeSide = "buy" | "sell";
 
@@ -110,7 +110,7 @@ export type ExecutionOrderPreviewRequest = {
   side: TradeSide;
   amount: string;
   venuePreference: ExecutionOrderVenuePreference;
-  orderPolicy?: "FOK";
+  orderPolicy?: "FOK" | "FAK";
   slippageToleranceBps?: number;
 };
 
@@ -349,15 +349,21 @@ export function submitSignedBundle(token: string, executionId: string, signedLeg
 }
 
 export function getLiveReadiness(token: string, executionId: string) {
-  return apiRequest<LiveSubmitReadinessSnapshot>(`/execution/${encodeURIComponent(executionId)}/live-readiness`, { token });
+  const path = `/execution/${encodeURIComponent(executionId)}/live-readiness`;
+  return dedupeInFlight(`execution:live-readiness:${token}:${path}`, () =>
+    apiRequest<LiveSubmitReadinessSnapshot>(path, { token })
+  );
 }
 
 export function previewExecutionOrder(token: string, request: ExecutionOrderPreviewRequest) {
-  return apiRequest<ExecutionOrderResponse>("/execution/orders/preview", {
-    method: "POST",
-    token,
-    body: request,
-  });
+  return staleWhileRevalidate(`execution:order-preview:${token}:${JSON.stringify(request)}`, () =>
+    apiRequest<ExecutionOrderResponse>("/execution/orders/preview", {
+      method: "POST",
+      token,
+      body: request,
+    }),
+    { ttlMs: 1_500, maxStaleMs: 5_000 }
+  );
 }
 
 export function placeExecutionOrder(token: string, orderId: string) {
@@ -377,11 +383,17 @@ export function submitExecutionOrderSignatures(token: string, orderId: string, s
 }
 
 export function getExecutionOrderStatus(token: string, orderId: string) {
-  return apiRequest<ExecutionOrderResponse>(`/execution/orders/${encodeURIComponent(orderId)}/status`, { token });
+  const path = `/execution/orders/${encodeURIComponent(orderId)}/status`;
+  return dedupeInFlight(`execution:order-status:${token}:${path}`, () =>
+    apiRequest<ExecutionOrderResponse>(path, { token })
+  );
 }
 
 export function getExecutionStatus(token: string, executionId: string) {
-  return apiRequest<ExecutionStatus>(`/execution/${encodeURIComponent(executionId)}/status`, { token });
+  const path = `/execution/${encodeURIComponent(executionId)}/status`;
+  return dedupeInFlight(`execution:status:${token}:${path}`, () =>
+    apiRequest<ExecutionStatus>(path, { token })
+  );
 }
 
 export function getPositions(token: string, input: { marketId?: string; outcomeId?: string; venue?: string; limit?: number; markMode?: "cached" | "live" } = {}) {
@@ -392,9 +404,13 @@ export function getPositions(token: string, input: { marketId?: string; outcomeI
   if (input.limit) params.set("limit", String(input.limit));
   if (input.markMode) params.set("markMode", input.markMode);
   const query = params.toString();
-  return apiRequest<{ generatedAt: string; marketId: string | null; outcomeId: string | null; positions: ExecutionPosition[] }>(
-    `/execution/positions${query ? `?${query}` : ""}`,
-    { token }
+  const path = `/execution/positions${query ? `?${query}` : ""}`;
+  return staleWhileRevalidate(`execution:positions:${token}:${path}`, () =>
+    apiRequest<{ generatedAt: string; marketId: string | null; outcomeId: string | null; positions: ExecutionPosition[] }>(
+      path,
+      { token }
+    ),
+    { ttlMs: 8_000, maxStaleMs: 90_000 }
   );
 }
 
@@ -405,7 +421,7 @@ type PortfolioReadOptions = {
 export function getPortfolioSummary(token: string, options: PortfolioReadOptions = {}) {
   const request = () => apiRequest<PortfolioSummary>("/execution/portfolio/summary?markMode=cached", { token });
   return options.force
-    ? request()
+    ? dedupeInFlight(`execution:portfolio:summary:${token}:force`, request)
     : staleWhileRevalidate(`execution:portfolio:summary:${token}`, request, { ttlMs: 8_000, maxStaleMs: 90_000 });
 }
 
@@ -417,7 +433,7 @@ export function getPortfolioTimeSeries(token: string, input: { range?: Portfolio
   const path = `/execution/portfolio/timeseries${query ? `?${query}` : ""}`;
   const request = () => apiRequest<PortfolioTimeSeriesResponse>(path, { token });
   return input.force
-    ? request()
+    ? dedupeInFlight(`execution:portfolio:timeseries:${token}:${path}:force`, request)
     : staleWhileRevalidate(`execution:portfolio:timeseries:${token}:${path}`, request, { ttlMs: 12_000, maxStaleMs: 2 * 60_000 });
 }
 
@@ -427,7 +443,11 @@ export function getExecutionHistory(token: string, input: { status?: string; lim
   if (input.limit) params.set("limit", String(input.limit));
   if (input.cursor) params.set("cursor", input.cursor);
   const query = params.toString();
-  return apiRequest<ExecutionHistoryResponse>(`/execution/history${query ? `?${query}` : ""}`, { token });
+  const path = `/execution/history${query ? `?${query}` : ""}`;
+  return staleWhileRevalidate(`execution:history:${token}:${path}`, () =>
+    apiRequest<ExecutionHistoryResponse>(path, { token }),
+    { ttlMs: 8_000, maxStaleMs: 90_000 }
+  );
 }
 
 export function getOpenOrders(token: string, input: { limit?: number; cursor?: string } = {}) {

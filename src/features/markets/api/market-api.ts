@@ -137,7 +137,7 @@ export type MarketOrderbookResponse = {
   bestAsk: string | null;
   midpoint: string | null;
   spread: string | null;
-  status: "live" | "partial" | "stale" | "unavailable";
+  status: "live" | "partial" | "stale" | "blocked" | "unavailable";
   blockers: Array<{ venue: string; reason: string; venueMarketId?: string; venueOutcomeId?: string; detailsCode?: string }>;
   stream?: {
     primaryTopic?: string | null;
@@ -158,24 +158,34 @@ export type MarketOrderbookStreamLevel = {
 };
 
 export type MarketOrderbookStreamPayload = {
+  schemaVersion?: string;
+  updateType?: "snapshot" | "delta";
+  seq?: number;
+  checksum?: string;
   canonicalMarketId?: string;
   marketId?: string;
   canonicalOutcomeId?: string | null;
   outcomeId?: string | null;
-  venue: string;
+  venue?: string;
   venueMarketId?: string | null;
   venueOutcomeId?: string | null;
   source?: string | null;
   quoteQuality?: string | null;
   bestBid?: string | number | null;
   bestAsk?: string | number | null;
+  midpoint?: string | number | null;
+  spread?: string | number | null;
   bidSize?: string | number | null;
   askSize?: string | number | null;
   freshnessMs?: number | null;
   snapshotStatus?: MarketOrderbookSnapshotStatus;
+  venueCount?: number | null;
+  liveVenueCount?: number | null;
   blockers?: unknown[];
   bids?: MarketOrderbookStreamLevel[];
   asks?: MarketOrderbookStreamLevel[];
+  bidDeltas?: MarketOrderbookStreamLevel[];
+  askDeltas?: MarketOrderbookStreamLevel[];
 };
 
 export type MarketChartTimeframe = "1H" | "6H" | "1D" | "1W" | "1M" | "ALL";

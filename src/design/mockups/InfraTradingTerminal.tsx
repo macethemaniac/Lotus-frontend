@@ -80,8 +80,10 @@ import { ApiClientError } from '@/lib/api/http-client';
 import { openExecutionSocket, type ExecutionTopic, type ExecutionWsState } from '@/lib/ws/execution-ws-client';
 
 const ORDERBOOK_DISPLAY_REST_FALLBACK_DELAY_MS = 6_000;
-const ORDERBOOK_STREAM_STALE_MS = 30_000;
 const ORDERBOOK_REST_RECOVERY_MIN_INTERVAL_MS = 45_000;
+const ORDERBOOK_STREAM_GAP_RECOVERY_DELAY_MS = 1_500;
+const TERMINAL_CHART_REFRESH_INTERVAL_MS = 30_000;
+const TERMINAL_ACCOUNT_REFRESH_INTERVAL_MS = 30_000;
 
 const walletAddressEquals = (left?: string | null, right?: string | null): boolean => {
   if (!left || !right) return false;
@@ -556,6 +558,12 @@ const inverseOutcomePriceLabel = (label: string | null | undefined): string => {
   return `${inverse >= 10 ? inverse.toFixed(0) : inverse.toFixed(1)}${suffix}`;
 };
 
+const displayPriceLabel = (label: string | null | undefined, diagnosticsEnabled = lotusMarketDiagnosticsEnabled()): string => {
+  const normalized = typeof label === 'string' ? label.trim() : '';
+  if (!normalized || normalized === 'Quote' || normalized === 'Unavailable') return diagnosticsEnabled ? 'Quote' : '-';
+  return normalized;
+};
+
 const readableQuoteBlocker = (reason: string | null | undefined): string | null => {
   if (!reason) return null;
   const normalized = reason.toUpperCase();
@@ -718,7 +726,7 @@ const normalizeOrderbookInitialSnapshot = (
     bestAsk: orderbookNumberString(payload.bestAsk) ?? current?.bestAsk ?? null,
     midpoint: orderbookNumberString(payload.midpoint) ?? current?.midpoint ?? null,
     spread: orderbookNumberString(payload.spread) ?? current?.spread ?? null,
-    status: payload.status === 'partial' || payload.status === 'stale' || payload.status === 'unavailable' || payload.status === 'live'
+    status: payload.status === 'partial' || payload.status === 'stale' || payload.status === 'blocked' || payload.status === 'unavailable' || payload.status === 'live'
       ? payload.status
       : current?.status ?? 'live',
     blockers: Array.isArray(payload.blockers) ? payload.blockers as MarketOrderbookResponse['blockers'] : current?.blockers ?? [],
@@ -818,6 +826,87 @@ const normalizeStreamVenueBook = (
   };
 };
 
+const applyStreamLevelDeltas = (
+  existingLevels: MarketOrderbookLevel[],
+  deltas: MarketOrderbookStreamLevel[] | undefined,
+  payload: MarketOrderbookStreamPayload,
+  side: 'bid' | 'ask',
+  depth: number
+): MarketOrderbookStreamLevel[] => {
+  if (!deltas || deltas.length === 0) {
+    return existingLevels.map((level) => ({
+      venue: level.venue,
+      venueMarketId: level.venueMarketId,
+      venueOutcomeId: level.venueOutcomeId,
+      price: level.price,
+      size: level.size,
+    }));
+  }
+  const byPrice = new Map<string, MarketOrderbookStreamLevel>();
+  for (const level of existingLevels) {
+    byPrice.set(level.price, {
+      venue: level.venue,
+      venueMarketId: level.venueMarketId,
+      venueOutcomeId: level.venueOutcomeId,
+      price: level.price,
+      size: level.size,
+    });
+  }
+  for (const delta of deltas) {
+    const price = orderbookNumberString(delta.price);
+    const size = orderbookNumberString(delta.size);
+    if (!price || !size) continue;
+    const sizeNumber = orderbookNumericValue(size);
+    if (sizeNumber !== null && sizeNumber <= 0) {
+      byPrice.delete(price);
+      continue;
+    }
+    byPrice.set(price, {
+      ...delta,
+      venue: delta.venue ?? payload.venue,
+      venueMarketId: delta.venueMarketId ?? payload.venueMarketId ?? undefined,
+      venueOutcomeId: typeof delta.venueOutcomeId !== 'undefined' ? delta.venueOutcomeId : payload.venueOutcomeId ?? null,
+      price,
+      size,
+    });
+  }
+  return sortAndCumulativeLevels(
+    [...byPrice.values()].map((level) => normalizeStreamLevel(level, payload)).filter(Boolean) as MarketOrderbookLevel[],
+    side,
+    depth
+  ).map((level) => ({
+    venue: level.venue,
+    venueMarketId: level.venueMarketId,
+    venueOutcomeId: level.venueOutcomeId,
+    price: level.price,
+    size: level.size,
+  }));
+};
+
+const expandOrderbookDeltaPayload = (
+  current: MarketOrderbookResponse | null,
+  payload: MarketOrderbookStreamPayload,
+  depth: number
+): MarketOrderbookStreamPayload => {
+  if (
+    payload.updateType !== 'delta' ||
+    (!payload.bidDeltas && !payload.askDeltas) ||
+    payload.bids ||
+    payload.asks
+  ) {
+    return payload;
+  }
+  const payloadVenue = payload.venue ? toBackendVenueId(payload.venue) : null;
+  const existingVenue = payloadVenue
+    ? current?.venues.find((venue) => toBackendVenueId(venue.venue) === payloadVenue)
+    : null;
+  return {
+    ...payload,
+    bids: applyStreamLevelDeltas(existingVenue?.bids ?? [], payload.bidDeltas, payload, 'bid', depth),
+    asks: applyStreamLevelDeltas(existingVenue?.asks ?? [], payload.askDeltas, payload, 'ask', depth),
+  };
+};
+
 const orderbookStatusFromSnapshot = (
   snapshotStatus: MarketOrderbookStreamPayload['snapshotStatus'],
   hasLevels: boolean,
@@ -834,7 +923,9 @@ const mergeOrderbookStreamUpdate = (
   depth = 20
 ): MarketOrderbookResponse => {
   const receivedAt = new Date().toISOString();
-  const venueBook = normalizeStreamVenueBook(payload, receivedAt, current?.depth ?? depth);
+  const effectiveDepth = current?.depth ?? depth;
+  const expandedPayload = expandOrderbookDeltaPayload(current, payload, effectiveDepth);
+  const venueBook = normalizeStreamVenueBook(expandedPayload, receivedAt, effectiveDepth);
   const sameVenue = (venue: MarketOrderbookVenue) =>
     toBackendVenueId(venue.venue) === toBackendVenueId(venueBook.venue);
   const existingVenues = current?.venues ?? [];
@@ -851,15 +942,15 @@ const mergeOrderbookStreamUpdate = (
     current?.depth ?? depth
   );
   const stats = bookStats(bids, asks);
-  const streamBlockers = normalizeStreamResponseBlockers(payload);
-  const payloadVenue = payload.venue ?? 'UNKNOWN';
+  const streamBlockers = normalizeStreamResponseBlockers(expandedPayload);
+  const payloadVenue = expandedPayload.venue ?? 'UNKNOWN';
   const blockers = [
     ...(current?.blockers ?? []).filter((blocker) => toBackendVenueId(blocker.venue) !== toBackendVenueId(payloadVenue)),
     ...streamBlockers,
   ];
   const hasLevels = bids.length > 0 || asks.length > 0;
-  const marketId = streamPayloadMarketId(payload) ?? current?.marketId ?? '';
-  const outcomeId = streamPayloadOutcomeId(payload);
+  const marketId = streamPayloadMarketId(expandedPayload) ?? current?.marketId ?? '';
+  const outcomeId = streamPayloadOutcomeId(expandedPayload);
   return {
     marketId,
     outcomeId: outcomeId && outcomeId !== '_' ? outcomeId : null,
@@ -872,9 +963,65 @@ const mergeOrderbookStreamUpdate = (
     bestAsk: stats.bestAsk,
     midpoint: stats.midpoint,
     spread: stats.spread,
-    status: orderbookStatusFromSnapshot(payload.snapshotStatus, hasLevels, activeVenues.length > 0),
+    status: orderbookStatusFromSnapshot(expandedPayload.snapshotStatus, hasLevels, activeVenues.length > 0),
     blockers,
   };
+};
+
+const orderbookChecksumHex = async (value: string): Promise<string | null> => {
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle) return null;
+  const bytes = new TextEncoder().encode(value);
+  const digest = await subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+};
+
+const orderbookChecksumLevels = (levels: MarketOrderbookLevel[] | undefined) =>
+  (levels ?? []).slice(0, 5).map((level) => ({
+    price: level.price,
+    size: level.size,
+  }));
+
+const streamChecksumBlockers = (payload: MarketOrderbookStreamPayload): string[] =>
+  (payload.blockers ?? [])
+    .map((blocker) => {
+      if (typeof blocker === 'string') return blocker;
+      if (!blocker || typeof blocker !== 'object') return null;
+      const record = blocker as Record<string, unknown>;
+      const value = [record.reason, record.message, record.detailsCode, record.code].find((item) => typeof item === 'string');
+      return typeof value === 'string' ? value : null;
+    })
+    .filter((value): value is string => Boolean(value))
+    .sort();
+
+const validateOrderbookStreamChecksum = async (
+  orderbook: MarketOrderbookResponse,
+  payload: MarketOrderbookStreamPayload,
+  expectedMarketId: string,
+  expectedOutcomeId: string | null
+): Promise<boolean> => {
+  if (!payload.checksum || !payload.venue) return true;
+  const backendVenue = toBackendVenueId(payload.venue);
+  const venueBook = orderbook.venues.find((venue) => toBackendVenueId(venue.venue) === backendVenue);
+  if (!venueBook) return true;
+  const checksumOutcome = typeof payload.canonicalOutcomeId !== 'undefined'
+    ? payload.canonicalOutcomeId
+    : typeof payload.outcomeId !== 'undefined'
+      ? payload.outcomeId
+      : expectedOutcomeId;
+  const body = JSON.stringify({
+    market: streamPayloadMarketId(payload) ?? expectedMarketId,
+    outcome: checksumOutcome ?? null,
+    venue: backendVenue,
+    bestBid: venueBook.bestBid ?? null,
+    bestAsk: venueBook.bestAsk ?? null,
+    bids: orderbookChecksumLevels(venueBook.bids),
+    asks: orderbookChecksumLevels(venueBook.asks),
+    blockers: streamChecksumBlockers(payload),
+  });
+  const hex = await orderbookChecksumHex(body);
+  if (!hex) return true;
+  return hex.slice(0, 16) === payload.checksum;
 };
 
 const filterOrderbookForVenue = (
@@ -911,9 +1058,16 @@ const isMarketOrderbookStreamPayload = (payload: unknown): payload is MarketOrde
   return isInitialSnapshot || (hasMarketId && typeof record.venue === 'string');
 };
 
+const normalizeStreamOutcomeId = (value: string | null | undefined): string | null => {
+  const trimmed = typeof value === 'string' ? value.trim() : '';
+  if (!trimmed || trimmed === '_') return null;
+  return trimmed.toUpperCase();
+};
+
 const streamOutcomeMatches = (streamOutcomeId: string | null | undefined, selectedOutcomeId: string | null | undefined): boolean => {
-  const normalizedStream = streamOutcomeId && streamOutcomeId !== '_' ? streamOutcomeId : null;
-  const normalizedSelected = selectedOutcomeId && selectedOutcomeId !== '_' ? selectedOutcomeId : null;
+  const normalizedStream = normalizeStreamOutcomeId(streamOutcomeId);
+  const normalizedSelected = normalizeStreamOutcomeId(selectedOutcomeId);
+  if (!normalizedStream || !normalizedSelected) return true;
   return normalizedStream === normalizedSelected;
 };
 
@@ -2321,8 +2475,9 @@ const LiveCanonicalChart = ({
     };
     void loadChart();
     const interval = window.setInterval(() => {
+      if (document.visibilityState === 'hidden') return;
       void loadChart();
-    }, 10_000);
+    }, TERMINAL_CHART_REFRESH_INTERVAL_MS);
     return () => {
       cancelled = true;
       window.clearInterval(interval);
@@ -2496,7 +2651,7 @@ export const InfraTradingTerminal = ({
   const [ticketOrchestratorSigning, setTicketOrchestratorSigning] = useState(false);
   const [ticketConfirmArmed, setTicketConfirmArmed] = useState(false);
   const [ticketSettingsOpen, setTicketSettingsOpen] = useState(false);
-  const [ticketOrderPolicy, setTicketOrderPolicy] = useState<'FOK' | 'FAK'>('FOK');
+  const [ticketOrderPolicy, setTicketOrderPolicy] = useState<'FOK' | 'FAK'>('FAK');
   const [ticketSlippageTolerance, setTicketSlippageTolerance] = useState('0.50');
   const [ticketPolymarketClobSyncConfirmed, setTicketPolymarketClobSyncConfirmed] = useState(false);
   const [ticketStatusMessage, setTicketStatusMessage] = useState<string | null>(null);
@@ -2538,8 +2693,12 @@ export const InfraTradingTerminal = ({
   const [orderbookStreamTopics, setOrderbookStreamTopics] = useState<ExecutionTopic[]>([]);
   const [latestOrderbookStream, setLatestOrderbookStream] = useState<MarketOrderbookStreamPayload | null>(null);
   const lastOrderbookWsUpdateAtRef = React.useRef<number | null>(null);
+  const orderbookStreamSeqRef = React.useRef<Map<string, number>>(new Map());
+  const orderbookRef = React.useRef<MarketOrderbookResponse | null>(null);
+  const orderbookChecksumValidationSeqRef = React.useRef(0);
   const lastOrderbookRestRecoveryAtRef = React.useRef<number | null>(null);
   const orderbookRestRecoveryInFlightRef = React.useRef(false);
+  const orderbookRestRecoveryTimerRef = React.useRef<number | null>(null);
   const missingRiskProfileKeysRef = React.useRef<Set<string>>(new Set());
   const autoPolymarketClobSyncKeyRef = React.useRef<string | null>(null);
   const orchestratorPreviewSeqRef = React.useRef(0);
@@ -2644,6 +2803,10 @@ export const InfraTradingTerminal = ({
     [resolutionRuleFallbacks]
   );
   const token = session?.userJwt ?? null;
+
+  React.useEffect(() => {
+    orderbookRef.current = orderbook;
+  }, [orderbook]);
 
   React.useEffect(() => {
     setTicketPolymarketClobSyncConfirmed(false);
@@ -4027,6 +4190,8 @@ export const InfraTradingTerminal = ({
     let cancelled = false;
     const requestKey = `${orderbookMarketId ?? 'none'}:${orderbookQuoteOutcomeId ?? 'none'}`;
     if (!orderbookMarketId) {
+      orderbookRef.current = null;
+      orderbookChecksumValidationSeqRef.current += 1;
       setOrderbook(null);
       setOrderbookError(null);
       setOrderbookStreamTopics([]);
@@ -4046,6 +4211,7 @@ export const InfraTradingTerminal = ({
           depth: 20,
         });
         if (!cancelled) {
+          orderbookRef.current = response;
           setOrderbook(response);
           const nextTopics = mergeOrderbookStreamTopics(localTopics, normalizeOrderbookStreamTopics(response.stream?.topics));
           setOrderbookStreamTopics((current) => sameTopicList(current, nextTopics) ? current : nextTopics);
@@ -4055,6 +4221,7 @@ export const InfraTradingTerminal = ({
         }
       } catch (error) {
         if (!cancelled) {
+          orderbookRef.current = null;
           setOrderbook(null);
           if (isApiNotFound(error, 'MARKET_NOT_FOUND')) {
             setOrderbookNotFoundKey(requestKey);
@@ -4072,6 +4239,8 @@ export const InfraTradingTerminal = ({
 
     const refreshOrderbook = () => {
       setLatestOrderbookStream(null);
+      orderbookRef.current = null;
+      orderbookChecksumValidationSeqRef.current += 1;
       setOrderbook(null);
       setOrderbookStreamTopics((current) => sameTopicList(current, localTopics) ? current : localTopics);
       setOrderbookLoading(true);
@@ -4080,6 +4249,7 @@ export const InfraTradingTerminal = ({
       lastOrderbookRestRecoveryAtRef.current = null;
     };
     void refreshOrderbook();
+    orderbookStreamSeqRef.current.clear();
     const fallbackTimer = window.setTimeout(() => {
       if (cancelled || lastOrderbookWsUpdateAtRef.current !== null) return;
       void loadFallbackOrderbook();
@@ -4105,32 +4275,124 @@ export const InfraTradingTerminal = ({
     const topicSet = new Set(topics);
     const expectedMarketId = orderbookMarketId;
     const expectedOutcomeId = orderbookQuoteOutcomeId ?? null;
+    const localTopics = [orderbookTopicForSelection(expectedMarketId, expectedOutcomeId)];
+
+    const clearScheduledRestRecovery = () => {
+      if (orderbookRestRecoveryTimerRef.current !== null) {
+        window.clearTimeout(orderbookRestRecoveryTimerRef.current);
+        orderbookRestRecoveryTimerRef.current = null;
+      }
+    };
+
+    const recoverOrderbookFromRest = async () => {
+      const now = Date.now();
+      const lastRestRecoveryAt = lastOrderbookRestRecoveryAtRef.current;
+      if (lastRestRecoveryAt !== null && now - lastRestRecoveryAt < ORDERBOOK_REST_RECOVERY_MIN_INTERVAL_MS) {
+        scheduleRestRecovery(ORDERBOOK_REST_RECOVERY_MIN_INTERVAL_MS - (now - lastRestRecoveryAt));
+        return;
+      }
+      if (orderbookRestRecoveryInFlightRef.current) return;
+      orderbookRestRecoveryInFlightRef.current = true;
+      lastOrderbookRestRecoveryAtRef.current = now;
+      try {
+        const response = await getMarketOrderbook(expectedMarketId, {
+          outcomeId: expectedOutcomeId,
+          depth: 20,
+        });
+        if (!active) return;
+        orderbookRef.current = response;
+        setOrderbook(response);
+        const nextTopics = mergeOrderbookStreamTopics(localTopics, normalizeOrderbookStreamTopics(response.stream?.topics));
+        setOrderbookStreamTopics((current) => sameTopicList(current, nextTopics) ? current : nextTopics);
+        setOrderbookError(null);
+        lastOrderbookWsUpdateAtRef.current = Date.now();
+      } catch (error) {
+        if (active) setOrderbookError(safeMarketDataError(error, 'orderbook'));
+      } finally {
+        orderbookRestRecoveryInFlightRef.current = false;
+        if (active && !orderbookRef.current) scheduleRestRecovery(ORDERBOOK_REST_RECOVERY_MIN_INTERVAL_MS);
+      }
+    };
+
+    const scheduleRestRecovery = (delayMs: number) => {
+      clearScheduledRestRecovery();
+      orderbookRestRecoveryTimerRef.current = window.setTimeout(() => {
+        orderbookRestRecoveryTimerRef.current = null;
+        void recoverOrderbookFromRest();
+      }, delayMs);
+    };
+
+    const markStreamResyncing = () => {
+      setLatestOrderbookStream((current) => current
+        ? { ...current, snapshotStatus: 'resyncing' }
+        : {
+            marketId: expectedMarketId,
+            outcomeId: expectedOutcomeId,
+            snapshotStatus: 'resyncing',
+            blockers: [],
+          });
+    };
+
+    const validateStreamChecksumOrRecover = (
+      nextOrderbook: MarketOrderbookResponse,
+      payload: MarketOrderbookStreamPayload
+    ) => {
+      const validationSeq = ++orderbookChecksumValidationSeqRef.current;
+      void validateOrderbookStreamChecksum(nextOrderbook, payload, expectedMarketId, expectedOutcomeId)
+        .then((valid) => {
+          if (!active || validationSeq !== orderbookChecksumValidationSeqRef.current || valid) return;
+          markStreamResyncing();
+          scheduleRestRecovery(ORDERBOOK_STREAM_GAP_RECOVERY_DELAY_MS);
+        })
+        .catch(() => {
+          // Display checksum validation is a recovery guard; crypto/runtime failures should not break live streaming.
+        });
+    };
+
+    const acceptsStreamSequence = (topic: ExecutionTopic, payload: MarketOrderbookStreamPayload): boolean => {
+      if (typeof payload.seq !== 'number' || !Number.isFinite(payload.seq)) return true;
+      if (payload.updateType === 'snapshot' || payload.source === 'initial_snapshot') {
+        orderbookStreamSeqRef.current.set(topic, payload.seq);
+        return true;
+      }
+      const lastSeq = orderbookStreamSeqRef.current.get(topic);
+      if (typeof lastSeq === 'number' && payload.seq <= lastSeq) return false;
+      if (typeof lastSeq === 'number' && payload.seq > lastSeq + 1) {
+        markStreamResyncing();
+        scheduleRestRecovery(ORDERBOOK_STREAM_GAP_RECOVERY_DELAY_MS);
+      }
+      orderbookStreamSeqRef.current.set(topic, payload.seq);
+      return true;
+    };
 
     const applyStreamPriceToOutcomes = (payload: MarketOrderbookStreamPayload) => {
       const quotePrice = orderbookNumericValue(payload.bestAsk ?? payload.bestBid);
+      const diagnosticsEnabled = lotusMarketDiagnosticsEnabled();
       const blocker = (payload.blockers ?? []).map(normalizeStreamBlocker).find(Boolean) ?? null;
-      if (quotePrice === null && !blocker) return;
+      if (quotePrice === null && (!blocker || !diagnosticsEnabled)) return;
       const payloadVenue = payload.venue ?? null;
-      const effectiveOutcomeId = streamPayloadOutcomeId(payload) ?? expectedOutcomeId;
+      const effectiveOutcomeId = streamPayloadOutcomeId(payload) ?? expectedOutcomeId ?? (marketType === 'binary' ? 'YES' : null);
+      if (!effectiveOutcomeId && marketType !== 'binary') return;
+      const displayBlocker = diagnosticsEnabled ? blocker : null;
       setTerminalOutcomes((current) => current.map((outcome) => {
         if (outcome.marketId !== expectedMarketId) return outcome;
         if (!streamOutcomeMatches(effectiveOutcomeId, outcome.quoteOutcomeId)) return outcome;
-        const yesPrice = quotePrice !== null ? formatProbabilityPrice(quotePrice) : 'Quote';
-        const noPrice = quotePrice !== null && marketType === 'binary' ? formatProbabilityPrice(1 - quotePrice) : 'Quote';
+        const yesPrice = quotePrice !== null ? formatProbabilityPrice(quotePrice) : '-';
+        const noPrice = quotePrice !== null && marketType === 'binary' ? formatProbabilityPrice(1 - quotePrice) : '-';
         if (!payloadVenue) {
           return {
             ...outcome,
-            yesPrice: yesPrice !== 'Quote' ? yesPrice : outcome.yesPrice,
-            noPrice: noPrice !== 'Quote' ? noPrice : outcome.noPrice,
+            yesPrice: quotePrice !== null ? yesPrice : outcome.yesPrice,
+            noPrice: quotePrice !== null ? noPrice : outcome.noPrice,
             status: quotePrice !== null ? 'live' : outcome.status,
-            blocker: blocker ?? outcome.blocker,
+            blocker: displayBlocker ?? outcome.blocker,
           };
         }
         const nextVenueQuote: TerminalVenueQuote = {
           venue: payloadVenue,
           yesPrice,
           noPrice,
-          blocker,
+          blocker: displayBlocker,
         };
         const venueQuotes = [
           ...outcome.venueQuotes.filter((quote) => toBackendVenueId(quote.venue) !== toBackendVenueId(payloadVenue)),
@@ -4146,7 +4408,7 @@ export const InfraTradingTerminal = ({
           primaryVenue: outcome.primaryVenue ?? payloadVenue,
           venueQuotes,
           status: quotePrice !== null ? 'live' : outcome.status,
-          blocker: blocker ?? outcome.blocker,
+          blocker: displayBlocker ?? outcome.blocker,
         };
       }));
     };
@@ -4174,6 +4436,7 @@ export const InfraTradingTerminal = ({
             reconnectAttempt = 0;
           }
           if (state === 'closed' || state === 'error') {
+            scheduleRestRecovery(ORDERBOOK_STREAM_GAP_RECOVERY_DELAY_MS);
             if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
             const delay = Math.min(8_000, 750 * Math.max(1, 2 ** reconnectAttempt));
             reconnectAttempt += 1;
@@ -4183,6 +4446,7 @@ export const InfraTradingTerminal = ({
         onEvent: (event) => {
           if (!active || !topicSet.has(event.topic) || !isMarketOrderbookStreamPayload(event.payload)) return;
           const payload = event.payload;
+          if (!acceptsStreamSequence(event.topic, payload)) return;
           const payloadMarketId = streamPayloadMarketId(payload);
           const payloadOutcomeId = streamPayloadOutcomeId(payload);
           if (payloadMarketId && payloadMarketId !== expectedMarketId) return;
@@ -4192,7 +4456,15 @@ export const InfraTradingTerminal = ({
 
           if (event.type === 'MARKET_ORDERBOOK_UPDATE') {
             if (isOrderbookInitialSnapshotPayload(payload)) {
-              setOrderbook((current) => normalizeOrderbookInitialSnapshot(payload, current, expectedMarketId, expectedOutcomeId));
+              const nextOrderbook = normalizeOrderbookInitialSnapshot(
+                payload,
+                orderbookRef.current,
+                expectedMarketId,
+                expectedOutcomeId
+              );
+              orderbookRef.current = nextOrderbook;
+              setOrderbook(nextOrderbook);
+              validateStreamChecksumOrRecover(nextOrderbook, payload);
               applyStreamPriceToOutcomes(payload);
               setOrderbookLoading(false);
               setOrderbookError(null);
@@ -4200,7 +4472,10 @@ export const InfraTradingTerminal = ({
             }
             if (!payload.venue) return;
             setLatestOrderbookStream(payload);
-            setOrderbook((current) => mergeOrderbookStreamUpdate(current, payload));
+            const nextOrderbook = mergeOrderbookStreamUpdate(orderbookRef.current, payload);
+            orderbookRef.current = nextOrderbook;
+            setOrderbook(nextOrderbook);
+            validateStreamChecksumOrRecover(nextOrderbook, payload);
             applyStreamPriceToOutcomes(payload);
             setOrderbookLoading(false);
             setOrderbookError(null);
@@ -4223,6 +4498,7 @@ export const InfraTradingTerminal = ({
     return () => {
       active = false;
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
+      clearScheduledRestRecovery();
       if (client) {
         client.socket.removeEventListener('open', subscribeAll);
         client.socket.removeEventListener('message', subscribeOnGatewayReady);
@@ -4231,39 +4507,6 @@ export const InfraTradingTerminal = ({
       }
     };
   }, [marketType, orderbookMarketId, orderbookQuoteOutcomeId, orderbookStreamTopics]);
-
-  React.useEffect(() => {
-    if (!orderbookMarketId || orderbookWsState !== 'open') return;
-    const localTopics = [orderbookTopicForSelection(orderbookMarketId, orderbookQuoteOutcomeId)];
-    const interval = window.setInterval(() => {
-      const lastUpdateAt = lastOrderbookWsUpdateAtRef.current;
-      const now = Date.now();
-      if (lastUpdateAt !== null && now - lastUpdateAt < ORDERBOOK_STREAM_STALE_MS) return;
-      const lastRestRecoveryAt = lastOrderbookRestRecoveryAtRef.current;
-      if (lastRestRecoveryAt !== null && now - lastRestRecoveryAt < ORDERBOOK_REST_RECOVERY_MIN_INTERVAL_MS) return;
-      if (orderbookRestRecoveryInFlightRef.current) return;
-      orderbookRestRecoveryInFlightRef.current = true;
-      lastOrderbookRestRecoveryAtRef.current = now;
-      void getMarketOrderbook(orderbookMarketId, {
-        outcomeId: orderbookQuoteOutcomeId,
-        depth: 20,
-      })
-        .then((response) => {
-          setOrderbook(response);
-          const nextTopics = mergeOrderbookStreamTopics(localTopics, normalizeOrderbookStreamTopics(response.stream?.topics));
-          setOrderbookStreamTopics((current) => sameTopicList(current, nextTopics) ? current : nextTopics);
-          setOrderbookError(null);
-          lastOrderbookWsUpdateAtRef.current = Date.now();
-        })
-        .catch((error) => {
-          setOrderbookError(safeMarketDataError(error, 'orderbook'));
-        })
-        .finally(() => {
-          orderbookRestRecoveryInFlightRef.current = false;
-        });
-    }, 10_000);
-    return () => window.clearInterval(interval);
-  }, [orderbookMarketId, orderbookQuoteOutcomeId, orderbookWsState]);
 
   const refreshAccountData = useCallback(async () => {
     if (!token) {
@@ -4296,8 +4539,9 @@ export const InfraTradingTerminal = ({
   React.useEffect(() => {
     void refreshAccountData();
     const interval = window.setInterval(() => {
+      if (document.visibilityState === 'hidden') return;
       void refreshAccountData();
-    }, 15_000);
+    }, TERMINAL_ACCOUNT_REFRESH_INTERVAL_MS);
     return () => window.clearInterval(interval);
   }, [refreshAccountData]);
 
@@ -4398,7 +4642,7 @@ export const InfraTradingTerminal = ({
         side,
         amount: backendAmount,
         venuePreference: ticketVenuePreference,
-        orderPolicy: 'FOK',
+        orderPolicy: ticketOrderPolicy,
         slippageToleranceBps: slippageTolerancePercentToBps(ticketSlippageTolerance),
       });
       if (previewSeq !== orchestratorPreviewSeqRef.current) return null;
@@ -4433,6 +4677,7 @@ export const InfraTradingTerminal = ({
     selectedTicketOutcome,
     side,
     ticketAmount,
+    ticketOrderPolicy,
     ticketSlippageTolerance,
     ticketOutcomeSide,
     ticketVenuePreference,
@@ -4808,6 +5053,7 @@ export const InfraTradingTerminal = ({
       ticketOrchestratorSigning ||
       ticketSellUnavailable ||
       ticketOrchestratorWaiting ||
+      ticketOrchestratorState === 'NEEDS_SIGNATURE' ||
       ticketOrchestratorState === 'BLOCKED_ACTION_REQUIRED' ||
       ticketOrchestratorState === 'SUBMITTING' ||
       ticketOrchestratorState === 'SUBMITTED' ||
@@ -4835,6 +5081,8 @@ export const InfraTradingTerminal = ({
         ? 'Enable venue'
       : ticketOrchestratorState === 'WAITING_FOR_VENUE_READY'
         ? 'Waiting for venue readiness...'
+      : ticketOrchestratorState === 'NEEDS_SIGNATURE'
+        ? 'Waiting for signature...'
       : ticketOrchestratorState === 'BLOCKED_ACTION_REQUIRED'
         ? 'Execution blocked'
       : ticketOrchestratorState === 'SUBMITTING'
@@ -5265,7 +5513,7 @@ export const InfraTradingTerminal = ({
                                             {outcomeVenues.length > 0 ? `${outcomeVenues.length} venues` : 'Venue quotes load in terminal'}
                                           </span>
                                         </div>
-                                        <span className="shrink-0 font-mono text-xs font-black text-zinc-100">{yesLabel}</span>
+                                        <span className="shrink-0 font-mono text-xs font-black text-zinc-100">{displayPriceLabel(yesLabel, marketDiagnosticsEnabled)}</span>
                                       </div>
                                       <div className="grid grid-cols-2 gap-2">
                                         <button
@@ -5273,14 +5521,14 @@ export const InfraTradingTerminal = ({
                                           onClick={() => selectSelectorOutcome(outcome, 'yes')}
                                           className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-center text-xs font-bold text-emerald-400 transition-colors hover:bg-emerald-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
                                         >
-                                          Yes {yesLabel}
+                                          Yes {displayPriceLabel(yesLabel, marketDiagnosticsEnabled)}
                                         </button>
                                         <button
                                           type="button"
                                           onClick={() => selectSelectorOutcome(outcome, 'no')}
                                           className="rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-center text-xs font-bold text-red-400 transition-colors hover:bg-red-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
                                         >
-                                          No {noLabel}
+                                          No {displayPriceLabel(noLabel, marketDiagnosticsEnabled)}
                                         </button>
                                       </div>
                                       {venueQuotes.length > 1 && (
@@ -5297,14 +5545,14 @@ export const InfraTradingTerminal = ({
                                                   onClick={() => selectSelectorOutcome(outcome, 'yes')}
                                                   className="rounded bg-emerald-500/10 px-2 py-1 text-[10px] font-bold text-emerald-400 transition-colors hover:bg-emerald-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
                                                 >
-                                                  Yes {quote.yesPrice}
+                                                  Yes {displayPriceLabel(quote.yesPrice, marketDiagnosticsEnabled)}
                                                 </button>
                                                 <button
                                                   type="button"
                                                   onClick={() => selectSelectorOutcome(outcome, 'no')}
                                                   className="rounded bg-red-500/10 px-2 py-1 text-[10px] font-bold text-red-400 transition-colors hover:bg-red-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
                                                 >
-                                                  No {quote.noPrice}
+                                                  No {displayPriceLabel(quote.noPrice, marketDiagnosticsEnabled)}
                                                 </button>
                                               </span>
                                             </div>
@@ -5518,12 +5766,15 @@ export const InfraTradingTerminal = ({
                              Refreshing live outcome quotes...
                            </div>
                          )}
-                         {outcomesError && (
+                         {marketDiagnosticsEnabled && outcomesError && (
                            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-xs font-semibold text-amber-200">
                              {outcomesError}
                            </div>
                          )}
-                         {visibleOutcomeRows.length === 0 && emptyCopy('No outcomes loaded', 'The backend has not returned outcomes for this market yet.')}
+                         {visibleOutcomeRows.length === 0 && emptyCopy(
+                           marketDiagnosticsEnabled ? 'No outcomes loaded' : 'Prices updating',
+                           marketDiagnosticsEnabled ? 'The backend has not returned outcomes for this market yet.' : 'Live prices will appear as soon as the feed has a usable quote.'
+                         )}
                          {visibleOutcomeRows.map((m) => {
                            const venues = m.venues.length ? m.venues : marketVenueList;
                            const primaryVenue = m.primaryVenue ?? venues[0] ?? 'lotus';
@@ -5550,12 +5801,12 @@ export const InfraTradingTerminal = ({
                                          <div className="text-zinc-100 font-bold text-base tracking-wide leading-tight">{m.name}</div>
                                          <div className="text-zinc-500 text-xs mt-0.5 font-medium">
                                            {m.vol} <span className="mx-1">-</span> {m.platforms} venues
-                                           {m.blocker && <span className="ml-2 text-amber-300">{m.blocker}</span>}
+                                           {marketDiagnosticsEnabled && m.blocker && <span className="ml-2 text-amber-300">{m.blocker}</span>}
                                          </div>
                                      </div>
                                  </div>
                                  <div className="flex items-center gap-6">
-                                     <div className="text-white font-black text-xl w-14 text-right tracking-tight">{m.prob}</div>
+                                     <div className="text-white font-black text-xl w-14 text-right tracking-tight">{displayPriceLabel(m.prob, marketDiagnosticsEnabled)}</div>
                                      <div className="flex items-center gap-2">
                                           <button
                                             type="button"
@@ -5566,7 +5817,7 @@ export const InfraTradingTerminal = ({
                                             }}
                                             className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#1A3A34] text-[#4ade80] text-xs font-bold hover:bg-[#204941] transition-colors"
                                           >
-                                               <VenueLogo id={normalizeVenueId(primaryVenue)} label={formatVenueLabel(primaryVenue)} className="h-3.5 w-3.5 rounded-full" /> Yes {m.yesPrice}
+                                               <VenueLogo id={normalizeVenueId(primaryVenue)} label={formatVenueLabel(primaryVenue)} className="h-3.5 w-3.5 rounded-full" /> Yes {displayPriceLabel(m.yesPrice, marketDiagnosticsEnabled)}
                                           </button>
                                           <button
                                             type="button"
@@ -5577,7 +5828,7 @@ export const InfraTradingTerminal = ({
                                             }}
                                             className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#3F1D24] text-[#f87171] text-xs font-bold hover:bg-[#52252f] transition-colors"
                                           >
-                                               <VenueLogo id={normalizeVenueId(primaryVenue)} label={formatVenueLabel(primaryVenue)} className="h-3.5 w-3.5 rounded-full" /> No {m.noPrice}
+                                               <VenueLogo id={normalizeVenueId(primaryVenue)} label={formatVenueLabel(primaryVenue)} className="h-3.5 w-3.5 rounded-full" /> No {displayPriceLabel(m.noPrice, marketDiagnosticsEnabled)}
                                           </button>
                                           <button
                                             type="button"
@@ -5604,7 +5855,7 @@ export const InfraTradingTerminal = ({
                                          <div className="flex items-center gap-2 text-xs font-bold text-zinc-200">
                                            <VenueLogo id={normalizeVenueId(quote.venue)} label={formatVenueLabel(quote.venue)} className="h-4 w-4 rounded-full" />
                                            {formatVenueLabel(quote.venue)}
-                                           {quote.blocker && <span className="text-[10px] font-medium text-amber-300">{quote.blocker}</span>}
+                                           {marketDiagnosticsEnabled && quote.blocker && <span className="text-[10px] font-medium text-amber-300">{quote.blocker}</span>}
                                          </div>
                                          <div className="flex items-center gap-2">
                                            <button
@@ -5616,7 +5867,7 @@ export const InfraTradingTerminal = ({
                                              }}
                                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#1A3A34] text-[#4ade80] text-xs font-bold hover:bg-[#204941] transition-colors"
                                            >
-                                             <VenueLogo id={normalizeVenueId(quote.venue)} label={formatVenueLabel(quote.venue)} className="h-3.5 w-3.5 rounded-full" /> Yes {quote.yesPrice}
+                                             <VenueLogo id={normalizeVenueId(quote.venue)} label={formatVenueLabel(quote.venue)} className="h-3.5 w-3.5 rounded-full" /> Yes {displayPriceLabel(quote.yesPrice, marketDiagnosticsEnabled)}
                                            </button>
                                            <button
                                              type="button"
@@ -5627,7 +5878,7 @@ export const InfraTradingTerminal = ({
                                              }}
                                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#3F1D24] text-[#f87171] text-xs font-bold hover:bg-[#52252f] transition-colors"
                                            >
-                                             <VenueLogo id={normalizeVenueId(quote.venue)} label={formatVenueLabel(quote.venue)} className="h-3.5 w-3.5 rounded-full" /> No {quote.noPrice}
+                                             <VenueLogo id={normalizeVenueId(quote.venue)} label={formatVenueLabel(quote.venue)} className="h-3.5 w-3.5 rounded-full" /> No {displayPriceLabel(quote.noPrice, marketDiagnosticsEnabled)}
                                            </button>
                                          </div>
                                        </div>
@@ -6284,18 +6535,16 @@ export const InfraTradingTerminal = ({
                              title: 'Fill or Kill (FOK) Order',
                              copy: 'Executes the entire order immediately at specified price or cancels it completely.',
                            },
-                         ]).map((option) => {
+                        ]).map((option) => {
                            const active = ticketOrderPolicy === option.id;
-                           const disabled = option.id === 'FAK';
                            return (
                              <button
                                key={option.id}
                                type="button"
                                onClick={() => {
-                                 if (!disabled) setTicketOrderPolicy(option.id);
+                                 setTicketOrderPolicy(option.id);
                                }}
-                               disabled={disabled}
-                               className={`flex w-full gap-3 rounded-lg border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/60 ${active ? 'border-[#ccff00]/30 bg-[#ccff00]/10' : 'border-zinc-800 bg-zinc-900/40'} ${disabled ? 'cursor-not-allowed opacity-55' : 'hover:border-zinc-700 hover:bg-zinc-900'}`}
+                               className={`flex w-full gap-3 rounded-lg border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/60 ${active ? 'border-[#ccff00]/30 bg-[#ccff00]/10' : 'border-zinc-800 bg-zinc-900/40 hover:border-zinc-700 hover:bg-zinc-900'}`}
                              >
                                <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${active ? 'border-[#ccff00] bg-[#ccff00]/10' : 'border-zinc-600'}`}>
                                  {active && <span className="h-2.5 w-2.5 rounded-full bg-[#ccff00]" />}
@@ -6303,7 +6552,6 @@ export const InfraTradingTerminal = ({
                                <span>
                                  <span className="flex items-center gap-2 text-sm font-black text-zinc-100">
                                    {option.title}
-                                   {disabled && <span className="rounded-full border border-zinc-700 px-1.5 py-0.5 text-[9px] font-bold uppercase text-zinc-500">Soon</span>}
                                  </span>
                                  <span className="mt-1 block text-xs font-medium leading-relaxed text-zinc-400">{option.copy}</span>
                                </span>
@@ -6352,10 +6600,10 @@ export const InfraTradingTerminal = ({
               <div className="flex flex-col gap-3 p-3 animate-in fade-in duration-300 2xl:p-4 xl:min-h-0 xl:flex-1 xl:overflow-y-auto xl:pr-3 custom-scrollbar">
                   <div className="grid grid-cols-2 gap-3">
                       <button type="button" onClick={() => selectTicketOutcome('yes')} className={`font-bold py-3 rounded-lg flex items-center justify-center gap-2 shadow-sm transition-colors text-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${ticketOutcomeSide === 'yes' ? 'bg-emerald-500 text-white hover:bg-emerald-400' : 'bg-transparent border border-emerald-500/30 text-emerald-500 hover:bg-emerald-500/10'}`}>
-                          YES {selectedTicketOutcome?.yesPrice ?? 'Quote'}
+                          YES {displayPriceLabel(selectedTicketOutcome?.yesPrice, marketDiagnosticsEnabled)}
                       </button>
                       <button type="button" onClick={() => selectTicketOutcome('no')} className={`font-bold py-3 rounded-lg flex items-center justify-center gap-2 shadow-sm transition-colors text-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${ticketOutcomeSide === 'no' ? 'bg-[#E52B50] text-white hover:bg-[#ff3366]' : 'bg-transparent border border-red-500/30 text-red-500 hover:bg-red-500/10'}`}>
-                          NO {selectedTicketOutcome?.noPrice ?? 'Quote'}
+                          NO {displayPriceLabel(selectedTicketOutcome?.noPrice, marketDiagnosticsEnabled)}
                       </button>
                   </div>
 
@@ -6668,10 +6916,10 @@ export const InfraTradingTerminal = ({
                  <div className="p-4 flex flex-col gap-4 animate-in fade-in duration-300">
                      <div className="grid grid-cols-2 gap-3">
                          <button type="button" onClick={() => selectTicketOutcome('yes')} className={`font-bold py-3 rounded-lg flex items-center justify-center gap-2 shadow-sm transition-colors text-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${ticketOutcomeSide === 'yes' ? 'bg-emerald-500 text-white hover:bg-emerald-400' : 'bg-transparent border border-emerald-500/30 text-emerald-500 hover:bg-emerald-500/10'}`}>
-                             YES {selectedTicketOutcome?.yesPrice ?? 'Quote'}
+                             YES {displayPriceLabel(selectedTicketOutcome?.yesPrice, marketDiagnosticsEnabled)}
                          </button>
                          <button type="button" onClick={() => selectTicketOutcome('no')} className={`font-bold py-3 rounded-lg flex items-center justify-center gap-2 shadow-sm transition-colors text-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${ticketOutcomeSide === 'no' ? 'bg-[#E52B50] text-white hover:bg-[#ff3366]' : 'bg-transparent border border-red-500/30 text-red-500 hover:bg-red-500/10'}`}>
-                             NO {selectedTicketOutcome?.noPrice ?? 'Quote'}
+                             NO {displayPriceLabel(selectedTicketOutcome?.noPrice, marketDiagnosticsEnabled)}
                          </button>
                      </div>
 
@@ -6799,10 +7047,10 @@ export const InfraTradingTerminal = ({
                  <div className="p-4 flex flex-col gap-4 animate-in fade-in duration-300">
                      <div className="grid grid-cols-2 gap-3">
                          <button className="bg-transparent border border-emerald-500/30 text-emerald-500 hover:bg-emerald-500/10 font-bold py-3 rounded-lg flex items-center justify-center gap-2 transition-colors text-lg">
-                             YES {selectedOutcome?.yesPrice ?? 'Quote'}
+                             YES {displayPriceLabel(selectedOutcome?.yesPrice, marketDiagnosticsEnabled)}
                          </button>
                          <button className="bg-[#E52B50] hover:bg-[#ff3366] text-white font-bold py-3 rounded-lg flex items-center justify-center gap-2 shadow-sm transition-colors text-lg">
-                             NO {selectedOutcome?.noPrice ?? 'Quote'}
+                             NO {displayPriceLabel(selectedOutcome?.noPrice, marketDiagnosticsEnabled)}
                          </button>
                      </div>
                      

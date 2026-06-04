@@ -5,6 +5,7 @@ type CacheEntry<T> = {
 };
 
 const cache = new Map<string, CacheEntry<unknown>>();
+const inFlight = new Map<string, Promise<unknown>>();
 
 export type StaleCacheOptions = {
   ttlMs?: number;
@@ -54,6 +55,16 @@ export async function staleWhileRevalidate<T>(
 
 export function setCachedData<T>(key: string, data: T): void {
   cache.set(key, { data, updatedAt: Date.now() });
+}
+
+export function dedupeInFlight<T>(key: string, fetcher: () => Promise<T>): Promise<T> {
+  const existing = inFlight.get(key) as Promise<T> | undefined;
+  if (existing) return existing;
+  const promise = fetcher().finally(() => {
+    if (inFlight.get(key) === promise) inFlight.delete(key);
+  });
+  inFlight.set(key, promise);
+  return promise;
 }
 
 export function peekCachedData<T>(key: string): T | undefined {

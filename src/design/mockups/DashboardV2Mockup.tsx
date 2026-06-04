@@ -13,7 +13,6 @@ import {
   listMarkets,
   type MarketBatchQuoteItem,
   type MarketCatalogMarket,
-  type MarketListInput,
   type MarketLivePriceItem,
 } from '@/features/markets/api/market-api';
 import { getNotifications, markNotificationRead, type UserNotification } from '@/features/notifications/api/notification-api';
@@ -131,7 +130,6 @@ type DashboardMarketQuote = {
 
 type MarketQuickFilter = 'all' | 'watchlist' | 'live_crypto' | 'trending' | 'best_routes' | 'sports' | 'crypto' | 'politics';
 type DashboardRouteFilter = 'Single' | 'Pair' | 'Tri' | 'Strict all';
-type MarketRouteCoverage = NonNullable<MarketListInput['routeCoverage']>;
 type DashboardSortKey = 'volume' | 'liquidity' | 'closing' | 'buys' | 'sells' | 'best_route';
 type ToastPosition = 'top-left' | 'top-center' | 'top-right' | 'bottom-left' | 'bottom-center' | 'bottom-right';
 
@@ -157,17 +155,6 @@ const routeTypeLabel = (market: MarketCatalogMarket): string => {
     return market.venueCount >= 3 ? 'Tri' : 'Pair';
   }
   return 'Single';
-};
-
-const routeCoverageForFilters = (
-  routeTypes: readonly DashboardRouteFilter[],
-): MarketRouteCoverage => {
-  if (routeTypes.length !== 1) return 'all';
-  const [routeType] = routeTypes;
-  if (routeType === 'Single') return 'single';
-  if (routeType === 'Pair') return 'pair';
-  if (routeType === 'Tri') return 'tri';
-  return 'strict_all';
 };
 
 const formatTitleCase = (value: string): string =>
@@ -647,6 +634,16 @@ const marketQuoteStatus = (market: MarketCatalogMarket): NonNullable<MarketCatal
   return 'unavailable';
 };
 
+const marketDisplayQuoteStatus = (
+  status: NonNullable<MarketCatalogMarket['quoteStatus']>,
+  readyVenueCount: number,
+  diagnosticsEnabled = lotusMarketDiagnosticsEnabled(),
+): NonNullable<MarketCatalogMarket['quoteStatus']> => {
+  if (diagnosticsEnabled) return status;
+  if (status === 'live' || status === 'partial') return 'live';
+  return readyVenueCount > 0 ? 'live' : 'unavailable';
+};
+
 const marketQuoteReadinessLabel = (
   status: NonNullable<MarketCatalogMarket['quoteStatus']>,
   readyVenueCount: number,
@@ -654,8 +651,7 @@ const marketQuoteReadinessLabel = (
   diagnosticsEnabled = lotusMarketDiagnosticsEnabled(),
 ): string => {
   if (!diagnosticsEnabled) {
-    if (status === 'unavailable') return '';
-    return readyVenueCount > 0 ? 'Live' : 'Ready';
+    return '';
   }
   if (status === 'live') return readyVenueCount > 0 ? `${readyVenueCount} quote-ready venue${readyVenueCount === 1 ? '' : 's'}` : 'Quote ready';
   if (status === 'partial') return readyVenueCount > 0 ? `Partial coverage: ${readyVenueCount} venue${readyVenueCount === 1 ? '' : 's'}` : 'Partial venue coverage';
@@ -667,7 +663,7 @@ const marketQuoteStatusPriceLabel = (
   status: NonNullable<MarketCatalogMarket['quoteStatus']>,
   diagnosticsEnabled = lotusMarketDiagnosticsEnabled(),
 ): string => {
-  if (!diagnosticsEnabled && (status === 'stale' || status === 'unavailable')) return '-';
+  if (!diagnosticsEnabled) return '-';
   if (status === 'stale') return 'Stale';
   if (status === 'unavailable') return 'Unavailable';
   return 'Preview';
@@ -704,6 +700,8 @@ const marketIdForCatalogMarket = (market: MarketCatalogMarket): string => market
 const venuesForCatalogMarket = (market: MarketCatalogMarket): string[] =>
   Array.from(new Set((market.venues.length ? market.venues : market.venueMarkets.map((item) => item.venue)).map(normalizeVenueId)));
 
+const pendingPricePlaceholder = (): string => lotusMarketDiagnosticsEnabled() ? 'Quote' : '-';
+
 const compactFallbackOutcome = (market: MarketCatalogMarket): DashboardOutcomeRow => {
   const marketId = marketIdForCatalogMarket(market);
   const label = market.displayOutcome?.trim() || deriveCandidateOutcomeLabel(market);
@@ -714,7 +712,7 @@ const compactFallbackOutcome = (market: MarketCatalogMarket): DashboardOutcomeRo
     canonicalEventId: market.canonicalEventId,
     quoteOutcomeId: canonicalQuoteOutcomeId(label),
     name: normalizeMarketOutcomeLabel(market.title, label),
-    prob: 'Quote',
+    prob: pendingPricePlaceholder(),
     liveStatus: 'not_requested',
     venues: venuesForCatalogMarket(market),
     venueMarkets: [],
@@ -734,7 +732,7 @@ const binaryCandidateOutcomeRow = (market: MarketCatalogMarket): DashboardOutcom
     canonicalEventId: market.canonicalEventId,
     quoteOutcomeId: 'YES',
     name: deriveCandidateOutcomeLabel(market),
-    prob: 'Quote',
+    prob: pendingPricePlaceholder(),
     liveStatus: 'not_requested',
     venues: venuesForCatalogMarket(market),
     venueMarkets: market.venueMarkets,
@@ -751,8 +749,8 @@ const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardM
   const routeType = routeTypeLabel(market);
   const marketId = marketIdForCatalogMarket(market);
   const quoteStatus = marketQuoteStatus(market);
-  const displayQuoteStatus = diagnosticsEnabled ? quoteStatus : 'unavailable';
   const quoteReadyVenueCount = Number.isFinite(Number(market.quoteReadyVenueCount)) ? Number(market.quoteReadyVenueCount) : 0;
+  const displayQuoteStatus = marketDisplayQuoteStatus(quoteStatus, quoteReadyVenueCount, diagnosticsEnabled);
   const quoteBlockers = catalogQuoteBlockers(market);
   const quoteReadinessLabel = marketQuoteReadinessLabel(quoteStatus, quoteReadyVenueCount, quoteBlockers, diagnosticsEnabled);
   const marketClass = formatTitleCase(market.marketClass || 'Market');
@@ -789,7 +787,7 @@ const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardM
         canonicalEventId: market.canonicalEventId,
         quoteOutcomeId: canonicalQuoteOutcomeId(label),
         name: normalizeMarketOutcomeLabel(market.title, label),
-        prob: 'Quote',
+        prob: pendingPricePlaceholder(),
         liveStatus: 'not_requested',
         venues,
         venueMarkets: market.venueMarkets,
@@ -840,14 +838,14 @@ const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardM
     lastQuoteAt: market.lastQuoteAt ?? null,
     outcomes: outcomeRows.length > 0
       ? outcomeRows
-      : [{ id: 'OUTCOMES', marketId, eventId: market.eventId ?? market.canonicalEventId, canonicalEventId: market.canonicalEventId, quoteOutcomeId: 'OUTCOMES', name: 'Outcomes load in terminal', prob: 'Quote', liveStatus: 'not_requested' }],
+      : [{ id: 'OUTCOMES', marketId, eventId: market.eventId ?? market.canonicalEventId, canonicalEventId: market.canonicalEventId, quoteOutcomeId: 'OUTCOMES', name: 'Outcomes load in terminal', prob: pendingPricePlaceholder(), liveStatus: 'not_requested' }],
     imageUrl: getSafeMediaUrl(market.imageUrl),
     iconUrl: getSafeMediaUrl(market.iconUrl),
     priceLabel: diagnosticsEnabled ? marketQuoteStatusPriceLabel(quoteStatus, diagnosticsEnabled) : '-',
     priceVenue: null,
     changeLabel: diagnosticsEnabled ? quoteReadinessLabel : '',
     savings: diagnosticsEnabled ? quoteStatus === 'unavailable' ? 'Unavailable' : 'Preview route' : '-',
-    spread: diagnosticsEnabled ? quoteStatus === 'stale' ? 'Stale' : quoteStatus === 'unavailable' ? 'Blocked' : 'Ready' : '-',
+    spread: diagnosticsEnabled ? quoteStatus === 'stale' ? 'Stale' : quoteStatus === 'unavailable' ? 'Blocked' : '-' : '-',
     fallbackLabel: diagnosticsEnabled ? quoteReadinessLabel : '-',
     fallbackMode: quoteStatus === 'unavailable' && diagnosticsEnabled ? 'blocker' : routeType === 'Single' ? 'fallback' : 'pending',
     closesBy: formatMarketDate(market.expiresAt ?? market.resolvesAt),
@@ -893,7 +891,7 @@ const mapCatalogMarketsToDashboardRows = (markets: MarketCatalogMarket[]): Dashb
     const quoteReadyVenueCount = Math.max(0, ...group.map((market) => Number(market.quoteReadyVenueCount) || 0));
     const quoteBlockers = group.flatMap(catalogQuoteBlockers);
     const diagnosticsEnabled = lotusMarketDiagnosticsEnabled();
-    const displayQuoteStatus = diagnosticsEnabled ? quoteStatus : 'unavailable';
+    const displayQuoteStatus = marketDisplayQuoteStatus(quoteStatus, quoteReadyVenueCount, diagnosticsEnabled);
     const quoteReadinessLabel = marketQuoteReadinessLabel(quoteStatus, quoteReadyVenueCount, quoteBlockers, diagnosticsEnabled);
     const groupedLastQuoteTimes = group
       .map((market) => market.lastQuoteAt)
@@ -949,10 +947,10 @@ const mapCatalogMarketsToDashboardRows = (markets: MarketCatalogMarket[]): Dashb
       txnBuy: buyCount ?? buyVolume ?? 0,
       txnSell: sellCount ?? sellVolume ?? 0,
       txnLabel: buyCount !== null || sellCount !== null ? 'Txns' : buyVolume !== null || sellVolume !== null ? 'Vol' : 'Pending',
-      priceLabel: diagnosticsEnabled ? marketQuoteStatusPriceLabel(quoteStatus, diagnosticsEnabled) : '-',
+      priceLabel: marketQuoteStatusPriceLabel(quoteStatus, diagnosticsEnabled),
       changeLabel: diagnosticsEnabled ? quoteReadinessLabel : '',
       savings: diagnosticsEnabled ? quoteStatus === 'unavailable' ? 'Unavailable' : 'Preview route' : '-',
-      spread: diagnosticsEnabled ? quoteStatus === 'stale' ? 'Stale' : quoteStatus === 'unavailable' ? 'Blocked' : 'Ready' : '-',
+      spread: diagnosticsEnabled ? quoteStatus === 'stale' ? 'Stale' : quoteStatus === 'unavailable' ? 'Blocked' : '-' : '-',
       fallbackLabel: diagnosticsEnabled ? quoteReadinessLabel : '-',
       fallbackMode: quoteStatus === 'unavailable' && diagnosticsEnabled ? 'blocker' : base.fallbackMode,
       quoteRequired: diagnosticsEnabled && quoteStatus === 'unavailable',
@@ -1272,13 +1270,15 @@ export const DashboardV2Mockup = ({
   const baseDisplayedMarkets = activePage === 'home' ? filteredMarketRows.slice(0, homeMarketLimit) : filteredMarketRows;
   const displayedMarkets = baseDisplayedMarkets;
   const canLoadMoreMarkets = activePage === 'home' && homeMarketLimit < filteredMarketRows.length;
+  const dashboardDiagnosticsEnabled = lotusMarketDiagnosticsEnabled();
   const emptyMarketCopy = marketFilter === 'watchlist'
     ? 'Your watchlist is empty. Bookmark markets from the cards or list to track them here.'
     : marketFilter === 'best_routes'
       ? 'No cross-venue routeable markets are available for this view yet.'
-      : 'Try another search. Lotus only shows backend-approved market metadata here.';
+      : dashboardDiagnosticsEnabled
+        ? 'Try another search. Lotus only shows backend-approved market metadata here.'
+        : 'Try another search or choose a different category.';
   const filterCategory = selectedCategories.length === 1 ? selectedCategories[0] : categoryForQuickFilter(marketFilter);
-  const dashboardDiagnosticsEnabled = lotusMarketDiagnosticsEnabled();
   const marketSummary = useMemo(() => {
     const routeable = quotedMarketRows.filter((market) => market.venueCount > 0 && market.status !== 'RESOLVED_OR_EXPIRED').length;
     const crossVenue = quotedMarketRows.filter((market) => market.routeType !== 'Single').length;
@@ -1317,10 +1317,12 @@ export const DashboardV2Mockup = ({
         ? 'Unavailable'
         : 'Verified only';
   const portfolioMtmLabel = portfolioSummary
-    ? portfolioSummary.unavailableMarkCount > 0
+    ? !dashboardDiagnosticsEnabled
+      ? 'MTM'
+      : portfolioSummary.unavailableMarkCount > 0
       ? `${portfolioSummary.markedPositionCount}/${portfolioSummary.positionCount} marked`
       : 'MTM'
-    : portfolioError ? 'MTM' : 'MTM unavailable';
+    : portfolioError || !dashboardDiagnosticsEnabled ? 'MTM' : 'MTM unavailable';
   const recentActivityItems = useMemo(() => {
     const notificationRows = notificationItems.slice(0, 3).map((notification) => ({
       type: notification.severity === 'success' ? 'buy' : notification.severity === 'error' || notification.severity === 'warning' ? 'sell' : 'route',
@@ -1332,8 +1334,12 @@ export const DashboardV2Mockup = ({
     const systemRows = [
       {
         type: marketsError ? 'sell' : 'route',
-        title: marketsError ? 'Market catalog unavailable' : 'Market catalog synced',
-        market: marketsError ?? `${marketSummary.routeable} backend-approved markets loaded`,
+        title: dashboardDiagnosticsEnabled
+          ? marketsError ? 'Market catalog unavailable' : 'Market catalog synced'
+          : marketsError ? 'Markets updating' : 'Markets synced',
+        market: dashboardDiagnosticsEnabled
+          ? marketsError ?? `${marketSummary.routeable} backend-approved markets loaded`
+          : marketsError ? 'Refreshing the latest market list' : `${marketSummary.routeable} markets loaded`,
         time: marketsLoading ? 'Loading' : 'Live',
         price: '',
       },
@@ -1352,8 +1358,12 @@ export const DashboardV2Mockup = ({
       },
       {
         type: portfolioError ? 'sell' : 'buy',
-        title: portfolioError ? 'Portfolio sync blocked' : 'Portfolio MTM synced',
-        market: portfolioError ?? `${portfolioPositionsLabel} positions, ${portfolioCashLabel} available cash`,
+        title: dashboardDiagnosticsEnabled
+          ? portfolioError ? 'Portfolio sync blocked' : 'Portfolio MTM synced'
+          : portfolioError ? 'Portfolio updating' : 'Portfolio synced',
+        market: dashboardDiagnosticsEnabled
+          ? portfolioError ?? `${portfolioPositionsLabel} positions, ${portfolioCashLabel} available cash`
+          : portfolioError ? 'Refreshing balances and positions' : `${portfolioPositionsLabel} positions, ${portfolioCashLabel} available cash`,
         time: portfolioLoading ? 'Loading' : 'Ready',
         price: '',
       },
@@ -1441,8 +1451,6 @@ export const DashboardV2Mockup = ({
   useEffect(() => {
     if (!isMarketSurface) return;
     let cancelled = false;
-    const diagnosticsEnabled = lotusMarketDiagnosticsEnabled();
-    const routeCoverage = diagnosticsEnabled ? routeCoverageForFilters(selectedRouteTypes) : undefined;
     const timer = window.setTimeout(() => {
       setMarketsLoading(true);
       setMarketsError(null);
@@ -1450,7 +1458,6 @@ export const DashboardV2Mockup = ({
         category: filterCategory,
         search: searchQuery.trim() || undefined,
         limit: MARKET_CATALOG_FETCH_LIMIT,
-        ...(diagnosticsEnabled ? { quoteReadyOnly: true, routeCoverage } : {}),
         view: 'compact',
       })
         .then((response) => {
@@ -1528,7 +1535,10 @@ export const DashboardV2Mockup = ({
             const priceByKey = new Map(response.prices.map((price) => [`${price.marketId}:${price.outcomeId ?? ''}`, price]));
             const nextByMarket = new Map<string, Record<string, DashboardOutcomeQuote>>();
             for (const item of chunk) {
-              const price = priceByKey.get(`${item.marketId}:${item.quoteOutcomeId}`);
+              const price =
+                priceByKey.get(`${item.marketId}:${item.quoteOutcomeId}`) ??
+                priceByKey.get(`${item.marketId}:${normalizeOutcomeId(item.quoteOutcomeId)}`) ??
+                (item.quoteOutcomeId === 'YES' ? priceByKey.get(`${item.marketId}:`) : undefined);
               const bucket = nextByMarket.get(item.parentMarketId) ?? {};
               bucket[item.outcomeId] = toOutcomeQuoteFromLivePrice(item.outcomeId, price);
               nextByMarket.set(item.parentMarketId, bucket);
@@ -3351,7 +3361,7 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
         : change ? `+${change}¢ vs single venue` : 'Quote ready'
   );
   const emptyTxnCopy = !diagnosticsEnabled
-    ? 'Quote'
+    ? '-'
     : normalizedQuoteStatus === 'unavailable'
     ? readableBlocker ?? 'Quote unavailable'
     : normalizedQuoteStatus === 'stale'
