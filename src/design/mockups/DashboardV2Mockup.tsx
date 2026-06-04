@@ -751,6 +751,7 @@ const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardM
   const routeType = routeTypeLabel(market);
   const marketId = marketIdForCatalogMarket(market);
   const quoteStatus = marketQuoteStatus(market);
+  const displayQuoteStatus = diagnosticsEnabled ? quoteStatus : 'unavailable';
   const quoteReadyVenueCount = Number.isFinite(Number(market.quoteReadyVenueCount)) ? Number(market.quoteReadyVenueCount) : 0;
   const quoteBlockers = catalogQuoteBlockers(market);
   const quoteReadinessLabel = marketQuoteReadinessLabel(quoteStatus, quoteReadyVenueCount, quoteBlockers, diagnosticsEnabled);
@@ -833,7 +834,7 @@ const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardM
     marketType: market.outcomeCount > 2 ? 'multi' : 'binary',
     marketClass,
     status: market.status,
-    quoteStatus,
+    quoteStatus: displayQuoteStatus,
     quoteReadyVenueCount,
     quoteBlockers,
     lastQuoteAt: market.lastQuoteAt ?? null,
@@ -842,19 +843,19 @@ const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardM
       : [{ id: 'OUTCOMES', marketId, eventId: market.eventId ?? market.canonicalEventId, canonicalEventId: market.canonicalEventId, quoteOutcomeId: 'OUTCOMES', name: 'Outcomes load in terminal', prob: 'Quote', liveStatus: 'not_requested' }],
     imageUrl: getSafeMediaUrl(market.imageUrl),
     iconUrl: getSafeMediaUrl(market.iconUrl),
-    priceLabel: marketQuoteStatusPriceLabel(quoteStatus, diagnosticsEnabled),
+    priceLabel: diagnosticsEnabled ? marketQuoteStatusPriceLabel(quoteStatus, diagnosticsEnabled) : '-',
     priceVenue: null,
-    changeLabel: quoteReadinessLabel,
-    savings: !diagnosticsEnabled && quoteStatus === 'unavailable' ? '-' : quoteStatus === 'unavailable' ? 'Unavailable' : 'Preview route',
-    spread: !diagnosticsEnabled && (quoteStatus === 'stale' || quoteStatus === 'unavailable') ? '-' : quoteStatus === 'stale' ? 'Stale' : quoteStatus === 'unavailable' ? 'Blocked' : 'Ready',
-    fallbackLabel: quoteReadinessLabel,
+    changeLabel: diagnosticsEnabled ? quoteReadinessLabel : '',
+    savings: diagnosticsEnabled ? quoteStatus === 'unavailable' ? 'Unavailable' : 'Preview route' : '-',
+    spread: diagnosticsEnabled ? quoteStatus === 'stale' ? 'Stale' : quoteStatus === 'unavailable' ? 'Blocked' : 'Ready' : '-',
+    fallbackLabel: diagnosticsEnabled ? quoteReadinessLabel : '-',
     fallbackMode: quoteStatus === 'unavailable' && diagnosticsEnabled ? 'blocker' : routeType === 'Single' ? 'fallback' : 'pending',
     closesBy: formatMarketDate(market.expiresAt ?? market.resolvesAt),
     closeTimestamp: dateTimestamp(market.expiresAt ?? market.resolvesAt),
     change24hLabel: 'Quote',
     change24hDirection: 'pending',
     venueDetails,
-    quoteRequired: quoteStatus === 'unavailable',
+    quoteRequired: diagnosticsEnabled && quoteStatus === 'unavailable',
     prob: null,
     change: null,
     txnBuy: buyCount ?? buyVolume ?? 0,
@@ -892,6 +893,7 @@ const mapCatalogMarketsToDashboardRows = (markets: MarketCatalogMarket[]): Dashb
     const quoteReadyVenueCount = Math.max(0, ...group.map((market) => Number(market.quoteReadyVenueCount) || 0));
     const quoteBlockers = group.flatMap(catalogQuoteBlockers);
     const diagnosticsEnabled = lotusMarketDiagnosticsEnabled();
+    const displayQuoteStatus = diagnosticsEnabled ? quoteStatus : 'unavailable';
     const quoteReadinessLabel = marketQuoteReadinessLabel(quoteStatus, quoteReadyVenueCount, quoteBlockers, diagnosticsEnabled);
     const groupedLastQuoteTimes = group
       .map((market) => market.lastQuoteAt)
@@ -936,7 +938,7 @@ const mapCatalogMarketsToDashboardRows = (markets: MarketCatalogMarket[]): Dashb
       venues,
       venueMarkets,
       marketType: 'binary',
-      quoteStatus,
+      quoteStatus: displayQuoteStatus,
       quoteReadyVenueCount,
       quoteBlockers,
       lastQuoteAt,
@@ -947,13 +949,13 @@ const mapCatalogMarketsToDashboardRows = (markets: MarketCatalogMarket[]): Dashb
       txnBuy: buyCount ?? buyVolume ?? 0,
       txnSell: sellCount ?? sellVolume ?? 0,
       txnLabel: buyCount !== null || sellCount !== null ? 'Txns' : buyVolume !== null || sellVolume !== null ? 'Vol' : 'Pending',
-      priceLabel: marketQuoteStatusPriceLabel(quoteStatus, diagnosticsEnabled),
-      changeLabel: quoteReadinessLabel,
-      savings: !diagnosticsEnabled && quoteStatus === 'unavailable' ? '-' : quoteStatus === 'unavailable' ? 'Unavailable' : 'Preview route',
-      spread: !diagnosticsEnabled && (quoteStatus === 'stale' || quoteStatus === 'unavailable') ? '-' : quoteStatus === 'stale' ? 'Stale' : quoteStatus === 'unavailable' ? 'Blocked' : 'Ready',
-      fallbackLabel: quoteReadinessLabel,
+      priceLabel: diagnosticsEnabled ? marketQuoteStatusPriceLabel(quoteStatus, diagnosticsEnabled) : '-',
+      changeLabel: diagnosticsEnabled ? quoteReadinessLabel : '',
+      savings: diagnosticsEnabled ? quoteStatus === 'unavailable' ? 'Unavailable' : 'Preview route' : '-',
+      spread: diagnosticsEnabled ? quoteStatus === 'stale' ? 'Stale' : quoteStatus === 'unavailable' ? 'Blocked' : 'Ready' : '-',
+      fallbackLabel: diagnosticsEnabled ? quoteReadinessLabel : '-',
       fallbackMode: quoteStatus === 'unavailable' && diagnosticsEnabled ? 'blocker' : base.fallbackMode,
-      quoteRequired: quoteStatus === 'unavailable',
+      quoteRequired: diagnosticsEnabled && quoteStatus === 'unavailable',
     };
   });
 };
@@ -1097,7 +1099,7 @@ const applyLiveQuoteToMarket = (market: DashboardMarketRow, quote: DashboardMark
       changeLabel: unavailable ? diagnosticsEnabled ? blocker ?? 'Live unavailable' : '' : market.changeLabel,
       fallbackLabel: unavailable ? diagnosticsEnabled ? blocker ?? 'Backend blocker' : '-' : market.fallbackLabel,
       fallbackMode: unavailable && diagnosticsEnabled ? 'blocker' : market.fallbackMode,
-      quoteRequired: true,
+      quoteRequired: diagnosticsEnabled,
     };
   }
   const bestVenueDetails = displayQuote.bestCandidate?.venue
@@ -1276,16 +1278,21 @@ export const DashboardV2Mockup = ({
       ? 'No cross-venue routeable markets are available for this view yet.'
       : 'Try another search. Lotus only shows backend-approved market metadata here.';
   const filterCategory = selectedCategories.length === 1 ? selectedCategories[0] : categoryForQuickFilter(marketFilter);
+  const dashboardDiagnosticsEnabled = lotusMarketDiagnosticsEnabled();
   const marketSummary = useMemo(() => {
     const routeable = quotedMarketRows.filter((market) => market.venueCount > 0 && market.status !== 'RESOLVED_OR_EXPIRED').length;
     const crossVenue = quotedMarketRows.filter((market) => market.routeType !== 'Single').length;
-    const routePreviewRequired = quotedMarketRows.filter((market) => market.quoteRequired).length;
+    const livePriced = quotedMarketRows.filter((market) => Boolean(market.priceVenue)).length;
+    const routePreviewRequired = dashboardDiagnosticsEnabled
+      ? quotedMarketRows.filter((market) => market.quoteRequired).length
+      : livePriced;
     return {
       routeable: marketCount || routeable,
       crossVenue,
       routePreviewRequired,
+      livePriced,
     };
-  }, [marketCount, quotedMarketRows]);
+  }, [dashboardDiagnosticsEnabled, marketCount, quotedMarketRows]);
   const portfolioCashTotal = portfolioBalances.reduce((sum, balance) => {
     const parsed = Number(balance.availableAmount ?? balance.readyAmount ?? 0);
     return Number.isFinite(parsed) ? sum + parsed : sum;
@@ -1332,11 +1339,15 @@ export const DashboardV2Mockup = ({
       },
       {
         type: marketSummary.routePreviewRequired > 0 ? 'route' : 'buy',
-        title: marketSummary.routePreviewRequired > 0 ? 'Quote readiness pending' : 'Routes refreshed',
-        market: marketSummary.routePreviewRequired > 0
-          ? `${marketSummary.routePreviewRequired} markets have stale or unavailable quote evidence`
-          : 'Visible markets have live route evidence',
-        time: marketSummary.routePreviewRequired > 0 ? 'Safe' : 'Live',
+        title: dashboardDiagnosticsEnabled
+          ? marketSummary.routePreviewRequired > 0 ? 'Quote readiness pending' : 'Routes refreshed'
+          : 'Live prices synced',
+        market: dashboardDiagnosticsEnabled
+          ? marketSummary.routePreviewRequired > 0
+            ? `${marketSummary.routePreviewRequired} markets have stale or unavailable quote evidence`
+            : 'Visible markets have live route evidence'
+          : `${marketSummary.livePriced} visible market${marketSummary.livePriced === 1 ? '' : 's'} have live price snapshots`,
+        time: dashboardDiagnosticsEnabled ? marketSummary.routePreviewRequired > 0 ? 'Safe' : 'Live' : 'Live',
         price: '',
       },
       {
@@ -1349,6 +1360,8 @@ export const DashboardV2Mockup = ({
     ];
     return [...notificationRows, ...systemRows].slice(0, 4);
   }, [
+    dashboardDiagnosticsEnabled,
+    marketSummary.livePriced,
     marketSummary.routePreviewRequired,
     marketSummary.routeable,
     marketsError,
@@ -1428,7 +1441,8 @@ export const DashboardV2Mockup = ({
   useEffect(() => {
     if (!isMarketSurface) return;
     let cancelled = false;
-    const routeCoverage = routeCoverageForFilters(selectedRouteTypes);
+    const diagnosticsEnabled = lotusMarketDiagnosticsEnabled();
+    const routeCoverage = diagnosticsEnabled ? routeCoverageForFilters(selectedRouteTypes) : undefined;
     const timer = window.setTimeout(() => {
       setMarketsLoading(true);
       setMarketsError(null);
@@ -1436,8 +1450,7 @@ export const DashboardV2Mockup = ({
         category: filterCategory,
         search: searchQuery.trim() || undefined,
         limit: MARKET_CATALOG_FETCH_LIMIT,
-        quoteReadyOnly: true,
-        routeCoverage,
+        ...(diagnosticsEnabled ? { quoteReadyOnly: true, routeCoverage } : {}),
         view: 'compact',
       })
         .then((response) => {
@@ -2311,7 +2324,7 @@ export const DashboardV2Mockup = ({
                   <span className="text-xs font-mono font-bold text-[#99cc00]">{marketSummary.crossVenue}</span>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-medium text-zinc-600 dark:text-zinc-400">Quote Pending</span>
+                  <span className="text-xs font-medium text-zinc-600 dark:text-zinc-400">{dashboardDiagnosticsEnabled ? 'Quote Pending' : 'Live Prices'}</span>
                   <span className="text-xs font-mono font-bold text-zinc-900 dark:text-zinc-100">{marketSummary.routePreviewRequired}</span>
                 </div>
               </div>
