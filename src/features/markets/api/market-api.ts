@@ -184,6 +184,8 @@ export type MarketOrderbookStreamPayload = {
   blockers?: unknown[];
   bids?: MarketOrderbookStreamLevel[];
   asks?: MarketOrderbookStreamLevel[];
+  bidDeltas?: MarketOrderbookStreamLevel[];
+  askDeltas?: MarketOrderbookStreamLevel[];
 };
 
 export type MarketChartTimeframe = "1H" | "6H" | "1D" | "1W" | "1M" | "ALL";

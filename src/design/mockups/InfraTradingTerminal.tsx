@@ -825,6 +825,87 @@ const normalizeStreamVenueBook = (
   };
 };
 
+const applyStreamLevelDeltas = (
+  existingLevels: MarketOrderbookLevel[],
+  deltas: MarketOrderbookStreamLevel[] | undefined,
+  payload: MarketOrderbookStreamPayload,
+  side: 'bid' | 'ask',
+  depth: number
+): MarketOrderbookStreamLevel[] => {
+  if (!deltas || deltas.length === 0) {
+    return existingLevels.map((level) => ({
+      venue: level.venue,
+      venueMarketId: level.venueMarketId,
+      venueOutcomeId: level.venueOutcomeId,
+      price: level.price,
+      size: level.size,
+    }));
+  }
+  const byPrice = new Map<string, MarketOrderbookStreamLevel>();
+  for (const level of existingLevels) {
+    byPrice.set(level.price, {
+      venue: level.venue,
+      venueMarketId: level.venueMarketId,
+      venueOutcomeId: level.venueOutcomeId,
+      price: level.price,
+      size: level.size,
+    });
+  }
+  for (const delta of deltas) {
+    const price = orderbookNumberString(delta.price);
+    const size = orderbookNumberString(delta.size);
+    if (!price || !size) continue;
+    const sizeNumber = orderbookNumericValue(size);
+    if (sizeNumber !== null && sizeNumber <= 0) {
+      byPrice.delete(price);
+      continue;
+    }
+    byPrice.set(price, {
+      ...delta,
+      venue: delta.venue ?? payload.venue,
+      venueMarketId: delta.venueMarketId ?? payload.venueMarketId ?? undefined,
+      venueOutcomeId: typeof delta.venueOutcomeId !== 'undefined' ? delta.venueOutcomeId : payload.venueOutcomeId ?? null,
+      price,
+      size,
+    });
+  }
+  return sortAndCumulativeLevels(
+    [...byPrice.values()].map((level) => normalizeStreamLevel(level, payload)).filter(Boolean) as MarketOrderbookLevel[],
+    side,
+    depth
+  ).map((level) => ({
+    venue: level.venue,
+    venueMarketId: level.venueMarketId,
+    venueOutcomeId: level.venueOutcomeId,
+    price: level.price,
+    size: level.size,
+  }));
+};
+
+const expandOrderbookDeltaPayload = (
+  current: MarketOrderbookResponse | null,
+  payload: MarketOrderbookStreamPayload,
+  depth: number
+): MarketOrderbookStreamPayload => {
+  if (
+    payload.updateType !== 'delta' ||
+    (!payload.bidDeltas && !payload.askDeltas) ||
+    payload.bids ||
+    payload.asks
+  ) {
+    return payload;
+  }
+  const payloadVenue = payload.venue ? toBackendVenueId(payload.venue) : null;
+  const existingVenue = payloadVenue
+    ? current?.venues.find((venue) => toBackendVenueId(venue.venue) === payloadVenue)
+    : null;
+  return {
+    ...payload,
+    bids: applyStreamLevelDeltas(existingVenue?.bids ?? [], payload.bidDeltas, payload, 'bid', depth),
+    asks: applyStreamLevelDeltas(existingVenue?.asks ?? [], payload.askDeltas, payload, 'ask', depth),
+  };
+};
+
 const orderbookStatusFromSnapshot = (
   snapshotStatus: MarketOrderbookStreamPayload['snapshotStatus'],
   hasLevels: boolean,
@@ -841,7 +922,9 @@ const mergeOrderbookStreamUpdate = (
   depth = 20
 ): MarketOrderbookResponse => {
   const receivedAt = new Date().toISOString();
-  const venueBook = normalizeStreamVenueBook(payload, receivedAt, current?.depth ?? depth);
+  const effectiveDepth = current?.depth ?? depth;
+  const expandedPayload = expandOrderbookDeltaPayload(current, payload, effectiveDepth);
+  const venueBook = normalizeStreamVenueBook(expandedPayload, receivedAt, effectiveDepth);
   const sameVenue = (venue: MarketOrderbookVenue) =>
     toBackendVenueId(venue.venue) === toBackendVenueId(venueBook.venue);
   const existingVenues = current?.venues ?? [];
@@ -858,15 +941,15 @@ const mergeOrderbookStreamUpdate = (
     current?.depth ?? depth
   );
   const stats = bookStats(bids, asks);
-  const streamBlockers = normalizeStreamResponseBlockers(payload);
-  const payloadVenue = payload.venue ?? 'UNKNOWN';
+  const streamBlockers = normalizeStreamResponseBlockers(expandedPayload);
+  const payloadVenue = expandedPayload.venue ?? 'UNKNOWN';
   const blockers = [
     ...(current?.blockers ?? []).filter((blocker) => toBackendVenueId(blocker.venue) !== toBackendVenueId(payloadVenue)),
     ...streamBlockers,
   ];
   const hasLevels = bids.length > 0 || asks.length > 0;
-  const marketId = streamPayloadMarketId(payload) ?? current?.marketId ?? '';
-  const outcomeId = streamPayloadOutcomeId(payload);
+  const marketId = streamPayloadMarketId(expandedPayload) ?? current?.marketId ?? '';
+  const outcomeId = streamPayloadOutcomeId(expandedPayload);
   return {
     marketId,
     outcomeId: outcomeId && outcomeId !== '_' ? outcomeId : null,
@@ -879,7 +962,7 @@ const mergeOrderbookStreamUpdate = (
     bestAsk: stats.bestAsk,
     midpoint: stats.midpoint,
     spread: stats.spread,
-    status: orderbookStatusFromSnapshot(payload.snapshotStatus, hasLevels, activeVenues.length > 0),
+    status: orderbookStatusFromSnapshot(expandedPayload.snapshotStatus, hasLevels, activeVenues.length > 0),
     blockers,
   };
 };
