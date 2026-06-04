@@ -1271,13 +1271,15 @@ export const DashboardV2Mockup = ({
   const baseDisplayedMarkets = activePage === 'home' ? filteredMarketRows.slice(0, homeMarketLimit) : filteredMarketRows;
   const displayedMarkets = baseDisplayedMarkets;
   const canLoadMoreMarkets = activePage === 'home' && homeMarketLimit < filteredMarketRows.length;
+  const dashboardDiagnosticsEnabled = lotusMarketDiagnosticsEnabled();
   const emptyMarketCopy = marketFilter === 'watchlist'
     ? 'Your watchlist is empty. Bookmark markets from the cards or list to track them here.'
     : marketFilter === 'best_routes'
       ? 'No cross-venue routeable markets are available for this view yet.'
-      : 'Try another search. Lotus only shows backend-approved market metadata here.';
+      : dashboardDiagnosticsEnabled
+        ? 'Try another search. Lotus only shows backend-approved market metadata here.'
+        : 'Try another search or choose a different category.';
   const filterCategory = selectedCategories.length === 1 ? selectedCategories[0] : categoryForQuickFilter(marketFilter);
-  const dashboardDiagnosticsEnabled = lotusMarketDiagnosticsEnabled();
   const marketSummary = useMemo(() => {
     const routeable = quotedMarketRows.filter((market) => market.venueCount > 0 && market.status !== 'RESOLVED_OR_EXPIRED').length;
     const crossVenue = quotedMarketRows.filter((market) => market.routeType !== 'Single').length;
@@ -1316,10 +1318,12 @@ export const DashboardV2Mockup = ({
         ? 'Unavailable'
         : 'Verified only';
   const portfolioMtmLabel = portfolioSummary
-    ? portfolioSummary.unavailableMarkCount > 0
+    ? !dashboardDiagnosticsEnabled
+      ? 'MTM'
+      : portfolioSummary.unavailableMarkCount > 0
       ? `${portfolioSummary.markedPositionCount}/${portfolioSummary.positionCount} marked`
       : 'MTM'
-    : portfolioError ? 'MTM' : 'MTM unavailable';
+    : portfolioError || !dashboardDiagnosticsEnabled ? 'MTM' : 'MTM unavailable';
   const recentActivityItems = useMemo(() => {
     const notificationRows = notificationItems.slice(0, 3).map((notification) => ({
       type: notification.severity === 'success' ? 'buy' : notification.severity === 'error' || notification.severity === 'warning' ? 'sell' : 'route',
@@ -1331,8 +1335,12 @@ export const DashboardV2Mockup = ({
     const systemRows = [
       {
         type: marketsError ? 'sell' : 'route',
-        title: marketsError ? 'Market catalog unavailable' : 'Market catalog synced',
-        market: marketsError ?? `${marketSummary.routeable} backend-approved markets loaded`,
+        title: dashboardDiagnosticsEnabled
+          ? marketsError ? 'Market catalog unavailable' : 'Market catalog synced'
+          : marketsError ? 'Markets updating' : 'Markets synced',
+        market: dashboardDiagnosticsEnabled
+          ? marketsError ?? `${marketSummary.routeable} backend-approved markets loaded`
+          : marketsError ? 'Refreshing the latest market list' : `${marketSummary.routeable} markets loaded`,
         time: marketsLoading ? 'Loading' : 'Live',
         price: '',
       },
@@ -1351,8 +1359,12 @@ export const DashboardV2Mockup = ({
       },
       {
         type: portfolioError ? 'sell' : 'buy',
-        title: portfolioError ? 'Portfolio sync blocked' : 'Portfolio MTM synced',
-        market: portfolioError ?? `${portfolioPositionsLabel} positions, ${portfolioCashLabel} available cash`,
+        title: dashboardDiagnosticsEnabled
+          ? portfolioError ? 'Portfolio sync blocked' : 'Portfolio MTM synced'
+          : portfolioError ? 'Portfolio updating' : 'Portfolio synced',
+        market: dashboardDiagnosticsEnabled
+          ? portfolioError ?? `${portfolioPositionsLabel} positions, ${portfolioCashLabel} available cash`
+          : portfolioError ? 'Refreshing balances and positions' : `${portfolioPositionsLabel} positions, ${portfolioCashLabel} available cash`,
         time: portfolioLoading ? 'Loading' : 'Ready',
         price: '',
       },
