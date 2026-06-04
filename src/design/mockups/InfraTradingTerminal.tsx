@@ -5762,12 +5762,15 @@ export const InfraTradingTerminal = ({
                              Refreshing live outcome quotes...
                            </div>
                          )}
-                         {outcomesError && (
+                         {marketDiagnosticsEnabled && outcomesError && (
                            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-xs font-semibold text-amber-200">
                              {outcomesError}
                            </div>
                          )}
-                         {visibleOutcomeRows.length === 0 && emptyCopy('No outcomes loaded', 'The backend has not returned outcomes for this market yet.')}
+                         {visibleOutcomeRows.length === 0 && emptyCopy(
+                           marketDiagnosticsEnabled ? 'No outcomes loaded' : 'Prices updating',
+                           marketDiagnosticsEnabled ? 'The backend has not returned outcomes for this market yet.' : 'Live prices will appear as soon as the feed has a usable quote.'
+                         )}
                          {visibleOutcomeRows.map((m) => {
                            const venues = m.venues.length ? m.venues : marketVenueList;
                            const primaryVenue = m.primaryVenue ?? venues[0] ?? 'lotus';
@@ -5799,7 +5802,7 @@ export const InfraTradingTerminal = ({
                                      </div>
                                  </div>
                                  <div className="flex items-center gap-6">
-                                     <div className="text-white font-black text-xl w-14 text-right tracking-tight">{m.prob}</div>
+                                     <div className="text-white font-black text-xl w-14 text-right tracking-tight">{displayPriceLabel(m.prob, marketDiagnosticsEnabled)}</div>
                                      <div className="flex items-center gap-2">
                                           <button
                                             type="button"

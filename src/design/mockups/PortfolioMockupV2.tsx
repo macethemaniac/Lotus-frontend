@@ -56,6 +56,7 @@ import {
 import { listMarkets, type MarketCatalogMarket } from '@/features/markets/api/market-api';
 import { ApiClientError } from '@/lib/api/http-client';
 import { openExecutionSocket } from '@/lib/ws/execution-ws-client';
+import { lotusMarketDiagnosticsEnabled } from '@/config/env';
 import { FundingDeposit } from './FundingDeposit';
 import { DepositFailedReceipt } from './DepositFailedReceipt';
 import { DepositSuccessReceipt } from './DepositSuccessReceipt';
@@ -149,6 +150,11 @@ const formatMaybeCurrency = (value: string | number | null | undefined, fallback
 const formatMaybeSignedCurrency = (value: string | number | null | undefined) => {
   const parsed = parseMoney(value);
   return parsed === null ? 'Unavailable' : formatSignedCurrency(parsed);
+};
+
+const formatDisplaySignedCurrency = (value: string | number | null | undefined, diagnosticsEnabled: boolean) => {
+  const parsed = parseMoney(value);
+  return parsed === null ? diagnosticsEnabled ? 'Unavailable' : '-' : formatSignedCurrency(parsed);
 };
 
 const formatTokenAmount = (value: string | number | null | undefined) => {
@@ -840,6 +846,7 @@ function PerformanceTooltip({ active, payload, label }: { active?: boolean; payl
 }
 
 export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ session }) => {
+  const diagnosticsEnabled = lotusMarketDiagnosticsEnabled();
   const {
     authState: turnkeyAuthState,
     session: turnkeySession,
@@ -1751,13 +1758,13 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
             <div>
               <div className="text-sm font-semibold text-zinc-300 mb-1.5">Unrealized PNL</div>
               <div className={`text-lg font-bold ${(unrealizedPnl ?? 0) >= 0 ? 'text-[#22c55e]' : 'text-red-400'}`}>
-                {formatMaybeSignedCurrency(data.summary?.totalUnrealizedPnl)}
+                {formatDisplaySignedCurrency(data.summary?.totalUnrealizedPnl, diagnosticsEnabled)}
               </div>
             </div>
             <div>
               <div className="text-sm font-semibold text-zinc-300 mb-1.5">Total ROI</div>
               <div className={`text-lg font-bold ${(totalRoi ?? 0) >= 0 ? 'text-[#22c55e]' : 'text-red-400'}`}>
-                {totalRoi === null ? 'Unavailable' : `${totalRoi >= 0 ? '+' : ''}${totalRoi.toFixed(2)}%`}
+                {totalRoi === null ? diagnosticsEnabled ? 'Unavailable' : '-' : `${totalRoi >= 0 ? '+' : ''}${totalRoi.toFixed(2)}%`}
               </div>
             </div>
             <div>
@@ -1906,7 +1913,7 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
                             <span className="text-[13px] text-zinc-500">/</span>
                             <span className="text-[13px] font-semibold text-zinc-300">{outcomeLabel}</span>
                             <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${position.outcomeId === 'NO' ? 'bg-red-500/10 text-red-400' : 'bg-[#22c55e]/10 text-[#22c55e]'}`}>{position.outcomeId}</span>
-                            {position.markFreshness === 'unavailable' && <span className="text-[11px] font-semibold text-amber-300">Mark unavailable</span>}
+                            {diagnosticsEnabled && position.markFreshness === 'unavailable' && <span className="text-[11px] font-semibold text-amber-300">Mark unavailable</span>}
                           </div>
                         </div>
                       </div>
@@ -1919,7 +1926,11 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
                       <div className="flex flex-col items-end leading-tight gap-0.5">
                         <div className="font-bold text-white text-[15px] font-mono">{formatCurrency(value)}</div>
                         <div className={`text-[12px] font-bold font-mono ${(parseMoney(position.unrealizedPnl) ?? 0) >= 0 ? 'text-[#22c55e]' : 'text-red-400'}`}>
-                          {position.markFreshness === 'live' ? formatMaybeSignedCurrency(position.unrealizedPnl) : position.markBlocker ?? 'Awaiting mark'}
+                          {position.markFreshness === 'live'
+                            ? formatMaybeSignedCurrency(position.unrealizedPnl)
+                            : diagnosticsEnabled
+                              ? position.markBlocker ?? 'Awaiting mark'
+                              : '-'}
                         </div>
                       </div>
                     </td>

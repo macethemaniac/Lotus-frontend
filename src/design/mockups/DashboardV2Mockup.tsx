@@ -651,8 +651,7 @@ const marketQuoteReadinessLabel = (
   diagnosticsEnabled = lotusMarketDiagnosticsEnabled(),
 ): string => {
   if (!diagnosticsEnabled) {
-    if (status === 'unavailable') return '';
-    return readyVenueCount > 0 ? 'Live' : 'Ready';
+    return '';
   }
   if (status === 'live') return readyVenueCount > 0 ? `${readyVenueCount} quote-ready venue${readyVenueCount === 1 ? '' : 's'}` : 'Quote ready';
   if (status === 'partial') return readyVenueCount > 0 ? `Partial coverage: ${readyVenueCount} venue${readyVenueCount === 1 ? '' : 's'}` : 'Partial venue coverage';
@@ -664,7 +663,7 @@ const marketQuoteStatusPriceLabel = (
   status: NonNullable<MarketCatalogMarket['quoteStatus']>,
   diagnosticsEnabled = lotusMarketDiagnosticsEnabled(),
 ): string => {
-  if (!diagnosticsEnabled && (status === 'stale' || status === 'unavailable')) return '-';
+  if (!diagnosticsEnabled) return '-';
   if (status === 'stale') return 'Stale';
   if (status === 'unavailable') return 'Unavailable';
   return 'Preview';
@@ -842,11 +841,11 @@ const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardM
       : [{ id: 'OUTCOMES', marketId, eventId: market.eventId ?? market.canonicalEventId, canonicalEventId: market.canonicalEventId, quoteOutcomeId: 'OUTCOMES', name: 'Outcomes load in terminal', prob: pendingPricePlaceholder(), liveStatus: 'not_requested' }],
     imageUrl: getSafeMediaUrl(market.imageUrl),
     iconUrl: getSafeMediaUrl(market.iconUrl),
-    priceLabel: diagnosticsEnabled ? marketQuoteStatusPriceLabel(quoteStatus, diagnosticsEnabled) : '-',
+    priceLabel: marketQuoteStatusPriceLabel(quoteStatus, diagnosticsEnabled),
     priceVenue: null,
     changeLabel: diagnosticsEnabled ? quoteReadinessLabel : '',
     savings: diagnosticsEnabled ? quoteStatus === 'unavailable' ? 'Unavailable' : 'Preview route' : '-',
-    spread: diagnosticsEnabled ? quoteStatus === 'stale' ? 'Stale' : quoteStatus === 'unavailable' ? 'Blocked' : 'Ready' : '-',
+    spread: diagnosticsEnabled ? quoteStatus === 'stale' ? 'Stale' : quoteStatus === 'unavailable' ? 'Blocked' : '-' : '-',
     fallbackLabel: diagnosticsEnabled ? quoteReadinessLabel : '-',
     fallbackMode: quoteStatus === 'unavailable' && diagnosticsEnabled ? 'blocker' : routeType === 'Single' ? 'fallback' : 'pending',
     closesBy: formatMarketDate(market.expiresAt ?? market.resolvesAt),
@@ -948,10 +947,10 @@ const mapCatalogMarketsToDashboardRows = (markets: MarketCatalogMarket[]): Dashb
       txnBuy: buyCount ?? buyVolume ?? 0,
       txnSell: sellCount ?? sellVolume ?? 0,
       txnLabel: buyCount !== null || sellCount !== null ? 'Txns' : buyVolume !== null || sellVolume !== null ? 'Vol' : 'Pending',
-      priceLabel: diagnosticsEnabled ? marketQuoteStatusPriceLabel(quoteStatus, diagnosticsEnabled) : '-',
+      priceLabel: marketQuoteStatusPriceLabel(quoteStatus, diagnosticsEnabled),
       changeLabel: diagnosticsEnabled ? quoteReadinessLabel : '',
       savings: diagnosticsEnabled ? quoteStatus === 'unavailable' ? 'Unavailable' : 'Preview route' : '-',
-      spread: diagnosticsEnabled ? quoteStatus === 'stale' ? 'Stale' : quoteStatus === 'unavailable' ? 'Blocked' : 'Ready' : '-',
+      spread: diagnosticsEnabled ? quoteStatus === 'stale' ? 'Stale' : quoteStatus === 'unavailable' ? 'Blocked' : '-' : '-',
       fallbackLabel: diagnosticsEnabled ? quoteReadinessLabel : '-',
       fallbackMode: quoteStatus === 'unavailable' && diagnosticsEnabled ? 'blocker' : base.fallbackMode,
       quoteRequired: diagnosticsEnabled && quoteStatus === 'unavailable',
@@ -3362,7 +3361,7 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
         : change ? `+${change}¢ vs single venue` : 'Quote ready'
   );
   const emptyTxnCopy = !diagnosticsEnabled
-    ? 'Quote'
+    ? '-'
     : normalizedQuoteStatus === 'unavailable'
     ? readableBlocker ?? 'Quote unavailable'
     : normalizedQuoteStatus === 'stale'
