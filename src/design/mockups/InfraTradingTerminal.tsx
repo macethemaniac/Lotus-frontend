@@ -82,6 +82,7 @@ import { openExecutionSocket, type ExecutionTopic, type ExecutionWsState } from 
 const ORDERBOOK_DISPLAY_REST_FALLBACK_DELAY_MS = 6_000;
 const ORDERBOOK_STREAM_STALE_MS = 30_000;
 const ORDERBOOK_REST_RECOVERY_MIN_INTERVAL_MS = 45_000;
+const ORDERBOOK_STREAM_GAP_RECOVERY_DELAY_MS = 1_500;
 
 const walletAddressEquals = (left?: string | null, right?: string | null): boolean => {
   if (!left || !right) return false;
@@ -2554,6 +2555,7 @@ export const InfraTradingTerminal = ({
   const orderbookStreamSeqRef = React.useRef<Map<string, number>>(new Map());
   const lastOrderbookRestRecoveryAtRef = React.useRef<number | null>(null);
   const orderbookRestRecoveryInFlightRef = React.useRef(false);
+  const orderbookRestRecoveryTimerRef = React.useRef<number | null>(null);
   const missingRiskProfileKeysRef = React.useRef<Set<string>>(new Set());
   const autoPolymarketClobSyncKeyRef = React.useRef<string | null>(null);
   const orchestratorPreviewSeqRef = React.useRef(0);
@@ -4119,6 +4121,62 @@ export const InfraTradingTerminal = ({
     const topicSet = new Set(topics);
     const expectedMarketId = orderbookMarketId;
     const expectedOutcomeId = orderbookQuoteOutcomeId ?? null;
+    const localTopics = [orderbookTopicForSelection(expectedMarketId, expectedOutcomeId)];
+
+    const clearScheduledRestRecovery = () => {
+      if (orderbookRestRecoveryTimerRef.current !== null) {
+        window.clearTimeout(orderbookRestRecoveryTimerRef.current);
+        orderbookRestRecoveryTimerRef.current = null;
+      }
+    };
+
+    const recoverOrderbookFromRest = async () => {
+      const now = Date.now();
+      const lastRestRecoveryAt = lastOrderbookRestRecoveryAtRef.current;
+      if (lastRestRecoveryAt !== null && now - lastRestRecoveryAt < ORDERBOOK_REST_RECOVERY_MIN_INTERVAL_MS) {
+        scheduleRestRecovery(ORDERBOOK_REST_RECOVERY_MIN_INTERVAL_MS - (now - lastRestRecoveryAt));
+        return;
+      }
+      if (orderbookRestRecoveryInFlightRef.current) return;
+      orderbookRestRecoveryInFlightRef.current = true;
+      lastOrderbookRestRecoveryAtRef.current = now;
+      try {
+        const response = await getMarketOrderbook(expectedMarketId, {
+          outcomeId: expectedOutcomeId,
+          depth: 20,
+        });
+        if (!active) return;
+        setOrderbook(response);
+        const nextTopics = mergeOrderbookStreamTopics(localTopics, normalizeOrderbookStreamTopics(response.stream?.topics));
+        setOrderbookStreamTopics((current) => sameTopicList(current, nextTopics) ? current : nextTopics);
+        setOrderbookError(null);
+        lastOrderbookWsUpdateAtRef.current = Date.now();
+      } catch (error) {
+        if (active) setOrderbookError(safeMarketDataError(error, 'orderbook'));
+      } finally {
+        orderbookRestRecoveryInFlightRef.current = false;
+        if (active) scheduleRestRecovery();
+      }
+    };
+
+    const scheduleRestRecovery = (delayMs = ORDERBOOK_STREAM_STALE_MS) => {
+      clearScheduledRestRecovery();
+      orderbookRestRecoveryTimerRef.current = window.setTimeout(() => {
+        orderbookRestRecoveryTimerRef.current = null;
+        void recoverOrderbookFromRest();
+      }, delayMs);
+    };
+
+    const markStreamResyncing = () => {
+      setLatestOrderbookStream((current) => current
+        ? { ...current, snapshotStatus: 'resyncing' }
+        : {
+            marketId: expectedMarketId,
+            outcomeId: expectedOutcomeId,
+            snapshotStatus: 'resyncing',
+            blockers: [],
+          });
+    };
 
     const acceptsStreamSequence = (topic: ExecutionTopic, payload: MarketOrderbookStreamPayload): boolean => {
       if (typeof payload.seq !== 'number' || !Number.isFinite(payload.seq)) return true;
@@ -4128,6 +4186,10 @@ export const InfraTradingTerminal = ({
       }
       const lastSeq = orderbookStreamSeqRef.current.get(topic);
       if (typeof lastSeq === 'number' && payload.seq <= lastSeq) return false;
+      if (typeof lastSeq === 'number' && payload.seq > lastSeq + 1) {
+        markStreamResyncing();
+        scheduleRestRecovery(ORDERBOOK_STREAM_GAP_RECOVERY_DELAY_MS);
+      }
       orderbookStreamSeqRef.current.set(topic, payload.seq);
       return true;
     };
@@ -4219,6 +4281,7 @@ export const InfraTradingTerminal = ({
           if (payloadOutcomeId && !streamOutcomeMatches(payloadOutcomeId, expectedOutcomeId)) return;
 
           lastOrderbookWsUpdateAtRef.current = Date.now();
+          scheduleRestRecovery();
 
           if (event.type === 'MARKET_ORDERBOOK_UPDATE') {
             if (isOrderbookInitialSnapshotPayload(payload)) {
@@ -4249,10 +4312,12 @@ export const InfraTradingTerminal = ({
     };
 
     connect();
+    scheduleRestRecovery();
 
     return () => {
       active = false;
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
+      clearScheduledRestRecovery();
       if (client) {
         client.socket.removeEventListener('open', subscribeAll);
         client.socket.removeEventListener('message', subscribeOnGatewayReady);
@@ -4261,39 +4326,6 @@ export const InfraTradingTerminal = ({
       }
     };
   }, [marketType, orderbookMarketId, orderbookQuoteOutcomeId, orderbookStreamTopics]);
-
-  React.useEffect(() => {
-    if (!orderbookMarketId || orderbookWsState !== 'open') return;
-    const localTopics = [orderbookTopicForSelection(orderbookMarketId, orderbookQuoteOutcomeId)];
-    const interval = window.setInterval(() => {
-      const lastUpdateAt = lastOrderbookWsUpdateAtRef.current;
-      const now = Date.now();
-      if (lastUpdateAt !== null && now - lastUpdateAt < ORDERBOOK_STREAM_STALE_MS) return;
-      const lastRestRecoveryAt = lastOrderbookRestRecoveryAtRef.current;
-      if (lastRestRecoveryAt !== null && now - lastRestRecoveryAt < ORDERBOOK_REST_RECOVERY_MIN_INTERVAL_MS) return;
-      if (orderbookRestRecoveryInFlightRef.current) return;
-      orderbookRestRecoveryInFlightRef.current = true;
-      lastOrderbookRestRecoveryAtRef.current = now;
-      void getMarketOrderbook(orderbookMarketId, {
-        outcomeId: orderbookQuoteOutcomeId,
-        depth: 20,
-      })
-        .then((response) => {
-          setOrderbook(response);
-          const nextTopics = mergeOrderbookStreamTopics(localTopics, normalizeOrderbookStreamTopics(response.stream?.topics));
-          setOrderbookStreamTopics((current) => sameTopicList(current, nextTopics) ? current : nextTopics);
-          setOrderbookError(null);
-          lastOrderbookWsUpdateAtRef.current = Date.now();
-        })
-        .catch((error) => {
-          setOrderbookError(safeMarketDataError(error, 'orderbook'));
-        })
-        .finally(() => {
-          orderbookRestRecoveryInFlightRef.current = false;
-        });
-    }, 10_000);
-    return () => window.clearInterval(interval);
-  }, [orderbookMarketId, orderbookQuoteOutcomeId, orderbookWsState]);
 
   const refreshAccountData = useCallback(async () => {
     if (!token) {
