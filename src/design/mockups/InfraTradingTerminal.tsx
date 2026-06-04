@@ -28,6 +28,7 @@ import {
 import {
   getCanonicalResolutionRisk,
   getMarketChart,
+  getMarketLivePrices,
   getMarketOrderbook,
   getMarketOutcomes,
   getVenueMarketResolutionRisk,
@@ -262,6 +263,7 @@ const isLimitlessExchangeRefreshError = (error: unknown): boolean =>
 export type TerminalMarketSelection = {
   id?: string;
   marketId?: string;
+  canonicalMarketIds?: string[];
   eventId?: string;
   canonicalEventId?: string;
   title: string;
@@ -2835,84 +2837,46 @@ export const InfraTradingTerminal = ({
           }))
           : seededOutcomes;
 
-      const rows = await Promise.all(baseOutcomes.map(async (outcome, index): Promise<TerminalOutcomeRow> => {
+      const livePriceResponse = await getMarketLivePrices({
+        items: baseOutcomes.map((outcome) => ({
+          marketId: outcome.marketId ?? terminalMarketId,
+          canonicalMarketIds: terminalMarket.canonicalMarketIds?.length
+            ? terminalMarket.canonicalMarketIds
+            : [outcome.marketId ?? terminalMarketId],
+          outcomeId: outcome.quoteOutcomeId ?? canonicalQuoteOutcomeId(outcome.label),
+        })),
+      });
+      const livePriceByKey = new Map(livePriceResponse.prices.map((price) => [`${price.marketId}:${price.outcomeId ?? ''}`, price]));
+
+      const rows = baseOutcomes.map((outcome, index): TerminalOutcomeRow => {
         const outcomeMarketId = outcome.marketId ?? terminalMarketId;
         const quoteOutcomeId = outcome.quoteOutcomeId ?? canonicalQuoteOutcomeId(outcome.label);
-        if (!token) {
-          const venues = outcome.venues.length ? outcome.venues : marketVenueList;
-          return {
-            id: outcome.id,
-            marketId: outcomeMarketId,
-            quoteOutcomeId,
-            name: outcome.label,
-            vol: `${formatMoneyMetric(terminalMarket.volume) ?? terminalMarket.volume} Vol.`,
-            platforms: venues.length || terminalMarket.venueCount,
-            prob: 'Quote',
-            yesPrice: 'Quote',
-            noPrice: 'Quote',
-            primaryVenue: venues[0] ?? null,
-            venueQuotes: placeholderVenueQuotes(venues, 'Quote', 'Quote', 'Login required for live route quote'),
-            active: index === 0,
-            venues,
-            status: 'auth_required',
-            blocker: 'Login required for live route quote',
-          };
-        }
-
-        try {
-          const candidateResponse = await getLiveCandidates(token, {
-            side: 'buy',
-            marketId: outcomeMarketId,
-            outcomeId: quoteOutcomeId,
-            amount: '1',
-            venues: backendVenueList.length ? backendVenueList : undefined,
-          });
-          const best = bestCandidate(candidateResponse.candidates);
-          const average = averageCandidatePrice(candidateResponse.candidates);
-          const venueQuotes = toVenueQuotes(candidateResponse.candidates, terminalMarket.marketType);
-          const venues = candidateResponse.candidates.length
-            ? candidateResponse.candidates.map((candidate) => candidate.venue)
-            : outcome.venues;
-          const primaryQuote = venueQuotes[0] ?? null;
-          return {
-            id: outcome.id,
-            marketId: outcomeMarketId,
-            quoteOutcomeId,
-            name: outcome.label,
-            vol: `${formatMoneyMetric(terminalMarket.volume) ?? terminalMarket.volume} Vol.`,
-            platforms: venues.length || terminalMarket.venueCount,
-            prob: formatProbabilityPercent(average),
-            yesPrice: primaryQuote?.yesPrice ?? formatProbabilityPrice(best?.price ?? average),
-            noPrice: primaryQuote?.noPrice ?? (terminalMarket.marketType === 'binary' && best?.price ? formatProbabilityPrice(1 - best.price) : 'Quote'),
-            primaryVenue: primaryQuote?.venue ?? best?.venue ?? venues[0] ?? null,
-            venueQuotes: venueQuotes.length ? venueQuotes : placeholderVenueQuotes(venues, 'Quote', 'Quote', readableQuoteBlocker(candidateResponse.blocked[0]?.reason)),
-            active: index === 0,
-            venues,
-            status: candidateResponse.candidates.length ? 'live' : 'unavailable',
-            blocker: readableQuoteBlocker(candidateResponse.blocked[0]?.reason),
-          };
-        } catch (error) {
-          const venues = outcome.venues.length ? outcome.venues : marketVenueList;
-          const blocker = readableQuoteBlocker(error instanceof Error ? error.message : null) ?? 'Live quote unavailable';
-          return {
-            id: outcome.id,
-            marketId: outcomeMarketId,
-            quoteOutcomeId,
-            name: outcome.label,
-            vol: `${formatMoneyMetric(terminalMarket.volume) ?? terminalMarket.volume} Vol.`,
-            platforms: venues.length || terminalMarket.venueCount,
-            prob: 'Quote',
-            yesPrice: 'Quote',
-            noPrice: 'Quote',
-            primaryVenue: venues[0] ?? null,
-            venueQuotes: placeholderVenueQuotes(venues, 'Quote', 'Quote', blocker),
-            active: index === 0,
-            venues,
-            status: 'unavailable',
-            blocker,
-          };
-        }
-      }));
+        const venues = outcome.venues.length ? outcome.venues : marketVenueList;
+        const livePrice = livePriceByKey.get(`${outcomeMarketId}:${quoteOutcomeId}`);
+        const parsedPrice = orderbookNumericValue(livePrice?.price ?? livePrice?.bestAsk ?? livePrice?.midpoint ?? livePrice?.bestBid);
+        const yesPrice = parsedPrice !== null ? formatProbabilityPrice(parsedPrice) : '-';
+        const noPrice = parsedPrice !== null && terminalMarket.marketType === 'binary' ? formatProbabilityPrice(1 - parsedPrice) : '-';
+        const quoteVenues = livePrice?.venues?.length ? livePrice.venues : venues;
+        return {
+          id: outcome.id,
+          marketId: outcomeMarketId,
+          quoteOutcomeId,
+          name: outcome.label,
+          vol: `${formatMoneyMetric(terminalMarket.volume) ?? terminalMarket.volume} Vol.`,
+          platforms: quoteVenues.length || terminalMarket.venueCount,
+          prob: parsedPrice !== null ? formatProbabilityPercent(parsedPrice) : '-',
+          yesPrice,
+          noPrice,
+          primaryVenue: livePrice?.bestVenue ?? quoteVenues[0] ?? null,
+          venueQuotes: livePrice?.bestVenue && parsedPrice !== null
+            ? [{ venue: livePrice.bestVenue, yesPrice, noPrice, blocker: null }]
+            : placeholderVenueQuotes(quoteVenues, '-', '-', null),
+          active: index === 0,
+          venues: quoteVenues,
+          status: parsedPrice !== null ? 'live' : 'pending',
+          blocker: null,
+        };
+      });
 
       setTerminalOutcomes(rows);
       setSelectedOutcomeId((current) => {
@@ -2935,7 +2899,7 @@ export const InfraTradingTerminal = ({
     } finally {
       setOutcomesLoading(false);
     }
-  }, [backendVenueList, marketVenueList, terminalMarket, terminalMarketId, token]);
+  }, [marketVenueList, terminalMarket, terminalMarketId]);
 
   React.useEffect(() => {
     setShowAllOutcomes(false);
