@@ -2843,7 +2843,6 @@ export const InfraTradingTerminal = ({
           canonicalMarketIds: terminalMarket.canonicalMarketIds?.length
             ? terminalMarket.canonicalMarketIds
             : [outcome.marketId ?? terminalMarketId],
-          outcomeId: outcome.quoteOutcomeId ?? canonicalQuoteOutcomeId(outcome.label),
         })),
       });
       const livePriceByKey = new Map(livePriceResponse.prices.map((price) => [`${price.marketId}:${price.outcomeId ?? ''}`, price]));
@@ -2852,7 +2851,7 @@ export const InfraTradingTerminal = ({
         const outcomeMarketId = outcome.marketId ?? terminalMarketId;
         const quoteOutcomeId = outcome.quoteOutcomeId ?? canonicalQuoteOutcomeId(outcome.label);
         const venues = outcome.venues.length ? outcome.venues : marketVenueList;
-        const livePrice = livePriceByKey.get(`${outcomeMarketId}:${quoteOutcomeId}`);
+        const livePrice = livePriceByKey.get(`${outcomeMarketId}:`);
         const parsedPrice = orderbookNumericValue(livePrice?.price ?? livePrice?.bestAsk ?? livePrice?.midpoint ?? livePrice?.bestBid);
         const yesPrice = parsedPrice !== null ? formatProbabilityPrice(parsedPrice) : '-';
         const noPrice = parsedPrice !== null && terminalMarket.marketType === 'binary' ? formatProbabilityPrice(1 - parsedPrice) : '-';

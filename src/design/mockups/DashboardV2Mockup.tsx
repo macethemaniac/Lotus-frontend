@@ -1521,14 +1521,13 @@ export const DashboardV2Mockup = ({
               items: chunk.map((item) => ({
                 marketId: item.marketId,
                 canonicalMarketIds: item.canonicalMarketIds,
-                outcomeId: item.quoteOutcomeId,
               })),
             });
             if (cancelled) return;
             const priceByKey = new Map(response.prices.map((price) => [`${price.marketId}:${price.outcomeId ?? ''}`, price]));
             const nextByMarket = new Map<string, Record<string, DashboardOutcomeQuote>>();
             for (const item of chunk) {
-              const price = priceByKey.get(`${item.marketId}:${item.quoteOutcomeId}`);
+              const price = priceByKey.get(`${item.marketId}:`);
               const bucket = nextByMarket.get(item.parentMarketId) ?? {};
               bucket[item.outcomeId] = toOutcomeQuoteFromLivePrice(item.outcomeId, price);
               nextByMarket.set(item.parentMarketId, bucket);
