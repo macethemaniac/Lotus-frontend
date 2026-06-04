@@ -83,6 +83,8 @@ const ORDERBOOK_DISPLAY_REST_FALLBACK_DELAY_MS = 6_000;
 const ORDERBOOK_STREAM_STALE_MS = 30_000;
 const ORDERBOOK_REST_RECOVERY_MIN_INTERVAL_MS = 45_000;
 const ORDERBOOK_STREAM_GAP_RECOVERY_DELAY_MS = 1_500;
+const TERMINAL_CHART_REFRESH_INTERVAL_MS = 30_000;
+const TERMINAL_ACCOUNT_REFRESH_INTERVAL_MS = 30_000;
 
 const walletAddressEquals = (left?: string | null, right?: string | null): boolean => {
   if (!left || !right) return false;
@@ -2474,8 +2476,9 @@ const LiveCanonicalChart = ({
     };
     void loadChart();
     const interval = window.setInterval(() => {
+      if (document.visibilityState === 'hidden') return;
       void loadChart();
-    }, 10_000);
+    }, TERMINAL_CHART_REFRESH_INTERVAL_MS);
     return () => {
       cancelled = true;
       window.clearInterval(interval);
@@ -4537,8 +4540,9 @@ export const InfraTradingTerminal = ({
   React.useEffect(() => {
     void refreshAccountData();
     const interval = window.setInterval(() => {
+      if (document.visibilityState === 'hidden') return;
       void refreshAccountData();
-    }, 15_000);
+    }, TERMINAL_ACCOUNT_REFRESH_INTERVAL_MS);
     return () => window.clearInterval(interval);
   }, [refreshAccountData]);
 
