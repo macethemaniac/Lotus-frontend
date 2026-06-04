@@ -72,13 +72,18 @@ function defaultLotusApiBaseUrl(): string {
 }
 
 function configuredLotusApiBaseUrl(value: unknown): string {
+  const appHostname = typeof window === "undefined" ? "" : window.location.hostname.toLowerCase();
+  const deployedForCurrentHost = deployedLotusApiBaseUrl(appHostname);
+  if (deployedForCurrentHost !== undefined) {
+    return deployedForCurrentHost;
+  }
+
   if (typeof value !== "string" || value.length === 0) return defaultLotusApiBaseUrl();
   const trimmed = value.replace(/\/$/, "");
 
   try {
     const configured = new URL(trimmed);
     const configuredHostname = configured.hostname.toLowerCase();
-    const appHostname = typeof window === "undefined" ? "" : window.location.hostname.toLowerCase();
 
     if (isDeployedFrontendHost(configuredHostname)) {
       return deployedLotusApiBaseUrl(appHostname) ??
