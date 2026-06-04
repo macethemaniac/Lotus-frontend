@@ -396,15 +396,18 @@ export function getMarketBatchQuotes(input: { items: MarketBatchQuoteRequestItem
 }
 
 export function getMarketLivePrices(input: { items: MarketLivePriceRequestItem[] }) {
-  const params = new URLSearchParams();
-  params.set("items", JSON.stringify(input.items.map((item) => ({
-    marketId: item.marketId,
-    ...(item.canonicalMarketIds?.length ? { canonicalMarketIds: item.canonicalMarketIds } : {}),
-    ...(item.outcomeId ? { outcomeId: item.outcomeId } : {}),
-  }))));
-  const path = `/markets/live-prices?${params.toString()}`;
-  return staleWhileRevalidate(`market-live-prices:${params.toString()}`, () =>
-    apiRequest<MarketLivePricesResponse>(path),
+  const body = {
+    items: input.items.map((item) => ({
+      marketId: item.marketId,
+      ...(item.canonicalMarketIds?.length ? { canonicalMarketIds: item.canonicalMarketIds } : {}),
+      ...(item.outcomeId ? { outcomeId: item.outcomeId } : {}),
+    })),
+  };
+  return staleWhileRevalidate(`market-live-prices:${JSON.stringify(body.items)}`, () =>
+    apiRequest<MarketLivePricesResponse>("/markets/live-prices", {
+      method: "POST",
+      body,
+    }),
     { ttlMs: 2_000, maxStaleMs: 15_000 }
   );
 }
