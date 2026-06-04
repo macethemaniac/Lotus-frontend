@@ -13,7 +13,6 @@ import {
   listMarkets,
   type MarketBatchQuoteItem,
   type MarketCatalogMarket,
-  type MarketListInput,
   type MarketLivePriceItem,
 } from '@/features/markets/api/market-api';
 import { getNotifications, markNotificationRead, type UserNotification } from '@/features/notifications/api/notification-api';
@@ -131,7 +130,6 @@ type DashboardMarketQuote = {
 
 type MarketQuickFilter = 'all' | 'watchlist' | 'live_crypto' | 'trending' | 'best_routes' | 'sports' | 'crypto' | 'politics';
 type DashboardRouteFilter = 'Single' | 'Pair' | 'Tri' | 'Strict all';
-type MarketRouteCoverage = NonNullable<MarketListInput['routeCoverage']>;
 type DashboardSortKey = 'volume' | 'liquidity' | 'closing' | 'buys' | 'sells' | 'best_route';
 type ToastPosition = 'top-left' | 'top-center' | 'top-right' | 'bottom-left' | 'bottom-center' | 'bottom-right';
 
@@ -157,17 +155,6 @@ const routeTypeLabel = (market: MarketCatalogMarket): string => {
     return market.venueCount >= 3 ? 'Tri' : 'Pair';
   }
   return 'Single';
-};
-
-const routeCoverageForFilters = (
-  routeTypes: readonly DashboardRouteFilter[],
-): MarketRouteCoverage => {
-  if (routeTypes.length !== 1) return 'all';
-  const [routeType] = routeTypes;
-  if (routeType === 'Single') return 'single';
-  if (routeType === 'Pair') return 'pair';
-  if (routeType === 'Tri') return 'tri';
-  return 'strict_all';
 };
 
 const formatTitleCase = (value: string): string =>
@@ -647,6 +634,16 @@ const marketQuoteStatus = (market: MarketCatalogMarket): NonNullable<MarketCatal
   return 'unavailable';
 };
 
+const marketDisplayQuoteStatus = (
+  status: NonNullable<MarketCatalogMarket['quoteStatus']>,
+  readyVenueCount: number,
+  diagnosticsEnabled = lotusMarketDiagnosticsEnabled(),
+): NonNullable<MarketCatalogMarket['quoteStatus']> => {
+  if (diagnosticsEnabled) return status;
+  if (status === 'live' || status === 'partial') return 'live';
+  return readyVenueCount > 0 ? 'live' : 'unavailable';
+};
+
 const marketQuoteReadinessLabel = (
   status: NonNullable<MarketCatalogMarket['quoteStatus']>,
   readyVenueCount: number,
@@ -753,8 +750,8 @@ const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardM
   const routeType = routeTypeLabel(market);
   const marketId = marketIdForCatalogMarket(market);
   const quoteStatus = marketQuoteStatus(market);
-  const displayQuoteStatus = diagnosticsEnabled ? quoteStatus : 'unavailable';
   const quoteReadyVenueCount = Number.isFinite(Number(market.quoteReadyVenueCount)) ? Number(market.quoteReadyVenueCount) : 0;
+  const displayQuoteStatus = marketDisplayQuoteStatus(quoteStatus, quoteReadyVenueCount, diagnosticsEnabled);
   const quoteBlockers = catalogQuoteBlockers(market);
   const quoteReadinessLabel = marketQuoteReadinessLabel(quoteStatus, quoteReadyVenueCount, quoteBlockers, diagnosticsEnabled);
   const marketClass = formatTitleCase(market.marketClass || 'Market');
@@ -895,7 +892,7 @@ const mapCatalogMarketsToDashboardRows = (markets: MarketCatalogMarket[]): Dashb
     const quoteReadyVenueCount = Math.max(0, ...group.map((market) => Number(market.quoteReadyVenueCount) || 0));
     const quoteBlockers = group.flatMap(catalogQuoteBlockers);
     const diagnosticsEnabled = lotusMarketDiagnosticsEnabled();
-    const displayQuoteStatus = diagnosticsEnabled ? quoteStatus : 'unavailable';
+    const displayQuoteStatus = marketDisplayQuoteStatus(quoteStatus, quoteReadyVenueCount, diagnosticsEnabled);
     const quoteReadinessLabel = marketQuoteReadinessLabel(quoteStatus, quoteReadyVenueCount, quoteBlockers, diagnosticsEnabled);
     const groupedLastQuoteTimes = group
       .map((market) => market.lastQuoteAt)
@@ -1443,8 +1440,6 @@ export const DashboardV2Mockup = ({
   useEffect(() => {
     if (!isMarketSurface) return;
     let cancelled = false;
-    const diagnosticsEnabled = lotusMarketDiagnosticsEnabled();
-    const routeCoverage = diagnosticsEnabled ? routeCoverageForFilters(selectedRouteTypes) : undefined;
     const timer = window.setTimeout(() => {
       setMarketsLoading(true);
       setMarketsError(null);
@@ -1452,7 +1447,6 @@ export const DashboardV2Mockup = ({
         category: filterCategory,
         search: searchQuery.trim() || undefined,
         limit: MARKET_CATALOG_FETCH_LIMIT,
-        ...(diagnosticsEnabled ? { quoteReadyOnly: true, routeCoverage } : {}),
         view: 'compact',
       })
         .then((response) => {
