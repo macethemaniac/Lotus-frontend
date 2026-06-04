@@ -4639,7 +4639,7 @@ export const InfraTradingTerminal = ({
         side,
         amount: backendAmount,
         venuePreference: ticketVenuePreference,
-        orderPolicy: 'FOK',
+        orderPolicy: ticketOrderPolicy,
         slippageToleranceBps: slippageTolerancePercentToBps(ticketSlippageTolerance),
       });
       if (previewSeq !== orchestratorPreviewSeqRef.current) return null;
@@ -4674,6 +4674,7 @@ export const InfraTradingTerminal = ({
     selectedTicketOutcome,
     side,
     ticketAmount,
+    ticketOrderPolicy,
     ticketSlippageTolerance,
     ticketOutcomeSide,
     ticketVenuePreference,
@@ -6525,18 +6526,16 @@ export const InfraTradingTerminal = ({
                              title: 'Fill or Kill (FOK) Order',
                              copy: 'Executes the entire order immediately at specified price or cancels it completely.',
                            },
-                         ]).map((option) => {
+                        ]).map((option) => {
                            const active = ticketOrderPolicy === option.id;
-                           const disabled = option.id === 'FAK';
                            return (
                              <button
                                key={option.id}
                                type="button"
                                onClick={() => {
-                                 if (!disabled) setTicketOrderPolicy(option.id);
+                                 setTicketOrderPolicy(option.id);
                                }}
-                               disabled={disabled}
-                               className={`flex w-full gap-3 rounded-lg border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/60 ${active ? 'border-[#ccff00]/30 bg-[#ccff00]/10' : 'border-zinc-800 bg-zinc-900/40'} ${disabled ? 'cursor-not-allowed opacity-55' : 'hover:border-zinc-700 hover:bg-zinc-900'}`}
+                               className={`flex w-full gap-3 rounded-lg border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/60 ${active ? 'border-[#ccff00]/30 bg-[#ccff00]/10' : 'border-zinc-800 bg-zinc-900/40 hover:border-zinc-700 hover:bg-zinc-900'}`}
                              >
                                <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${active ? 'border-[#ccff00] bg-[#ccff00]/10' : 'border-zinc-600'}`}>
                                  {active && <span className="h-2.5 w-2.5 rounded-full bg-[#ccff00]" />}
@@ -6544,7 +6543,6 @@ export const InfraTradingTerminal = ({
                                <span>
                                  <span className="flex items-center gap-2 text-sm font-black text-zinc-100">
                                    {option.title}
-                                   {disabled && <span className="rounded-full border border-zinc-700 px-1.5 py-0.5 text-[9px] font-bold uppercase text-zinc-500">Soon</span>}
                                  </span>
                                  <span className="mt-1 block text-xs font-medium leading-relaxed text-zinc-400">{option.copy}</span>
                                </span>

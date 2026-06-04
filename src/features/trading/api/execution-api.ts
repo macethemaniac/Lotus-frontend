@@ -110,7 +110,7 @@ export type ExecutionOrderPreviewRequest = {
   side: TradeSide;
   amount: string;
   venuePreference: ExecutionOrderVenuePreference;
-  orderPolicy?: "FOK";
+  orderPolicy?: "FOK" | "FAK";
   slippageToleranceBps?: number;
 };
 
