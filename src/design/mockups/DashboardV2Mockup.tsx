@@ -70,6 +70,7 @@ type DashboardOutcomeRow = {
 type DashboardMarketRow = Pick<TerminalMarketSelection, 'title' | 'category' | 'icon' | 'volume' | 'venueCount' | 'routeType'> & {
   id: string;
   marketId: string;
+  canonicalMarketIds: string[];
   eventId?: string;
   canonicalEventId: string;
   venues: string[];
@@ -817,6 +818,7 @@ const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardM
   return {
     id: marketId,
     marketId,
+    canonicalMarketIds: market.canonicalMarketIds,
     eventId: market.eventId ?? market.canonicalEventId,
     canonicalEventId: market.canonicalEventId,
     title: normalizeEventTopicTitle(market),
@@ -927,6 +929,7 @@ const mapCatalogMarketsToDashboardRows = (markets: MarketCatalogMarket[]): Dashb
       ...base,
       id: `${base.canonicalEventId}:${base.title}`,
       marketId: outcomes[0]?.marketId ?? base.marketId,
+      canonicalMarketIds: Array.from(new Set(group.flatMap((market) => market.canonicalMarketIds))),
       title: base.title,
       routeType,
       venueCount: venues.length,
@@ -1490,8 +1493,8 @@ export const DashboardV2Mockup = ({
           parentMarketId: market.id,
           outcomeId: outcome.id,
           marketId: outcome.marketId ?? market.marketId,
-          canonicalMarketIds: market.venueMarkets.length > 0
-            ? Array.from(new Set(market.venueMarkets.map((venueMarket) => venueMarket.canonicalMarketId).filter(Boolean)))
+          canonicalMarketIds: market.canonicalMarketIds.length > 0
+            ? market.canonicalMarketIds
             : [outcome.marketId ?? market.marketId],
           quoteOutcomeId: outcome.quoteOutcomeId,
         }))
