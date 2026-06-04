@@ -704,6 +704,8 @@ const marketIdForCatalogMarket = (market: MarketCatalogMarket): string => market
 const venuesForCatalogMarket = (market: MarketCatalogMarket): string[] =>
   Array.from(new Set((market.venues.length ? market.venues : market.venueMarkets.map((item) => item.venue)).map(normalizeVenueId)));
 
+const pendingPricePlaceholder = (): string => lotusMarketDiagnosticsEnabled() ? 'Quote' : '-';
+
 const compactFallbackOutcome = (market: MarketCatalogMarket): DashboardOutcomeRow => {
   const marketId = marketIdForCatalogMarket(market);
   const label = market.displayOutcome?.trim() || deriveCandidateOutcomeLabel(market);
@@ -714,7 +716,7 @@ const compactFallbackOutcome = (market: MarketCatalogMarket): DashboardOutcomeRo
     canonicalEventId: market.canonicalEventId,
     quoteOutcomeId: canonicalQuoteOutcomeId(label),
     name: normalizeMarketOutcomeLabel(market.title, label),
-    prob: 'Quote',
+    prob: pendingPricePlaceholder(),
     liveStatus: 'not_requested',
     venues: venuesForCatalogMarket(market),
     venueMarkets: [],
@@ -734,7 +736,7 @@ const binaryCandidateOutcomeRow = (market: MarketCatalogMarket): DashboardOutcom
     canonicalEventId: market.canonicalEventId,
     quoteOutcomeId: 'YES',
     name: deriveCandidateOutcomeLabel(market),
-    prob: 'Quote',
+    prob: pendingPricePlaceholder(),
     liveStatus: 'not_requested',
     venues: venuesForCatalogMarket(market),
     venueMarkets: market.venueMarkets,
@@ -789,7 +791,7 @@ const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardM
         canonicalEventId: market.canonicalEventId,
         quoteOutcomeId: canonicalQuoteOutcomeId(label),
         name: normalizeMarketOutcomeLabel(market.title, label),
-        prob: 'Quote',
+        prob: pendingPricePlaceholder(),
         liveStatus: 'not_requested',
         venues,
         venueMarkets: market.venueMarkets,
@@ -840,7 +842,7 @@ const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardM
     lastQuoteAt: market.lastQuoteAt ?? null,
     outcomes: outcomeRows.length > 0
       ? outcomeRows
-      : [{ id: 'OUTCOMES', marketId, eventId: market.eventId ?? market.canonicalEventId, canonicalEventId: market.canonicalEventId, quoteOutcomeId: 'OUTCOMES', name: 'Outcomes load in terminal', prob: 'Quote', liveStatus: 'not_requested' }],
+      : [{ id: 'OUTCOMES', marketId, eventId: market.eventId ?? market.canonicalEventId, canonicalEventId: market.canonicalEventId, quoteOutcomeId: 'OUTCOMES', name: 'Outcomes load in terminal', prob: pendingPricePlaceholder(), liveStatus: 'not_requested' }],
     imageUrl: getSafeMediaUrl(market.imageUrl),
     iconUrl: getSafeMediaUrl(market.iconUrl),
     priceLabel: diagnosticsEnabled ? marketQuoteStatusPriceLabel(quoteStatus, diagnosticsEnabled) : '-',
@@ -1521,13 +1523,17 @@ export const DashboardV2Mockup = ({
               items: chunk.map((item) => ({
                 marketId: item.marketId,
                 canonicalMarketIds: item.canonicalMarketIds,
+                outcomeId: item.quoteOutcomeId,
               })),
             });
             if (cancelled) return;
             const priceByKey = new Map(response.prices.map((price) => [`${price.marketId}:${price.outcomeId ?? ''}`, price]));
             const nextByMarket = new Map<string, Record<string, DashboardOutcomeQuote>>();
             for (const item of chunk) {
-              const price = priceByKey.get(`${item.marketId}:`);
+              const price =
+                priceByKey.get(`${item.marketId}:${item.quoteOutcomeId}`) ??
+                priceByKey.get(`${item.marketId}:${normalizeOutcomeId(item.quoteOutcomeId)}`) ??
+                (item.quoteOutcomeId === 'YES' ? priceByKey.get(`${item.marketId}:`) : undefined);
               const bucket = nextByMarket.get(item.parentMarketId) ?? {};
               bucket[item.outcomeId] = toOutcomeQuoteFromLivePrice(item.outcomeId, price);
               nextByMarket.set(item.parentMarketId, bucket);
