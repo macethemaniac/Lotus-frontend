@@ -5052,6 +5052,7 @@ export const InfraTradingTerminal = ({
       ticketOrchestratorSigning ||
       ticketSellUnavailable ||
       ticketOrchestratorWaiting ||
+      ticketOrchestratorState === 'NEEDS_SIGNATURE' ||
       ticketOrchestratorState === 'BLOCKED_ACTION_REQUIRED' ||
       ticketOrchestratorState === 'SUBMITTING' ||
       ticketOrchestratorState === 'SUBMITTED' ||
@@ -5079,6 +5080,8 @@ export const InfraTradingTerminal = ({
         ? 'Enable venue'
       : ticketOrchestratorState === 'WAITING_FOR_VENUE_READY'
         ? 'Waiting for venue readiness...'
+      : ticketOrchestratorState === 'NEEDS_SIGNATURE'
+        ? 'Waiting for signature...'
       : ticketOrchestratorState === 'BLOCKED_ACTION_REQUIRED'
         ? 'Execution blocked'
       : ticketOrchestratorState === 'SUBMITTING'
