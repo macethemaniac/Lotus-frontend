@@ -139,6 +139,10 @@ export type MarketOrderbookResponse = {
   spread: string | null;
   status: "live" | "partial" | "stale" | "unavailable";
   blockers: Array<{ venue: string; reason: string; venueMarketId?: string; venueOutcomeId?: string; detailsCode?: string }>;
+  stream?: {
+    primaryTopic?: string | null;
+    topics?: string[];
+  } | null;
 };
 
 export type MarketOrderbookSnapshotStatus = "live" | "stale" | "blocked" | "resyncing";
@@ -154,8 +158,10 @@ export type MarketOrderbookStreamLevel = {
 };
 
 export type MarketOrderbookStreamPayload = {
-  canonicalMarketId: string;
+  canonicalMarketId?: string;
+  marketId?: string;
   canonicalOutcomeId?: string | null;
+  outcomeId?: string | null;
   venue: string;
   venueMarketId?: string | null;
   venueOutcomeId?: string | null;
@@ -196,6 +202,8 @@ export type MarketBatchQuoteRequestItem = {
   side?: "buy" | "sell";
   amount?: string | number;
 };
+
+export type MarketBatchQuoteDisplayMode = "debug" | "user";
 
 export type MarketBatchQuoteVenueEvidence = {
   venue: string;
@@ -349,8 +357,8 @@ export function getMarketChart(
   );
 }
 
-export function getMarketBatchQuotes(input: { items: MarketBatchQuoteRequestItem[] }) {
-  const key = `market-quotes:${JSON.stringify(input.items)}`;
+export function getMarketBatchQuotes(input: { items: MarketBatchQuoteRequestItem[]; displayMode?: MarketBatchQuoteDisplayMode }) {
+  const key = `market-quotes:${input.displayMode ?? "debug"}:${JSON.stringify(input.items)}`;
   return staleWhileRevalidate(key, () =>
     apiRequest<MarketBatchQuoteResponse>("/markets/quotes/batch", {
       method: "POST",

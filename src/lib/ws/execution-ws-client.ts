@@ -38,7 +38,17 @@ export function openExecutionSocket(input: {
 } {
   input.onStateChange("connecting");
   const socket = new WebSocket(lotusWsUrl());
-  socket.addEventListener("open", () => input.onStateChange("open"));
+  const activeTopics = new Set<ExecutionTopic>();
+  const send = (message: unknown) => {
+    if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
+  };
+  const flushSubscriptions = () => {
+    for (const topic of activeTopics) send({ action: "subscribe", topic });
+  };
+  socket.addEventListener("open", () => {
+    input.onStateChange("open");
+    flushSubscriptions();
+  });
   socket.addEventListener("close", () => input.onStateChange("closed"));
   socket.addEventListener("error", () => input.onStateChange("error"));
   socket.addEventListener("message", (event) => {
@@ -49,10 +59,12 @@ export function openExecutionSocket(input: {
   return {
     socket,
     subscribe: (topic) => {
-      if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ action: "subscribe", topic }));
+      activeTopics.add(topic);
+      send({ action: "subscribe", topic });
     },
     unsubscribe: (topic) => {
-      if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ action: "unsubscribe", topic }));
+      activeTopics.delete(topic);
+      send({ action: "unsubscribe", topic });
     },
   };
 }
@@ -71,17 +83,4 @@ function isExecutionEvent(value: unknown): value is ExecutionWsEvent {
   return typeof event.type === "string" &&
     (event.type.startsWith("EXECUTION_") || event.type.startsWith("MARKET_") || event.type === "USER_NOTIFICATION") &&
     typeof event.topic === "string";
-}
-
-export function marketOrderbookTopic(marketId: string, outcomeId?: string | null): MarketOrderbookTopic {
-  return `markets:orderbook:${base64UrlEncode(marketId)}:${base64UrlEncode(outcomeId?.trim() || "_")}`;
-}
-
-function base64UrlEncode(value: string): string {
-  const bytes = new TextEncoder().encode(value);
-  let binary = "";
-  bytes.forEach((byte) => {
-    binary += String.fromCharCode(byte);
-  });
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }

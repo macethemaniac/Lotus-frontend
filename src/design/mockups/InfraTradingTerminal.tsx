@@ -11,7 +11,7 @@ import { JsonRpcProvider, Transaction } from 'ethers';
 import { CryptoLogo, VenueLogo, resolveTopicAssetLogoId } from '@/components/icons/asset-logo';
 import { LotusLogo } from '@/components/icons/lotus-icons';
 import { FundingDeposit } from '@/design/mockups/FundingDeposit';
-import { env } from '@/config/env';
+import { env, lotusMarketDiagnosticsEnabled } from '@/config/env';
 import type { AuthSession } from '@/features/auth/types';
 import {
   getAccountSnapshot,
@@ -76,7 +76,11 @@ import {
   type VenueSetupSignatureRequest,
 } from '@/features/wallets/api/wallet-api';
 import { ApiClientError } from '@/lib/api/http-client';
-import { marketOrderbookTopic, openExecutionSocket, type ExecutionWsState } from '@/lib/ws/execution-ws-client';
+import { openExecutionSocket, type ExecutionTopic, type ExecutionWsState } from '@/lib/ws/execution-ws-client';
+
+const ORDERBOOK_DISPLAY_REST_FALLBACK_DELAY_MS = 6_000;
+const ORDERBOOK_STREAM_STALE_MS = 30_000;
+const ORDERBOOK_REST_RECOVERY_MIN_INTERVAL_MS = 45_000;
 
 const walletAddressEquals = (left?: string | null, right?: string | null): boolean => {
   if (!left || !right) return false;
@@ -671,7 +675,7 @@ const normalizeStreamResponseBlockers = (
     if (!reason) return items;
     const record = blocker && typeof blocker === 'object' ? blocker as Record<string, unknown> : {};
     items.push({
-      venue: typeof record.venue === 'string' ? record.venue : payload.venue,
+      venue: typeof record.venue === 'string' ? record.venue : payload.venue ?? 'UNKNOWN',
       reason,
       venueMarketId: typeof record.venueMarketId === 'string' ? record.venueMarketId : payload.venueMarketId ?? undefined,
       venueOutcomeId: typeof record.venueOutcomeId === 'string' ? record.venueOutcomeId : payload.venueOutcomeId ?? undefined,
@@ -679,6 +683,46 @@ const normalizeStreamResponseBlockers = (
     });
     return items;
   }, []);
+
+const streamPayloadMarketId = (payload: MarketOrderbookStreamPayload): string | null =>
+  payload.canonicalMarketId ?? payload.marketId ?? null;
+
+const streamPayloadOutcomeId = (payload: MarketOrderbookStreamPayload): string | null =>
+  payload.canonicalOutcomeId ?? payload.outcomeId ?? null;
+
+const isOrderbookInitialSnapshotPayload = (payload: unknown): payload is Partial<MarketOrderbookResponse> & MarketOrderbookStreamPayload => {
+  if (!payload || typeof payload !== 'object') return false;
+  const record = payload as Record<string, unknown>;
+  return record.source === 'initial_snapshot' || (Array.isArray(record.venues) && Array.isArray(record.bids) && Array.isArray(record.asks));
+};
+
+const normalizeOrderbookInitialSnapshot = (
+  payload: Partial<MarketOrderbookResponse> & MarketOrderbookStreamPayload,
+  current: MarketOrderbookResponse | null,
+  expectedMarketId: string,
+  expectedOutcomeId: string | null,
+): MarketOrderbookResponse => {
+  const marketId = streamPayloadMarketId(payload) ?? expectedMarketId;
+  const outcomeId = streamPayloadOutcomeId(payload) ?? expectedOutcomeId;
+  return {
+    marketId,
+    outcomeId: outcomeId && outcomeId !== '_' ? outcomeId : null,
+    generatedAt: typeof payload.generatedAt === 'string' ? payload.generatedAt : new Date().toISOString(),
+    depth: typeof payload.depth === 'number' ? payload.depth : current?.depth ?? 20,
+    venues: Array.isArray(payload.venues) ? payload.venues : current?.venues ?? [],
+    bids: Array.isArray(payload.bids) ? payload.bids : current?.bids ?? [],
+    asks: Array.isArray(payload.asks) ? payload.asks : current?.asks ?? [],
+    bestBid: orderbookNumberString(payload.bestBid) ?? current?.bestBid ?? null,
+    bestAsk: orderbookNumberString(payload.bestAsk) ?? current?.bestAsk ?? null,
+    midpoint: orderbookNumberString(payload.midpoint) ?? current?.midpoint ?? null,
+    spread: orderbookNumberString(payload.spread) ?? current?.spread ?? null,
+    status: payload.status === 'partial' || payload.status === 'stale' || payload.status === 'unavailable' || payload.status === 'live'
+      ? payload.status
+      : current?.status ?? 'live',
+    blockers: Array.isArray(payload.blockers) ? payload.blockers as MarketOrderbookResponse['blockers'] : current?.blockers ?? [],
+    stream: payload.stream ?? current?.stream ?? null,
+  };
+};
 
 const normalizeStreamLevel = (
   level: MarketOrderbookStreamLevel,
@@ -690,7 +734,7 @@ const normalizeStreamLevel = (
   const priceNumber = orderbookNumericValue(price) ?? 0;
   const sizeNumber = orderbookNumericValue(size) ?? 0;
   return {
-    venue: level.venue ?? payload.venue,
+    venue: level.venue ?? payload.venue ?? 'UNKNOWN',
     venueMarketId: level.venueMarketId ?? payload.venueMarketId ?? '',
     venueOutcomeId: typeof level.venueOutcomeId !== 'undefined' ? level.venueOutcomeId : payload.venueOutcomeId ?? null,
     price,
@@ -753,7 +797,7 @@ const normalizeStreamVenueBook = (
   const stats = bookStats(bids, asks);
   const freshnessMs = typeof payload.freshnessMs === 'number' && Number.isFinite(payload.freshnessMs) ? payload.freshnessMs : null;
   return {
-    venue: payload.venue,
+    venue: payload.venue ?? 'UNKNOWN',
     venueMarketId: payload.venueMarketId ?? '',
     venueOutcomeId: payload.venueOutcomeId ?? null,
     source: 'STREAM',
@@ -785,36 +829,38 @@ const orderbookStatusFromSnapshot = (
 const mergeOrderbookStreamUpdate = (
   current: MarketOrderbookResponse | null,
   payload: MarketOrderbookStreamPayload,
-  selectedVenue: string,
   depth = 20
 ): MarketOrderbookResponse => {
   const receivedAt = new Date().toISOString();
   const venueBook = normalizeStreamVenueBook(payload, receivedAt, current?.depth ?? depth);
   const sameVenue = (venue: MarketOrderbookVenue) =>
     toBackendVenueId(venue.venue) === toBackendVenueId(venueBook.venue);
-  const existingVenues = selectedVenue === 'ALL' ? current?.venues ?? [] : [];
+  const existingVenues = current?.venues ?? [];
   const venues = [...existingVenues.filter((venue) => !sameVenue(venue)), venueBook];
   const activeVenues = venues.filter((venue) => venue.blockers.length === 0 && (venue.bids.length > 0 || venue.asks.length > 0));
   const bids = sortAndCumulativeLevels(
-    selectedVenue === 'ALL' ? activeVenues.flatMap((venue) => venue.bids) : venueBook.bids,
+    activeVenues.flatMap((venue) => venue.bids),
     'bid',
     current?.depth ?? depth
   );
   const asks = sortAndCumulativeLevels(
-    selectedVenue === 'ALL' ? activeVenues.flatMap((venue) => venue.asks) : venueBook.asks,
+    activeVenues.flatMap((venue) => venue.asks),
     'ask',
     current?.depth ?? depth
   );
   const stats = bookStats(bids, asks);
   const streamBlockers = normalizeStreamResponseBlockers(payload);
+  const payloadVenue = payload.venue ?? 'UNKNOWN';
   const blockers = [
-    ...(current?.blockers ?? []).filter((blocker) => toBackendVenueId(blocker.venue) !== toBackendVenueId(payload.venue)),
+    ...(current?.blockers ?? []).filter((blocker) => toBackendVenueId(blocker.venue) !== toBackendVenueId(payloadVenue)),
     ...streamBlockers,
   ];
   const hasLevels = bids.length > 0 || asks.length > 0;
+  const marketId = streamPayloadMarketId(payload) ?? current?.marketId ?? '';
+  const outcomeId = streamPayloadOutcomeId(payload);
   return {
-    marketId: payload.canonicalMarketId,
-    outcomeId: payload.canonicalOutcomeId && payload.canonicalOutcomeId !== '_' ? payload.canonicalOutcomeId : null,
+    marketId,
+    outcomeId: outcomeId && outcomeId !== '_' ? outcomeId : null,
     generatedAt: receivedAt,
     depth: current?.depth ?? depth,
     venues,
@@ -824,15 +870,43 @@ const mergeOrderbookStreamUpdate = (
     bestAsk: stats.bestAsk,
     midpoint: stats.midpoint,
     spread: stats.spread,
-    status: orderbookStatusFromSnapshot(payload.snapshotStatus, hasLevels, selectedVenue === 'ALL' && activeVenues.length > 0),
+    status: orderbookStatusFromSnapshot(payload.snapshotStatus, hasLevels, activeVenues.length > 0),
     blockers,
+  };
+};
+
+const filterOrderbookForVenue = (
+  orderbook: MarketOrderbookResponse | null,
+  selectedVenue: string,
+): MarketOrderbookResponse | null => {
+  if (!orderbook || selectedVenue === 'ALL') return orderbook;
+  const backendVenue = toBackendVenueId(selectedVenue);
+  const venues = orderbook.venues.filter((venue) => toBackendVenueId(venue.venue) === backendVenue);
+  const activeVenues = venues.filter((venue) => venue.blockers.length === 0 && (venue.bids.length > 0 || venue.asks.length > 0));
+  const bids = sortAndCumulativeLevels(activeVenues.flatMap((venue) => venue.bids), 'bid', orderbook.depth);
+  const asks = sortAndCumulativeLevels(activeVenues.flatMap((venue) => venue.asks), 'ask', orderbook.depth);
+  const stats = bookStats(bids, asks);
+  const hasLevels = bids.length > 0 || asks.length > 0;
+  return {
+    ...orderbook,
+    venues,
+    bids,
+    asks,
+    bestBid: stats.bestBid,
+    bestAsk: stats.bestAsk,
+    midpoint: stats.midpoint,
+    spread: stats.spread,
+    status: hasLevels ? 'live' : 'unavailable',
+    blockers: orderbook.blockers.filter((blocker) => toBackendVenueId(blocker.venue) === backendVenue),
   };
 };
 
 const isMarketOrderbookStreamPayload = (payload: unknown): payload is MarketOrderbookStreamPayload => {
   if (!payload || typeof payload !== 'object') return false;
   const record = payload as Record<string, unknown>;
-  return typeof record.canonicalMarketId === 'string' && typeof record.venue === 'string';
+  const hasMarketId = typeof record.canonicalMarketId === 'string' || typeof record.marketId === 'string';
+  const isInitialSnapshot = isOrderbookInitialSnapshotPayload(payload);
+  return isInitialSnapshot || (hasMarketId && typeof record.venue === 'string');
 };
 
 const streamOutcomeMatches = (streamOutcomeId: string | null | undefined, selectedOutcomeId: string | null | undefined): boolean => {
@@ -848,19 +922,54 @@ const streamFreshnessLabel = (freshnessMs: number | null | undefined): string | 
   return `${Math.round(freshnessMs / 60_000)}m old`;
 };
 
-const streamStatusLabel = (status: MarketOrderbookStreamPayload['snapshotStatus'] | undefined): string => {
+const streamStatusLabel = (
+  status: MarketOrderbookStreamPayload['snapshotStatus'] | undefined,
+  diagnosticsEnabled = lotusMarketDiagnosticsEnabled()
+): string => {
+  if (status === undefined) return diagnosticsEnabled ? 'Pending' : 'Updating';
+  if (!diagnosticsEnabled && status !== undefined && status !== 'live') return 'Updating';
   if (status === 'stale') return 'Stale';
   if (status === 'resyncing') return 'Updating';
   if (status === 'blocked') return 'Venue unavailable';
   return 'Live';
 };
 
-const streamStatusClass = (status: MarketOrderbookStreamPayload['snapshotStatus'] | undefined): string => {
+const streamStatusClass = (
+  status: MarketOrderbookStreamPayload['snapshotStatus'] | undefined,
+  diagnosticsEnabled = lotusMarketDiagnosticsEnabled()
+): string => {
+  if (status === undefined) return 'border-blue-500/40 bg-blue-500/10 text-blue-200';
+  if (!diagnosticsEnabled && status !== undefined && status !== 'live') return 'border-blue-500/40 bg-blue-500/10 text-blue-200';
   if (status === 'blocked') return 'border-amber-500/40 bg-amber-500/10 text-amber-200';
   if (status === 'stale') return 'border-zinc-500/40 bg-zinc-500/10 text-zinc-300';
   if (status === 'resyncing') return 'border-blue-500/40 bg-blue-500/10 text-blue-200';
   return 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300';
 };
+
+const normalizeOrderbookStreamTopics = (topics: unknown): ExecutionTopic[] =>
+  Array.isArray(topics)
+    ? topics.filter((topic): topic is ExecutionTopic => typeof topic === 'string' && topic.startsWith('markets:orderbook:'))
+    : [];
+
+const encodeOrderbookTopicPart = (value: string): string => {
+  const bytes = new TextEncoder().encode(value);
+  let binary = '';
+  bytes.forEach((byte) => {
+    binary += String.fromCharCode(byte);
+  });
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+};
+
+const orderbookTopicForSelection = (marketId: string, outcomeId: string | null | undefined): ExecutionTopic =>
+  `markets:orderbook:${encodeOrderbookTopicPart(marketId)}:${encodeOrderbookTopicPart(outcomeId && outcomeId !== '_' ? outcomeId : '_')}` as ExecutionTopic;
+
+const uniqueOrderbookTopics = (topics: readonly ExecutionTopic[]): ExecutionTopic[] => [...new Set(topics)];
+
+const mergeOrderbookStreamTopics = (...topicGroups: readonly ExecutionTopic[][]): ExecutionTopic[] =>
+  uniqueOrderbookTopics(topicGroups.flat());
+
+const sameTopicList = (left: ExecutionTopic[], right: ExecutionTopic[]): boolean =>
+  left.length === right.length && left.every((topic) => right.includes(topic));
 
 const bestCandidate = (candidates: TradeRouteCandidate[]): TradeRouteCandidate | null =>
   [...candidates].filter((candidate) => Number.isFinite(candidate.price)).sort((left, right) => left.price - right.price)[0] ?? null;
@@ -2424,7 +2533,11 @@ export const InfraTradingTerminal = ({
   const [orderbookVenue, setOrderbookVenue] = useState<string>('ALL');
   const [orderbookNotFoundKey, setOrderbookNotFoundKey] = useState<string | null>(null);
   const [orderbookWsState, setOrderbookWsState] = useState<ExecutionWsState>('idle');
+  const [orderbookStreamTopics, setOrderbookStreamTopics] = useState<ExecutionTopic[]>([]);
   const [latestOrderbookStream, setLatestOrderbookStream] = useState<MarketOrderbookStreamPayload | null>(null);
+  const lastOrderbookWsUpdateAtRef = React.useRef<number | null>(null);
+  const lastOrderbookRestRecoveryAtRef = React.useRef<number | null>(null);
+  const orderbookRestRecoveryInFlightRef = React.useRef(false);
   const missingRiskProfileKeysRef = React.useRef<Set<string>>(new Set());
   const autoPolymarketClobSyncKeyRef = React.useRef<string | null>(null);
   const orchestratorPreviewSeqRef = React.useRef(0);
@@ -2585,7 +2698,6 @@ export const InfraTradingTerminal = ({
   const selectedQuoteOutcomeId = selectedOutcome?.quoteOutcomeId ?? selectedOutcomeId;
   const orderbookMarketId = selectedOutcomeMarketId ?? terminalMarketId;
   const orderbookQuoteOutcomeId = selectedQuoteOutcomeId ?? (marketType === 'binary' ? 'YES' : null);
-  const orderbookWsTopic = orderbookMarketId ? marketOrderbookTopic(orderbookMarketId, orderbookQuoteOutcomeId) : null;
   const selectedTicketOutcomeId = outcomeIdForTicketSide(terminalOutcomes, ticketOutcomeSide, selectedOutcomeId);
   const selectedTicketOutcome = terminalOutcomes.find((outcome) => outcome.id === selectedTicketOutcomeId) ?? selectedOutcome;
   const selectedTicketMarketId = selectedTicketOutcome?.marketId ?? selectedOutcomeMarketId ?? terminalMarketId;
@@ -2659,17 +2771,35 @@ export const InfraTradingTerminal = ({
     () => [...new Set([...(orderbook?.venues.map((venue) => venue.venue) ?? []), ...marketVenueList.map((venue) => venue.toUpperCase())])].sort(),
     [marketVenueList, orderbook?.venues]
   );
-  const orderbookSnapshotStatus = latestOrderbookStream?.snapshotStatus
-    ?? (orderbook?.status === 'stale' ? 'stale' : orderbook?.status === 'unavailable' ? 'blocked' : orderbook ? 'live' : undefined);
+  const displayOrderbook = useMemo(
+    () => filterOrderbookForVenue(orderbook, orderbookVenue),
+    [orderbook, orderbookVenue]
+  );
+  const orderbookLiveVenues = useMemo(() => {
+    return (displayOrderbook?.venues ?? []).filter((venue) => {
+      return venue.blockers.length === 0 && (venue.bids.length > 0 || venue.asks.length > 0 || Boolean(venue.bestBid || venue.bestAsk));
+    });
+  }, [displayOrderbook?.venues]);
+  const orderbookLiveVenueCount = orderbookLiveVenues.length;
+  const orderbookSnapshotStatus = orderbookLiveVenueCount > 0
+    ? 'live'
+    : latestOrderbookStream?.snapshotStatus
+      ?? (displayOrderbook?.status === 'stale' ? 'stale' : displayOrderbook?.status === 'unavailable' ? 'blocked' : displayOrderbook ? 'live' : undefined);
   const orderbookFreshness = streamFreshnessLabel(latestOrderbookStream?.freshnessMs);
   const orderbookStreamBlockers = latestOrderbookStream?.blockers
     ?.map(normalizeStreamBlocker)
     .filter((blocker): blocker is string => Boolean(blocker)) ?? [];
+  const marketDiagnosticsEnabled = lotusMarketDiagnosticsEnabled();
   const orderbookWsLabel = orderbookWsState === 'open'
-    ? 'stream'
+    ? marketDiagnosticsEnabled ? 'stream' : 'live feed'
     : orderbookWsState === 'connecting'
       ? 'connecting'
-      : 'REST fallback';
+      : marketDiagnosticsEnabled ? 'REST fallback' : 'backup feed';
+  const orderbookStatusDetail = orderbookLiveVenueCount > 0
+    ? `${orderbookLiveVenueCount} live venue${orderbookLiveVenueCount === 1 ? '' : 's'}`
+    : marketDiagnosticsEnabled
+      ? displayOrderbook?.status ?? 'pending'
+      : 'updating';
 
   const refreshOutcomes = useCallback(async () => {
     const fallbackRows = initialOutcomeRows(terminalMarket);
@@ -3931,126 +4061,245 @@ export const InfraTradingTerminal = ({
 
   React.useEffect(() => {
     let cancelled = false;
-    const refreshOrderbook = async () => {
-      const requestKey = `${orderbookMarketId ?? 'none'}:${orderbookQuoteOutcomeId ?? 'none'}:${orderbookVenue}`;
-      if (!orderbookMarketId) {
-        setOrderbook(null);
-        setOrderbookError(null);
-        return;
-      }
-      if (orderbookNotFoundKey === requestKey) return;
-      setLatestOrderbookStream(null);
-      setOrderbookLoading(true);
+    const requestKey = `${orderbookMarketId ?? 'none'}:${orderbookQuoteOutcomeId ?? 'none'}`;
+    if (!orderbookMarketId) {
+      setOrderbook(null);
       setOrderbookError(null);
+      setOrderbookStreamTopics([]);
+      setOrderbookLoading(false);
+      return;
+    }
+    if (orderbookNotFoundKey === requestKey) return;
+
+    const localTopics = [orderbookTopicForSelection(orderbookMarketId, orderbookQuoteOutcomeId)];
+    const loadFallbackOrderbook = async () => {
+      if (orderbookRestRecoveryInFlightRef.current) return;
+      orderbookRestRecoveryInFlightRef.current = true;
+      lastOrderbookRestRecoveryAtRef.current = Date.now();
       try {
         const response = await getMarketOrderbook(orderbookMarketId, {
           outcomeId: orderbookQuoteOutcomeId,
           depth: 20,
-          venue: orderbookVenue === 'ALL' ? null : orderbookVenue
         });
         if (!cancelled) {
           setOrderbook(response);
+          const nextTopics = mergeOrderbookStreamTopics(localTopics, normalizeOrderbookStreamTopics(response.stream?.topics));
+          setOrderbookStreamTopics((current) => sameTopicList(current, nextTopics) ? current : nextTopics);
           setOrderbookNotFoundKey(null);
+          setOrderbookError(null);
+          lastOrderbookWsUpdateAtRef.current = Date.now();
         }
       } catch (error) {
         if (!cancelled) {
           setOrderbook(null);
           if (isApiNotFound(error, 'MARKET_NOT_FOUND')) {
             setOrderbookNotFoundKey(requestKey);
+            setOrderbookStreamTopics([]);
+          } else {
+            setOrderbookStreamTopics((current) => sameTopicList(current, localTopics) ? current : localTopics);
           }
           setOrderbookError(safeMarketDataError(error, 'orderbook'));
         }
       } finally {
+        orderbookRestRecoveryInFlightRef.current = false;
         if (!cancelled) setOrderbookLoading(false);
       }
     };
+
+    const refreshOrderbook = () => {
+      setLatestOrderbookStream(null);
+      setOrderbook(null);
+      setOrderbookStreamTopics((current) => sameTopicList(current, localTopics) ? current : localTopics);
+      setOrderbookLoading(true);
+      setOrderbookError(null);
+      lastOrderbookWsUpdateAtRef.current = null;
+      lastOrderbookRestRecoveryAtRef.current = null;
+    };
     void refreshOrderbook();
-    const shouldPollRestFallback = orderbookWsState === 'idle' || orderbookWsState === 'closed' || orderbookWsState === 'error';
-    const interval = shouldPollRestFallback
-      ? window.setInterval(() => {
-        void refreshOrderbook();
-      }, 10_000)
-      : null;
+    const fallbackTimer = window.setTimeout(() => {
+      if (cancelled || lastOrderbookWsUpdateAtRef.current !== null) return;
+      void loadFallbackOrderbook();
+    }, ORDERBOOK_DISPLAY_REST_FALLBACK_DELAY_MS);
     return () => {
       cancelled = true;
-      if (interval !== null) window.clearInterval(interval);
+      window.clearTimeout(fallbackTimer);
     };
-  }, [orderbookMarketId, orderbookNotFoundKey, orderbookQuoteOutcomeId, orderbookVenue, orderbookWsState]);
+  }, [orderbookMarketId, orderbookNotFoundKey, orderbookQuoteOutcomeId]);
 
   React.useEffect(() => {
-    if (!orderbookMarketId || !orderbookWsTopic) {
+    if (!orderbookMarketId || orderbookStreamTopics.length === 0) {
       setOrderbookWsState('idle');
       setLatestOrderbookStream(null);
       return;
     }
 
     let active = true;
-    const topic = orderbookWsTopic;
+    let reconnectAttempt = 0;
+    let reconnectTimer: number | null = null;
+    let client: ReturnType<typeof openExecutionSocket> | null = null;
+    const topics = [...new Set(orderbookStreamTopics)];
+    const topicSet = new Set(topics);
     const expectedMarketId = orderbookMarketId;
     const expectedOutcomeId = orderbookQuoteOutcomeId ?? null;
-    const client = openExecutionSocket({
-      onStateChange: (state) => {
-        if (active) setOrderbookWsState(state);
-      },
-      onEvent: (event) => {
-        if (!active || event.topic !== topic || !isMarketOrderbookStreamPayload(event.payload)) return;
-        const payload = event.payload;
-        if (payload.canonicalMarketId !== expectedMarketId) return;
-        if (!streamOutcomeMatches(payload.canonicalOutcomeId, expectedOutcomeId)) return;
 
-        if (event.type === 'MARKET_ORDERBOOK_UPDATE') {
-          if (orderbookVenue !== 'ALL' && toBackendVenueId(payload.venue) !== toBackendVenueId(orderbookVenue)) return;
-          setLatestOrderbookStream(payload);
-          setOrderbook((current) => mergeOrderbookStreamUpdate(current, payload, orderbookVenue));
-          setOrderbookError(null);
-          return;
+    const applyStreamPriceToOutcomes = (payload: MarketOrderbookStreamPayload) => {
+      const quotePrice = orderbookNumericValue(payload.bestAsk ?? payload.bestBid);
+      const blocker = (payload.blockers ?? []).map(normalizeStreamBlocker).find(Boolean) ?? null;
+      if (quotePrice === null && !blocker) return;
+      const payloadVenue = payload.venue ?? null;
+      const effectiveOutcomeId = streamPayloadOutcomeId(payload) ?? expectedOutcomeId;
+      setTerminalOutcomes((current) => current.map((outcome) => {
+        if (outcome.marketId !== expectedMarketId) return outcome;
+        if (!streamOutcomeMatches(effectiveOutcomeId, outcome.quoteOutcomeId)) return outcome;
+        const yesPrice = quotePrice !== null ? formatProbabilityPrice(quotePrice) : 'Quote';
+        const noPrice = quotePrice !== null && marketType === 'binary' ? formatProbabilityPrice(1 - quotePrice) : 'Quote';
+        if (!payloadVenue) {
+          return {
+            ...outcome,
+            yesPrice: yesPrice !== 'Quote' ? yesPrice : outcome.yesPrice,
+            noPrice: noPrice !== 'Quote' ? noPrice : outcome.noPrice,
+            status: quotePrice !== null ? 'live' : outcome.status,
+            blocker: blocker ?? outcome.blocker,
+          };
         }
+        const nextVenueQuote: TerminalVenueQuote = {
+          venue: payloadVenue,
+          yesPrice,
+          noPrice,
+          blocker,
+        };
+        const venueQuotes = [
+          ...outcome.venueQuotes.filter((quote) => toBackendVenueId(quote.venue) !== toBackendVenueId(payloadVenue)),
+          nextVenueQuote,
+        ];
+        const primaryQuote = quotePrice !== null && (!outcome.primaryVenue || toBackendVenueId(outcome.primaryVenue) === toBackendVenueId(payloadVenue))
+          ? nextVenueQuote
+          : null;
+        return {
+          ...outcome,
+          yesPrice: primaryQuote?.yesPrice ?? outcome.yesPrice,
+          noPrice: primaryQuote?.noPrice ?? outcome.noPrice,
+          primaryVenue: outcome.primaryVenue ?? payloadVenue,
+          venueQuotes,
+          status: quotePrice !== null ? 'live' : outcome.status,
+          blocker: blocker ?? outcome.blocker,
+        };
+      }));
+    };
 
-        if (event.type === 'MARKET_QUOTE_UPDATE') {
-          const quotePrice = orderbookNumericValue(payload.bestAsk ?? payload.bestBid);
-          const blocker = (payload.blockers ?? []).map(normalizeStreamBlocker).find(Boolean) ?? null;
-          if (quotePrice === null && !blocker) return;
-          setTerminalOutcomes((current) => current.map((outcome) => {
-            if (outcome.marketId !== expectedMarketId) return outcome;
-            if (!streamOutcomeMatches(payload.canonicalOutcomeId, outcome.quoteOutcomeId)) return outcome;
-            const nextVenueQuote: TerminalVenueQuote = {
-              venue: payload.venue,
-              yesPrice: quotePrice !== null ? formatProbabilityPrice(quotePrice) : 'Quote',
-              noPrice: quotePrice !== null && marketType === 'binary' ? formatProbabilityPrice(1 - quotePrice) : 'Quote',
-              blocker,
-            };
-            const venueQuotes = [
-              ...outcome.venueQuotes.filter((quote) => toBackendVenueId(quote.venue) !== toBackendVenueId(payload.venue)),
-              nextVenueQuote,
-            ];
-            const primaryQuote = quotePrice !== null && (!outcome.primaryVenue || toBackendVenueId(outcome.primaryVenue) === toBackendVenueId(payload.venue))
-              ? nextVenueQuote
-              : null;
-            return {
-              ...outcome,
-              yesPrice: primaryQuote?.yesPrice ?? outcome.yesPrice,
-              noPrice: primaryQuote?.noPrice ?? outcome.noPrice,
-              primaryVenue: outcome.primaryVenue ?? payload.venue,
-              venueQuotes,
-              status: payload.snapshotStatus === 'blocked' ? 'unavailable' : quotePrice !== null ? 'live' : outcome.status,
-              blocker: blocker ?? outcome.blocker,
-            };
-          }));
-        }
-      },
-    });
+    const subscribeAll = () => {
+      for (const topic of topics) client?.subscribe(topic);
+    };
 
-    const subscribe = () => client.subscribe(topic);
-    client.socket.addEventListener('open', subscribe);
-    if (client.socket.readyState === WebSocket.OPEN) subscribe();
+    const subscribeOnGatewayReady = (message: MessageEvent) => {
+      try {
+        const parsed = JSON.parse(String(message.data)) as { type?: string };
+        if (parsed.type === 'GATEWAY_READY') subscribeAll();
+      } catch {
+        // Ignore non-JSON keepalive frames.
+      }
+    };
+
+    const connect = () => {
+      if (!active) return;
+      client = openExecutionSocket({
+        onStateChange: (state) => {
+          if (!active) return;
+          setOrderbookWsState(state);
+          if (state === 'open') {
+            reconnectAttempt = 0;
+          }
+          if (state === 'closed' || state === 'error') {
+            if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
+            const delay = Math.min(8_000, 750 * Math.max(1, 2 ** reconnectAttempt));
+            reconnectAttempt += 1;
+            reconnectTimer = window.setTimeout(connect, delay);
+          }
+        },
+        onEvent: (event) => {
+          if (!active || !topicSet.has(event.topic) || !isMarketOrderbookStreamPayload(event.payload)) return;
+          const payload = event.payload;
+          const payloadMarketId = streamPayloadMarketId(payload);
+          const payloadOutcomeId = streamPayloadOutcomeId(payload);
+          if (payloadMarketId && payloadMarketId !== expectedMarketId) return;
+          if (payloadOutcomeId && !streamOutcomeMatches(payloadOutcomeId, expectedOutcomeId)) return;
+
+          lastOrderbookWsUpdateAtRef.current = Date.now();
+
+          if (event.type === 'MARKET_ORDERBOOK_UPDATE') {
+            if (isOrderbookInitialSnapshotPayload(payload)) {
+              setOrderbook((current) => normalizeOrderbookInitialSnapshot(payload, current, expectedMarketId, expectedOutcomeId));
+              applyStreamPriceToOutcomes(payload);
+              setOrderbookLoading(false);
+              setOrderbookError(null);
+              return;
+            }
+            if (!payload.venue) return;
+            setLatestOrderbookStream(payload);
+            setOrderbook((current) => mergeOrderbookStreamUpdate(current, payload));
+            applyStreamPriceToOutcomes(payload);
+            setOrderbookLoading(false);
+            setOrderbookError(null);
+            return;
+          }
+
+          if (event.type === 'MARKET_QUOTE_UPDATE') {
+            applyStreamPriceToOutcomes(payload);
+          }
+        },
+      });
+      subscribeAll();
+      client.socket.addEventListener('open', subscribeAll);
+      client.socket.addEventListener('message', subscribeOnGatewayReady);
+      if (client.socket.readyState === WebSocket.OPEN) subscribeAll();
+    };
+
+    connect();
 
     return () => {
       active = false;
-      client.socket.removeEventListener('open', subscribe);
-      client.unsubscribe(topic);
-      client.socket.close();
+      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
+      if (client) {
+        client.socket.removeEventListener('open', subscribeAll);
+        client.socket.removeEventListener('message', subscribeOnGatewayReady);
+        for (const topic of topics) client.unsubscribe(topic);
+        client.socket.close();
+      }
     };
-  }, [marketType, orderbookMarketId, orderbookQuoteOutcomeId, orderbookVenue, orderbookWsTopic]);
+  }, [marketType, orderbookMarketId, orderbookQuoteOutcomeId, orderbookStreamTopics]);
+
+  React.useEffect(() => {
+    if (!orderbookMarketId || orderbookWsState !== 'open') return;
+    const localTopics = [orderbookTopicForSelection(orderbookMarketId, orderbookQuoteOutcomeId)];
+    const interval = window.setInterval(() => {
+      const lastUpdateAt = lastOrderbookWsUpdateAtRef.current;
+      const now = Date.now();
+      if (lastUpdateAt !== null && now - lastUpdateAt < ORDERBOOK_STREAM_STALE_MS) return;
+      const lastRestRecoveryAt = lastOrderbookRestRecoveryAtRef.current;
+      if (lastRestRecoveryAt !== null && now - lastRestRecoveryAt < ORDERBOOK_REST_RECOVERY_MIN_INTERVAL_MS) return;
+      if (orderbookRestRecoveryInFlightRef.current) return;
+      orderbookRestRecoveryInFlightRef.current = true;
+      lastOrderbookRestRecoveryAtRef.current = now;
+      void getMarketOrderbook(orderbookMarketId, {
+        outcomeId: orderbookQuoteOutcomeId,
+        depth: 20,
+      })
+        .then((response) => {
+          setOrderbook(response);
+          const nextTopics = mergeOrderbookStreamTopics(localTopics, normalizeOrderbookStreamTopics(response.stream?.topics));
+          setOrderbookStreamTopics((current) => sameTopicList(current, nextTopics) ? current : nextTopics);
+          setOrderbookError(null);
+          lastOrderbookWsUpdateAtRef.current = Date.now();
+        })
+        .catch((error) => {
+          setOrderbookError(safeMarketDataError(error, 'orderbook'));
+        })
+        .finally(() => {
+          orderbookRestRecoveryInFlightRef.current = false;
+        });
+    }, 10_000);
+    return () => window.clearInterval(interval);
+  }, [orderbookMarketId, orderbookQuoteOutcomeId, orderbookWsState]);
 
   const refreshAccountData = useCallback(async () => {
     if (!token) {
@@ -5146,24 +5395,24 @@ export const InfraTradingTerminal = ({
                    <div className="flex items-center gap-3">
                        <ChevronLeft className="w-4 h-4 text-zinc-500 cursor-pointer hover:text-white" />
                        <span className="w-4 h-4 rounded-full bg-blue-600/20 text-blue-400 flex items-center justify-center text-[8px] font-bold">$</span>
-                       <span className={`rounded-full border px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.12em] ${streamStatusClass(orderbookSnapshotStatus)}`}>
-                         {streamStatusLabel(orderbookSnapshotStatus)}
+                       <span className={`rounded-full border px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.12em] ${streamStatusClass(orderbookSnapshotStatus, marketDiagnosticsEnabled)}`}>
+                         {streamStatusLabel(orderbookSnapshotStatus, marketDiagnosticsEnabled)}
                        </span>
                        <div className="relative group">
                            <Info className="w-4 h-4 text-zinc-500 cursor-pointer hover:text-white" />
                            <div className="absolute left-1/2 -translate-x-1/2 top-full mt-2 hidden group-hover:flex flex-col w-[260px] bg-zinc-900 border border-zinc-700/50 rounded-lg p-3 shadow-xl z-50 pointer-events-none">
                                <div className="text-zinc-200 text-[11px] font-sans pb-2 border-b border-zinc-800 mb-2">
                                    <div className="flex justify-between items-center">
-                                       <span className="font-semibold text-white">Spread: {formatBookPrice(orderbook?.spread)}</span>
+                                       <span className="font-semibold text-white">Spread: {formatBookPrice(displayOrderbook?.spread)}</span>
                                        <span className="text-[10px] text-zinc-500">(Combined effective spread)</span>
                                    </div>
                                </div>
                                <div className="flex justify-between text-[11px] font-sans mb-1 text-zinc-300">
-                                   <span>Best Bid: <span className="text-emerald-400 font-mono font-bold">{formatBookPrice(orderbook?.bestBid)}</span></span>
-                                   <span>Best Ask: <span className="text-pink-400 font-mono font-bold">{formatBookPrice(orderbook?.bestAsk)}</span></span>
+                                   <span>Best Bid: <span className="text-emerald-400 font-mono font-bold">{formatBookPrice(displayOrderbook?.bestBid)}</span></span>
+                                   <span>Best Ask: <span className="text-pink-400 font-mono font-bold">{formatBookPrice(displayOrderbook?.bestAsk)}</span></span>
                                </div>
                                <div className="text-[11px] font-sans text-zinc-400">
-                                   Status: <span className="font-mono text-zinc-300 font-bold">{orderbook?.status ?? 'pending'}</span>
+                                   Status: <span className="font-mono text-zinc-300 font-bold">{orderbookStatusDetail}</span>
                                </div>
                                <div className="text-[11px] font-sans text-zinc-400 mt-1">
                                    Feed: <span className="font-mono text-zinc-300 font-bold">{orderbookWsLabel}</span>
@@ -5197,25 +5446,32 @@ export const InfraTradingTerminal = ({
                    {orderbookLoading && !orderbook && (
                      <div className="px-4 py-6 text-center text-[11px] font-bold uppercase tracking-[0.18em] text-zinc-500">Loading live book</div>
                    )}
-                   {orderbookError && (
+                   {marketDiagnosticsEnabled && orderbookError && orderbookLiveVenueCount === 0 && (
                      <div className="mx-3 my-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] font-semibold text-amber-200">{orderbookError}</div>
                    )}
-                   {orderbookSnapshotStatus === 'blocked' && orderbookStreamBlockers.length > 0 && (
+                   {marketDiagnosticsEnabled && orderbookSnapshotStatus === 'blocked' && orderbookLiveVenueCount === 0 && orderbookStreamBlockers.length > 0 && (
                      <div className="mx-3 my-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] font-semibold text-amber-200">
                        {formatVenueLabel(latestOrderbookStream?.venue ?? 'Venue')} unavailable: {orderbookStreamBlockers[0]}
                      </div>
                    )}
-                   {(orderbookSnapshotStatus === 'stale' || orderbookSnapshotStatus === 'resyncing') && (
+                   {orderbookLiveVenueCount === 0 && (orderbookSnapshotStatus === 'stale' || orderbookSnapshotStatus === 'resyncing') && (
                      <div className="mx-3 my-3 rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-[11px] font-semibold text-blue-100">
-                       Orderbook feed is {orderbookSnapshotStatus === 'resyncing' ? 'resyncing' : 'stale'}{orderbookFreshness ? ` (${orderbookFreshness})` : ''}.
+                       {marketDiagnosticsEnabled
+                         ? `Live quotes reconnecting${orderbookFreshness ? ` (${orderbookFreshness})` : ''}.`
+                         : 'Updating live prices.'}
                      </div>
                    )}
-                   {!orderbookLoading && !orderbookError && orderbook && orderbook.asks.length === 0 && orderbook.bids.length === 0 && (
+                   {!marketDiagnosticsEnabled && !orderbookLoading && orderbookLiveVenueCount === 0 && orderbookSnapshotStatus !== 'stale' && orderbookSnapshotStatus !== 'resyncing' && (!displayOrderbook || (displayOrderbook.asks.length === 0 && displayOrderbook.bids.length === 0)) && (
                      <div className="px-4 py-6 text-center text-[11px] font-semibold text-zinc-500">
-                       No live depth returned for this outcome yet.
+                       Updating live prices.
                      </div>
                    )}
-                   {orderbook?.asks.slice().reverse().map((level, i) => (
+                   {marketDiagnosticsEnabled && !orderbookLoading && !orderbookError && displayOrderbook && displayOrderbook.asks.length === 0 && displayOrderbook.bids.length === 0 && (
+                     <div className="px-4 py-6 text-center text-[11px] font-semibold text-zinc-500">
+                       Live quotes reconnecting...
+                     </div>
+                   )}
+                   {displayOrderbook?.asks.slice().reverse().map((level, i) => (
                      <div key={`ask-${level.venue}-${level.price}-${i}`} className={`flex justify-between px-4 py-0.5 hover:bg-zinc-800/50 ${i === 0 ? 'mb-1' : ''} ${i < 3 ? 'bg-[#E52B50]/5' : ''}`}>
                        <span className="w-12 text-pink-500 font-bold">{formatBookPrice(level.price)}</span>
                        <span className="w-16 flex items-center gap-1.5 text-zinc-500 uppercase text-[9px] font-bold tracking-wider">
@@ -5245,10 +5501,10 @@ export const InfraTradingTerminal = ({
                    
                    <div className="flex justify-between px-4 py-1 bg-zinc-950 text-[10px] text-zinc-500 border-y border-zinc-800 font-sans tracking-wide">
                        <span className="font-bold">Spread</span>
-                       <span className="font-mono">{formatBookPrice(orderbook?.spread)}</span>
+                       <span className="font-mono">{formatBookPrice(displayOrderbook?.spread)}</span>
                    </div>
 
-                   {orderbook?.bids.map((level, i) => (
+                   {displayOrderbook?.bids.map((level, i) => (
                      <div key={`bid-${level.venue}-${level.price}-${i}`} className={`flex justify-between px-4 py-0.5 hover:bg-zinc-800/50 ${i === 0 ? 'mt-1' : ''} ${i < 3 ? 'bg-[#ccff00]/5' : ''}`}>
                        <span className="w-12 text-emerald-400 font-bold">{formatBookPrice(level.price)}</span>
                        <span className="w-16 flex items-center gap-1.5 text-zinc-500 uppercase text-[9px] font-bold tracking-wider">
