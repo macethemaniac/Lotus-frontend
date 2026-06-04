@@ -967,6 +967,62 @@ const mergeOrderbookStreamUpdate = (
   };
 };
 
+const orderbookChecksumHex = async (value: string): Promise<string | null> => {
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle) return null;
+  const bytes = new TextEncoder().encode(value);
+  const digest = await subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+};
+
+const orderbookChecksumLevels = (levels: MarketOrderbookLevel[] | undefined) =>
+  (levels ?? []).slice(0, 5).map((level) => ({
+    price: level.price,
+    size: level.size,
+  }));
+
+const streamChecksumBlockers = (payload: MarketOrderbookStreamPayload): string[] =>
+  (payload.blockers ?? [])
+    .map((blocker) => {
+      if (typeof blocker === 'string') return blocker;
+      if (!blocker || typeof blocker !== 'object') return null;
+      const record = blocker as Record<string, unknown>;
+      const value = [record.reason, record.message, record.detailsCode, record.code].find((item) => typeof item === 'string');
+      return typeof value === 'string' ? value : null;
+    })
+    .filter((value): value is string => Boolean(value))
+    .sort();
+
+const validateOrderbookStreamChecksum = async (
+  orderbook: MarketOrderbookResponse,
+  payload: MarketOrderbookStreamPayload,
+  expectedMarketId: string,
+  expectedOutcomeId: string | null
+): Promise<boolean> => {
+  if (!payload.checksum || !payload.venue) return true;
+  const backendVenue = toBackendVenueId(payload.venue);
+  const venueBook = orderbook.venues.find((venue) => toBackendVenueId(venue.venue) === backendVenue);
+  if (!venueBook) return true;
+  const checksumOutcome = typeof payload.canonicalOutcomeId !== 'undefined'
+    ? payload.canonicalOutcomeId
+    : typeof payload.outcomeId !== 'undefined'
+      ? payload.outcomeId
+      : expectedOutcomeId;
+  const body = JSON.stringify({
+    market: streamPayloadMarketId(payload) ?? expectedMarketId,
+    outcome: checksumOutcome ?? null,
+    venue: backendVenue,
+    bestBid: venueBook.bestBid ?? null,
+    bestAsk: venueBook.bestAsk ?? null,
+    bids: orderbookChecksumLevels(venueBook.bids),
+    asks: orderbookChecksumLevels(venueBook.asks),
+    blockers: streamChecksumBlockers(payload),
+  });
+  const hex = await orderbookChecksumHex(body);
+  if (!hex) return true;
+  return hex.slice(0, 16) === payload.checksum;
+};
+
 const filterOrderbookForVenue = (
   orderbook: MarketOrderbookResponse | null,
   selectedVenue: string,
@@ -2636,6 +2692,8 @@ export const InfraTradingTerminal = ({
   const [latestOrderbookStream, setLatestOrderbookStream] = useState<MarketOrderbookStreamPayload | null>(null);
   const lastOrderbookWsUpdateAtRef = React.useRef<number | null>(null);
   const orderbookStreamSeqRef = React.useRef<Map<string, number>>(new Map());
+  const orderbookRef = React.useRef<MarketOrderbookResponse | null>(null);
+  const orderbookChecksumValidationSeqRef = React.useRef(0);
   const lastOrderbookRestRecoveryAtRef = React.useRef<number | null>(null);
   const orderbookRestRecoveryInFlightRef = React.useRef(false);
   const orderbookRestRecoveryTimerRef = React.useRef<number | null>(null);
@@ -2743,6 +2801,10 @@ export const InfraTradingTerminal = ({
     [resolutionRuleFallbacks]
   );
   const token = session?.userJwt ?? null;
+
+  React.useEffect(() => {
+    orderbookRef.current = orderbook;
+  }, [orderbook]);
 
   React.useEffect(() => {
     setTicketPolymarketClobSyncConfirmed(false);
@@ -4125,6 +4187,8 @@ export const InfraTradingTerminal = ({
     let cancelled = false;
     const requestKey = `${orderbookMarketId ?? 'none'}:${orderbookQuoteOutcomeId ?? 'none'}`;
     if (!orderbookMarketId) {
+      orderbookRef.current = null;
+      orderbookChecksumValidationSeqRef.current += 1;
       setOrderbook(null);
       setOrderbookError(null);
       setOrderbookStreamTopics([]);
@@ -4144,6 +4208,7 @@ export const InfraTradingTerminal = ({
           depth: 20,
         });
         if (!cancelled) {
+          orderbookRef.current = response;
           setOrderbook(response);
           const nextTopics = mergeOrderbookStreamTopics(localTopics, normalizeOrderbookStreamTopics(response.stream?.topics));
           setOrderbookStreamTopics((current) => sameTopicList(current, nextTopics) ? current : nextTopics);
@@ -4153,6 +4218,7 @@ export const InfraTradingTerminal = ({
         }
       } catch (error) {
         if (!cancelled) {
+          orderbookRef.current = null;
           setOrderbook(null);
           if (isApiNotFound(error, 'MARKET_NOT_FOUND')) {
             setOrderbookNotFoundKey(requestKey);
@@ -4170,6 +4236,8 @@ export const InfraTradingTerminal = ({
 
     const refreshOrderbook = () => {
       setLatestOrderbookStream(null);
+      orderbookRef.current = null;
+      orderbookChecksumValidationSeqRef.current += 1;
       setOrderbook(null);
       setOrderbookStreamTopics((current) => sameTopicList(current, localTopics) ? current : localTopics);
       setOrderbookLoading(true);
@@ -4229,6 +4297,7 @@ export const InfraTradingTerminal = ({
           depth: 20,
         });
         if (!active) return;
+        orderbookRef.current = response;
         setOrderbook(response);
         const nextTopics = mergeOrderbookStreamTopics(localTopics, normalizeOrderbookStreamTopics(response.stream?.topics));
         setOrderbookStreamTopics((current) => sameTopicList(current, nextTopics) ? current : nextTopics);
@@ -4259,6 +4328,22 @@ export const InfraTradingTerminal = ({
             snapshotStatus: 'resyncing',
             blockers: [],
           });
+    };
+
+    const validateStreamChecksumOrRecover = (
+      nextOrderbook: MarketOrderbookResponse,
+      payload: MarketOrderbookStreamPayload
+    ) => {
+      const validationSeq = ++orderbookChecksumValidationSeqRef.current;
+      void validateOrderbookStreamChecksum(nextOrderbook, payload, expectedMarketId, expectedOutcomeId)
+        .then((valid) => {
+          if (!active || validationSeq !== orderbookChecksumValidationSeqRef.current || valid) return;
+          markStreamResyncing();
+          scheduleRestRecovery(ORDERBOOK_STREAM_GAP_RECOVERY_DELAY_MS);
+        })
+        .catch(() => {
+          // Display checksum validation is a recovery guard; crypto/runtime failures should not break live streaming.
+        });
     };
 
     const acceptsStreamSequence = (topic: ExecutionTopic, payload: MarketOrderbookStreamPayload): boolean => {
@@ -4368,7 +4453,15 @@ export const InfraTradingTerminal = ({
 
           if (event.type === 'MARKET_ORDERBOOK_UPDATE') {
             if (isOrderbookInitialSnapshotPayload(payload)) {
-              setOrderbook((current) => normalizeOrderbookInitialSnapshot(payload, current, expectedMarketId, expectedOutcomeId));
+              const nextOrderbook = normalizeOrderbookInitialSnapshot(
+                payload,
+                orderbookRef.current,
+                expectedMarketId,
+                expectedOutcomeId
+              );
+              orderbookRef.current = nextOrderbook;
+              setOrderbook(nextOrderbook);
+              validateStreamChecksumOrRecover(nextOrderbook, payload);
               applyStreamPriceToOutcomes(payload);
               setOrderbookLoading(false);
               setOrderbookError(null);
@@ -4376,7 +4469,10 @@ export const InfraTradingTerminal = ({
             }
             if (!payload.venue) return;
             setLatestOrderbookStream(payload);
-            setOrderbook((current) => mergeOrderbookStreamUpdate(current, payload));
+            const nextOrderbook = mergeOrderbookStreamUpdate(orderbookRef.current, payload);
+            orderbookRef.current = nextOrderbook;
+            setOrderbook(nextOrderbook);
+            validateStreamChecksumOrRecover(nextOrderbook, payload);
             applyStreamPriceToOutcomes(payload);
             setOrderbookLoading(false);
             setOrderbookError(null);
