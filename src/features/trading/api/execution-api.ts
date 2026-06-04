@@ -349,7 +349,10 @@ export function submitSignedBundle(token: string, executionId: string, signedLeg
 }
 
 export function getLiveReadiness(token: string, executionId: string) {
-  return apiRequest<LiveSubmitReadinessSnapshot>(`/execution/${encodeURIComponent(executionId)}/live-readiness`, { token });
+  const path = `/execution/${encodeURIComponent(executionId)}/live-readiness`;
+  return dedupeInFlight(`execution:live-readiness:${token}:${path}`, () =>
+    apiRequest<LiveSubmitReadinessSnapshot>(path, { token })
+  );
 }
 
 export function previewExecutionOrder(token: string, request: ExecutionOrderPreviewRequest) {
@@ -380,11 +383,17 @@ export function submitExecutionOrderSignatures(token: string, orderId: string, s
 }
 
 export function getExecutionOrderStatus(token: string, orderId: string) {
-  return apiRequest<ExecutionOrderResponse>(`/execution/orders/${encodeURIComponent(orderId)}/status`, { token });
+  const path = `/execution/orders/${encodeURIComponent(orderId)}/status`;
+  return dedupeInFlight(`execution:order-status:${token}:${path}`, () =>
+    apiRequest<ExecutionOrderResponse>(path, { token })
+  );
 }
 
 export function getExecutionStatus(token: string, executionId: string) {
-  return apiRequest<ExecutionStatus>(`/execution/${encodeURIComponent(executionId)}/status`, { token });
+  const path = `/execution/${encodeURIComponent(executionId)}/status`;
+  return dedupeInFlight(`execution:status:${token}:${path}`, () =>
+    apiRequest<ExecutionStatus>(path, { token })
+  );
 }
 
 export function getPositions(token: string, input: { marketId?: string; outcomeId?: string; venue?: string; limit?: number; markMode?: "cached" | "live" } = {}) {
