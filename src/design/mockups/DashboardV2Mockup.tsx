@@ -19,6 +19,7 @@ import { NotificationToast, type NotificationToastTone } from '@/features/notifi
 import { getPortfolioSummary, type LiveCandidatesResponse, type PortfolioSummary, type TradeRouteCandidate } from '@/features/trading/api/execution-api';
 import { getVenueBalances, type VenueBalance } from '@/features/funding/api/funding-api';
 import { ApiClientError } from '@/lib/api/http-client';
+import { lotusMarketDiagnosticsEnabled } from '@/config/env';
 import { 
   Search, Bell, Home, BarChart2, ArrowRightLeft, 
   Zap, PieChart, Activity, Settings, ChevronDown, ChevronUp,
@@ -643,20 +644,37 @@ const marketQuoteStatus = (market: MarketCatalogMarket): NonNullable<MarketCatal
   return 'unavailable';
 };
 
-const marketQuoteReadinessLabel = (status: NonNullable<MarketCatalogMarket['quoteStatus']>, readyVenueCount: number, blockers: string[]): string => {
+const marketQuoteReadinessLabel = (
+  status: NonNullable<MarketCatalogMarket['quoteStatus']>,
+  readyVenueCount: number,
+  blockers: string[],
+  diagnosticsEnabled = lotusMarketDiagnosticsEnabled(),
+): string => {
+  if (!diagnosticsEnabled) {
+    if (status === 'unavailable') return '';
+    return readyVenueCount > 0 ? 'Live' : 'Ready';
+  }
   if (status === 'live') return readyVenueCount > 0 ? `${readyVenueCount} quote-ready venue${readyVenueCount === 1 ? '' : 's'}` : 'Quote ready';
   if (status === 'partial') return readyVenueCount > 0 ? `Partial coverage: ${readyVenueCount} venue${readyVenueCount === 1 ? '' : 's'}` : 'Partial venue coverage';
   if (status === 'stale') return 'Stale quote - refresh on open';
   return blockers[0] ? readableQuoteBlocker(blockers[0]) : 'Quote unavailable';
 };
 
-const marketQuoteStatusPriceLabel = (status: NonNullable<MarketCatalogMarket['quoteStatus']>): string => {
+const marketQuoteStatusPriceLabel = (
+  status: NonNullable<MarketCatalogMarket['quoteStatus']>,
+  diagnosticsEnabled = lotusMarketDiagnosticsEnabled(),
+): string => {
+  if (!diagnosticsEnabled && (status === 'stale' || status === 'unavailable')) return '-';
   if (status === 'stale') return 'Stale';
   if (status === 'unavailable') return 'Unavailable';
   return 'Preview';
 };
 
-const marketQuoteStatusBadge = (status: NonNullable<MarketCatalogMarket['quoteStatus']>): { label: string; className: string } | null => {
+const marketQuoteStatusBadge = (
+  status: NonNullable<MarketCatalogMarket['quoteStatus']>,
+  diagnosticsEnabled = lotusMarketDiagnosticsEnabled(),
+): { label: string; className: string } | null => {
+  if (!diagnosticsEnabled) return null;
   if (status === 'partial') {
     return {
       label: 'Partial coverage',
@@ -725,13 +743,14 @@ const binaryCandidateOutcomeRow = (market: MarketCatalogMarket): DashboardOutcom
 };
 
 const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardMarketRow => {
+  const diagnosticsEnabled = lotusMarketDiagnosticsEnabled();
   const venues = venuesForCatalogMarket(market);
   const routeType = routeTypeLabel(market);
   const marketId = marketIdForCatalogMarket(market);
   const quoteStatus = marketQuoteStatus(market);
   const quoteReadyVenueCount = Number.isFinite(Number(market.quoteReadyVenueCount)) ? Number(market.quoteReadyVenueCount) : 0;
   const quoteBlockers = catalogQuoteBlockers(market);
-  const quoteReadinessLabel = marketQuoteReadinessLabel(quoteStatus, quoteReadyVenueCount, quoteBlockers);
+  const quoteReadinessLabel = marketQuoteReadinessLabel(quoteStatus, quoteReadyVenueCount, quoteBlockers, diagnosticsEnabled);
   const marketClass = formatTitleCase(market.marketClass || 'Market');
   const category = formatTitleCase(market.category || 'Market');
   const catalogVolume = formatMoneyMetric(market.volume24h ?? market.volume);
@@ -819,13 +838,13 @@ const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardM
       : [{ id: 'OUTCOMES', marketId, eventId: market.eventId ?? market.canonicalEventId, canonicalEventId: market.canonicalEventId, quoteOutcomeId: 'OUTCOMES', name: 'Outcomes load in terminal', prob: 'Quote', liveStatus: 'not_requested' }],
     imageUrl: getSafeMediaUrl(market.imageUrl),
     iconUrl: getSafeMediaUrl(market.iconUrl),
-    priceLabel: marketQuoteStatusPriceLabel(quoteStatus),
+    priceLabel: marketQuoteStatusPriceLabel(quoteStatus, diagnosticsEnabled),
     priceVenue: null,
     changeLabel: quoteReadinessLabel,
-    savings: quoteStatus === 'unavailable' ? 'Unavailable' : 'Preview route',
-    spread: quoteStatus === 'stale' ? 'Stale' : quoteStatus === 'unavailable' ? 'Blocked' : 'Ready',
+    savings: !diagnosticsEnabled && quoteStatus === 'unavailable' ? '-' : quoteStatus === 'unavailable' ? 'Unavailable' : 'Preview route',
+    spread: !diagnosticsEnabled && (quoteStatus === 'stale' || quoteStatus === 'unavailable') ? '-' : quoteStatus === 'stale' ? 'Stale' : quoteStatus === 'unavailable' ? 'Blocked' : 'Ready',
     fallbackLabel: quoteReadinessLabel,
-    fallbackMode: quoteStatus === 'unavailable' ? 'blocker' : routeType === 'Single' ? 'fallback' : 'pending',
+    fallbackMode: quoteStatus === 'unavailable' && diagnosticsEnabled ? 'blocker' : routeType === 'Single' ? 'fallback' : 'pending',
     closesBy: formatMarketDate(market.expiresAt ?? market.resolvesAt),
     closeTimestamp: dateTimestamp(market.expiresAt ?? market.resolvesAt),
     change24hLabel: 'Quote',
@@ -868,7 +887,8 @@ const mapCatalogMarketsToDashboardRows = (markets: MarketCatalogMarket[]): Dashb
           : 'unavailable';
     const quoteReadyVenueCount = Math.max(0, ...group.map((market) => Number(market.quoteReadyVenueCount) || 0));
     const quoteBlockers = group.flatMap(catalogQuoteBlockers);
-    const quoteReadinessLabel = marketQuoteReadinessLabel(quoteStatus, quoteReadyVenueCount, quoteBlockers);
+    const diagnosticsEnabled = lotusMarketDiagnosticsEnabled();
+    const quoteReadinessLabel = marketQuoteReadinessLabel(quoteStatus, quoteReadyVenueCount, quoteBlockers, diagnosticsEnabled);
     const groupedLastQuoteTimes = group
       .map((market) => market.lastQuoteAt)
       .filter((value): value is string => typeof value === 'string' && value.length > 0)
@@ -922,12 +942,12 @@ const mapCatalogMarketsToDashboardRows = (markets: MarketCatalogMarket[]): Dashb
       txnBuy: buyCount ?? buyVolume ?? 0,
       txnSell: sellCount ?? sellVolume ?? 0,
       txnLabel: buyCount !== null || sellCount !== null ? 'Txns' : buyVolume !== null || sellVolume !== null ? 'Vol' : 'Pending',
-      priceLabel: marketQuoteStatusPriceLabel(quoteStatus),
+      priceLabel: marketQuoteStatusPriceLabel(quoteStatus, diagnosticsEnabled),
       changeLabel: quoteReadinessLabel,
-      savings: quoteStatus === 'unavailable' ? 'Unavailable' : 'Preview route',
-      spread: quoteStatus === 'stale' ? 'Stale' : quoteStatus === 'unavailable' ? 'Blocked' : 'Ready',
+      savings: !diagnosticsEnabled && quoteStatus === 'unavailable' ? '-' : quoteStatus === 'unavailable' ? 'Unavailable' : 'Preview route',
+      spread: !diagnosticsEnabled && (quoteStatus === 'stale' || quoteStatus === 'unavailable') ? '-' : quoteStatus === 'stale' ? 'Stale' : quoteStatus === 'unavailable' ? 'Blocked' : 'Ready',
       fallbackLabel: quoteReadinessLabel,
-      fallbackMode: quoteStatus === 'unavailable' ? 'blocker' : base.fallbackMode,
+      fallbackMode: quoteStatus === 'unavailable' && diagnosticsEnabled ? 'blocker' : base.fallbackMode,
       quoteRequired: quoteStatus === 'unavailable',
     };
   });
@@ -976,6 +996,7 @@ const toOutcomeQuote = (
 };
 
 const toOutcomeQuoteFromBatch = (quote: MarketBatchQuoteItem): DashboardOutcomeQuote => {
+  const diagnosticsEnabled = lotusMarketDiagnosticsEnabled();
   const candidates: TradeRouteCandidate[] = quote.venues
     .filter((venue) => venue.price !== null)
     .map((venue) => ({
@@ -991,21 +1012,23 @@ const toOutcomeQuoteFromBatch = (quote: MarketBatchQuoteItem): DashboardOutcomeQ
     }));
   const bestCandidate = chooseBestCandidate(candidates);
   const price = quote.unifiedAveragePrice !== null ? Number(quote.unifiedAveragePrice) : bestCandidate?.price ?? null;
+  const hasDisplayPrice = Number.isFinite(price);
   return {
     outcomeId: quote.outcomeId,
-    status: quote.status,
-    price: Number.isFinite(price) ? price : null,
-    priceLabel: formatProbabilityPercent(Number.isFinite(price) ? price : null),
+    status: !diagnosticsEnabled && hasDisplayPrice ? 'live' : quote.status,
+    price: hasDisplayPrice ? price : null,
+    priceLabel: formatProbabilityPercent(hasDisplayPrice ? price : null),
     generatedAt: quote.generatedAt,
     bestCandidate,
     candidates,
-    blocked: quote.blockers,
-    blocker: getReadableBlocker(quote.blockers),
+    blocked: diagnosticsEnabled ? quote.blockers : [],
+    blocker: diagnosticsEnabled ? getReadableBlocker(quote.blockers) : null,
   };
 };
 
 const applyLiveQuoteToMarket = (market: DashboardMarketRow, quote: DashboardMarketQuote | undefined): DashboardMarketRow => {
   if (!quote) return market;
+  const diagnosticsEnabled = lotusMarketDiagnosticsEnabled();
   const quoteForOutcome = (outcome: DashboardOutcomeRow) =>
     quote.outcomes[outcome.id] ??
     quote.outcomes[outcome.quoteOutcomeId] ??
@@ -1015,7 +1038,7 @@ const applyLiveQuoteToMarket = (market: DashboardMarketRow, quote: DashboardMark
     if (!liveQuote) return outcome;
     return {
       ...outcome,
-      prob: liveQuote.price !== null ? liveQuote.priceLabel : 'Unavailable',
+      prob: liveQuote.price !== null ? liveQuote.priceLabel : diagnosticsEnabled ? 'Unavailable' : '-',
       liveStatus: liveQuote.price !== null ? liveQuote.status : 'unavailable' as const,
     };
   });
@@ -1033,9 +1056,10 @@ const applyLiveQuoteToMarket = (market: DashboardMarketRow, quote: DashboardMark
       outcomes: quotedOutcomes,
       priceVenue: null,
       quoteStatus: unavailable ? 'unavailable' : market.quoteStatus,
-      changeLabel: unavailable ? blocker ?? 'Live unavailable' : market.changeLabel,
-      fallbackLabel: unavailable ? blocker ?? 'Backend blocker' : market.fallbackLabel,
-      fallbackMode: unavailable ? 'blocker' : market.fallbackMode,
+      priceLabel: unavailable && !diagnosticsEnabled ? '-' : market.priceLabel,
+      changeLabel: unavailable ? diagnosticsEnabled ? blocker ?? 'Live unavailable' : '' : market.changeLabel,
+      fallbackLabel: unavailable ? diagnosticsEnabled ? blocker ?? 'Backend blocker' : '-' : market.fallbackLabel,
+      fallbackMode: unavailable && diagnosticsEnabled ? 'blocker' : market.fallbackMode,
       quoteRequired: true,
     };
   }
@@ -1048,15 +1072,17 @@ const applyLiveQuoteToMarket = (market: DashboardMarketRow, quote: DashboardMark
   ]));
   const hasCatalogMetric = market.volume !== 'Backend catalog';
   const batchQuoteStatus = displayQuote.status === 'unavailable' ? market.quoteStatus : displayQuote.status;
-  const statusChangeLabel = batchQuoteStatus === 'partial'
-    ? 'Partial coverage'
-    : batchQuoteStatus === 'stale'
-      ? 'Stale quote'
-      : displayQuote.bestCandidate?.venue ? 'Best Yes' : 'Live';
+  const statusChangeLabel = diagnosticsEnabled
+    ? batchQuoteStatus === 'partial'
+      ? 'Partial coverage'
+      : batchQuoteStatus === 'stale'
+        ? 'Stale quote'
+        : displayQuote.bestCandidate?.venue ? 'Best Yes' : 'Live'
+    : displayQuote.bestCandidate?.venue ? 'Best Yes' : 'Live';
   return {
     ...market,
     outcomes: quotedOutcomes,
-    quoteStatus: batchQuoteStatus,
+    quoteStatus: diagnosticsEnabled ? batchQuoteStatus : 'live',
     priceLabel: formatProbabilityPrice(displayQuote.bestCandidate?.price),
     priceVenue: displayQuote.bestCandidate?.venue ?? null,
     changeLabel: statusChangeLabel,
@@ -1422,6 +1448,7 @@ export const DashboardV2Mockup = ({
       return;
     }
 
+    const displayMode = lotusMarketDiagnosticsEnabled() ? 'debug' as const : 'user' as const;
     const loadQuotes = async () => {
       const requestItems = marketsToQuote.flatMap(({ market, outcomes }) =>
         outcomes.map((outcome) => ({
@@ -1442,6 +1469,7 @@ export const DashboardV2Mockup = ({
               side: 'buy' as const,
               amount: '1',
             })),
+            displayMode,
           });
           if (cancelled) return;
           const quoteByKey = new Map(response.quotes.map((quote) => [`${quote.marketId}:${quote.outcomeId}:buy`, quote]));
@@ -3218,21 +3246,25 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
     quoteStatus === 'live' || quoteStatus === 'partial' || quoteStatus === 'stale' || quoteStatus === 'unavailable'
       ? quoteStatus
       : 'unavailable';
-  const statusBadge = marketQuoteStatusBadge(normalizedQuoteStatus);
-  const blockerList = Array.isArray(quoteBlockers)
+  const diagnosticsEnabled = lotusMarketDiagnosticsEnabled();
+  const statusBadge = marketQuoteStatusBadge(normalizedQuoteStatus, diagnosticsEnabled);
+  const blockerList = diagnosticsEnabled && Array.isArray(quoteBlockers)
     ? quoteBlockers.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
     : [];
   const readableBlocker = blockerList[0] ? readableQuoteBlocker(blockerList[0]) : null;
   const lastQuoteLabel = typeof lastQuoteAt === 'string' && lastQuoteAt ? formatRelativeTime(lastQuoteAt) : null;
-  const displayPrice = priceLabel ?? (prob !== null && prob !== undefined ? `${prob}¢` : 'Quote');
-  const displayChange = changeLabel ?? (
+  const rawDisplayPrice = priceLabel ?? (prob !== null && prob !== undefined ? `${prob}¢` : 'Quote');
+  const displayPrice = !diagnosticsEnabled && normalizedQuoteStatus === 'unavailable' && !priceVenue ? '-' : rawDisplayPrice;
+  const displayChange = !diagnosticsEnabled && normalizedQuoteStatus === 'unavailable' ? '' : changeLabel ?? (
     normalizedQuoteStatus === 'unavailable'
       ? readableBlocker ?? 'Quote unavailable'
       : normalizedQuoteStatus === 'stale'
         ? 'Stale quote'
         : change ? `+${change}¢ vs single venue` : 'Quote ready'
   );
-  const emptyTxnCopy = normalizedQuoteStatus === 'unavailable'
+  const emptyTxnCopy = !diagnosticsEnabled
+    ? 'Quote'
+    : normalizedQuoteStatus === 'unavailable'
     ? readableBlocker ?? 'Quote unavailable'
     : normalizedQuoteStatus === 'stale'
       ? lastQuoteLabel ? `Stale quote, checked ${lastQuoteLabel}` : 'Stale quote. Refresh on open.'
@@ -3247,8 +3279,12 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
   const activeBadgeIds = new Set((badges as string[]).map(dashboardVenueIconId));
   const visibleOutcomes = outcomesExpanded ? outcomes : outcomes?.slice(0, 5);
   const hiddenOutcomeCount = Math.max(0, (outcomes?.length ?? 0) - (visibleOutcomes?.length ?? 0));
-  const fallbackText = fallbackLabel ?? (fallback ? 'Yes' : 'No');
-  const routeVenueCaption = fallbackMode === 'best_venue'
+  const fallbackText = !diagnosticsEnabled && normalizedQuoteStatus === 'unavailable'
+    ? '-'
+    : fallbackLabel ?? (fallback ? 'Yes' : 'No');
+  const routeVenueCaption = !diagnosticsEnabled && fallbackMode === 'blocker'
+    ? 'Route'
+    : fallbackMode === 'best_venue'
     ? 'Best venue'
     : fallbackMode === 'blocker'
       ? 'Blocked'

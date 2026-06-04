@@ -38,6 +38,11 @@ export function lotusWsUrl(): string {
   return url.toString();
 }
 
+export function lotusMarketDiagnosticsEnabled(): boolean {
+  if (typeof window === "undefined") return true;
+  return window.location.hostname.toLowerCase() !== "app.uselotus.xyz";
+}
+
 function resolveLotusWsBaseUrl(): string {
   if (typeof window === "undefined") return env.lotusApiBaseUrl;
 

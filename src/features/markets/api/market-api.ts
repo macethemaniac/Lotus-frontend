@@ -203,6 +203,8 @@ export type MarketBatchQuoteRequestItem = {
   amount?: string | number;
 };
 
+export type MarketBatchQuoteDisplayMode = "debug" | "user";
+
 export type MarketBatchQuoteVenueEvidence = {
   venue: string;
   venueMarketId: string;
@@ -355,8 +357,8 @@ export function getMarketChart(
   );
 }
 
-export function getMarketBatchQuotes(input: { items: MarketBatchQuoteRequestItem[] }) {
-  const key = `market-quotes:${JSON.stringify(input.items)}`;
+export function getMarketBatchQuotes(input: { items: MarketBatchQuoteRequestItem[]; displayMode?: MarketBatchQuoteDisplayMode }) {
+  const key = `market-quotes:${input.displayMode ?? "debug"}:${JSON.stringify(input.items)}`;
   return staleWhileRevalidate(key, () =>
     apiRequest<MarketBatchQuoteResponse>("/markets/quotes/batch", {
       method: "POST",

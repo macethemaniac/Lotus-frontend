@@ -11,7 +11,7 @@ import { JsonRpcProvider, Transaction } from 'ethers';
 import { CryptoLogo, VenueLogo, resolveTopicAssetLogoId } from '@/components/icons/asset-logo';
 import { LotusLogo } from '@/components/icons/lotus-icons';
 import { FundingDeposit } from '@/design/mockups/FundingDeposit';
-import { env } from '@/config/env';
+import { env, lotusMarketDiagnosticsEnabled } from '@/config/env';
 import type { AuthSession } from '@/features/auth/types';
 import {
   getAccountSnapshot,
@@ -78,7 +78,9 @@ import {
 import { ApiClientError } from '@/lib/api/http-client';
 import { openExecutionSocket, type ExecutionTopic, type ExecutionWsState } from '@/lib/ws/execution-ws-client';
 
-const ORDERBOOK_DISPLAY_REST_FALLBACK_DELAY_MS = 1_500;
+const ORDERBOOK_DISPLAY_REST_FALLBACK_DELAY_MS = 6_000;
+const ORDERBOOK_STREAM_STALE_MS = 30_000;
+const ORDERBOOK_REST_RECOVERY_MIN_INTERVAL_MS = 45_000;
 
 const walletAddressEquals = (left?: string | null, right?: string | null): boolean => {
   if (!left || !right) return false;
@@ -920,14 +922,24 @@ const streamFreshnessLabel = (freshnessMs: number | null | undefined): string | 
   return `${Math.round(freshnessMs / 60_000)}m old`;
 };
 
-const streamStatusLabel = (status: MarketOrderbookStreamPayload['snapshotStatus'] | undefined): string => {
+const streamStatusLabel = (
+  status: MarketOrderbookStreamPayload['snapshotStatus'] | undefined,
+  diagnosticsEnabled = lotusMarketDiagnosticsEnabled()
+): string => {
+  if (status === undefined) return diagnosticsEnabled ? 'Pending' : 'Updating';
+  if (!diagnosticsEnabled && status !== undefined && status !== 'live') return 'Updating';
   if (status === 'stale') return 'Stale';
   if (status === 'resyncing') return 'Updating';
   if (status === 'blocked') return 'Venue unavailable';
   return 'Live';
 };
 
-const streamStatusClass = (status: MarketOrderbookStreamPayload['snapshotStatus'] | undefined): string => {
+const streamStatusClass = (
+  status: MarketOrderbookStreamPayload['snapshotStatus'] | undefined,
+  diagnosticsEnabled = lotusMarketDiagnosticsEnabled()
+): string => {
+  if (status === undefined) return 'border-blue-500/40 bg-blue-500/10 text-blue-200';
+  if (!diagnosticsEnabled && status !== undefined && status !== 'live') return 'border-blue-500/40 bg-blue-500/10 text-blue-200';
   if (status === 'blocked') return 'border-amber-500/40 bg-amber-500/10 text-amber-200';
   if (status === 'stale') return 'border-zinc-500/40 bg-zinc-500/10 text-zinc-300';
   if (status === 'resyncing') return 'border-blue-500/40 bg-blue-500/10 text-blue-200';
@@ -2524,6 +2536,7 @@ export const InfraTradingTerminal = ({
   const [orderbookStreamTopics, setOrderbookStreamTopics] = useState<ExecutionTopic[]>([]);
   const [latestOrderbookStream, setLatestOrderbookStream] = useState<MarketOrderbookStreamPayload | null>(null);
   const lastOrderbookWsUpdateAtRef = React.useRef<number | null>(null);
+  const lastOrderbookRestRecoveryAtRef = React.useRef<number | null>(null);
   const orderbookRestRecoveryInFlightRef = React.useRef(false);
   const missingRiskProfileKeysRef = React.useRef<Set<string>>(new Set());
   const autoPolymarketClobSyncKeyRef = React.useRef<string | null>(null);
@@ -2776,11 +2789,17 @@ export const InfraTradingTerminal = ({
   const orderbookStreamBlockers = latestOrderbookStream?.blockers
     ?.map(normalizeStreamBlocker)
     .filter((blocker): blocker is string => Boolean(blocker)) ?? [];
+  const marketDiagnosticsEnabled = lotusMarketDiagnosticsEnabled();
   const orderbookWsLabel = orderbookWsState === 'open'
-    ? 'stream'
+    ? marketDiagnosticsEnabled ? 'stream' : 'live feed'
     : orderbookWsState === 'connecting'
       ? 'connecting'
-      : 'REST fallback';
+      : marketDiagnosticsEnabled ? 'REST fallback' : 'backup feed';
+  const orderbookStatusDetail = orderbookLiveVenueCount > 0
+    ? `${orderbookLiveVenueCount} live venue${orderbookLiveVenueCount === 1 ? '' : 's'}`
+    : marketDiagnosticsEnabled
+      ? displayOrderbook?.status ?? 'pending'
+      : 'updating';
 
   const refreshOutcomes = useCallback(async () => {
     const fallbackRows = initialOutcomeRows(terminalMarket);
@@ -4056,6 +4075,7 @@ export const InfraTradingTerminal = ({
     const loadFallbackOrderbook = async () => {
       if (orderbookRestRecoveryInFlightRef.current) return;
       orderbookRestRecoveryInFlightRef.current = true;
+      lastOrderbookRestRecoveryAtRef.current = Date.now();
       try {
         const response = await getMarketOrderbook(orderbookMarketId, {
           outcomeId: orderbookQuoteOutcomeId,
@@ -4088,10 +4108,12 @@ export const InfraTradingTerminal = ({
 
     const refreshOrderbook = () => {
       setLatestOrderbookStream(null);
+      setOrderbook(null);
       setOrderbookStreamTopics((current) => sameTopicList(current, localTopics) ? current : localTopics);
       setOrderbookLoading(true);
       setOrderbookError(null);
       lastOrderbookWsUpdateAtRef.current = null;
+      lastOrderbookRestRecoveryAtRef.current = null;
     };
     void refreshOrderbook();
     const fallbackTimer = window.setTimeout(() => {
@@ -4251,9 +4273,13 @@ export const InfraTradingTerminal = ({
     const localTopics = [orderbookTopicForSelection(orderbookMarketId, orderbookQuoteOutcomeId)];
     const interval = window.setInterval(() => {
       const lastUpdateAt = lastOrderbookWsUpdateAtRef.current;
-      if (lastUpdateAt !== null && Date.now() - lastUpdateAt < 15_000) return;
+      const now = Date.now();
+      if (lastUpdateAt !== null && now - lastUpdateAt < ORDERBOOK_STREAM_STALE_MS) return;
+      const lastRestRecoveryAt = lastOrderbookRestRecoveryAtRef.current;
+      if (lastRestRecoveryAt !== null && now - lastRestRecoveryAt < ORDERBOOK_REST_RECOVERY_MIN_INTERVAL_MS) return;
       if (orderbookRestRecoveryInFlightRef.current) return;
       orderbookRestRecoveryInFlightRef.current = true;
+      lastOrderbookRestRecoveryAtRef.current = now;
       void getMarketOrderbook(orderbookMarketId, {
         outcomeId: orderbookQuoteOutcomeId,
         depth: 20,
@@ -5369,8 +5395,8 @@ export const InfraTradingTerminal = ({
                    <div className="flex items-center gap-3">
                        <ChevronLeft className="w-4 h-4 text-zinc-500 cursor-pointer hover:text-white" />
                        <span className="w-4 h-4 rounded-full bg-blue-600/20 text-blue-400 flex items-center justify-center text-[8px] font-bold">$</span>
-                       <span className={`rounded-full border px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.12em] ${streamStatusClass(orderbookSnapshotStatus)}`}>
-                         {streamStatusLabel(orderbookSnapshotStatus)}
+                       <span className={`rounded-full border px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.12em] ${streamStatusClass(orderbookSnapshotStatus, marketDiagnosticsEnabled)}`}>
+                         {streamStatusLabel(orderbookSnapshotStatus, marketDiagnosticsEnabled)}
                        </span>
                        <div className="relative group">
                            <Info className="w-4 h-4 text-zinc-500 cursor-pointer hover:text-white" />
@@ -5386,7 +5412,7 @@ export const InfraTradingTerminal = ({
                                    <span>Best Ask: <span className="text-pink-400 font-mono font-bold">{formatBookPrice(displayOrderbook?.bestAsk)}</span></span>
                                </div>
                                <div className="text-[11px] font-sans text-zinc-400">
-                                   Status: <span className="font-mono text-zinc-300 font-bold">{orderbookLiveVenueCount > 0 ? `${orderbookLiveVenueCount} live venue${orderbookLiveVenueCount === 1 ? '' : 's'}` : displayOrderbook?.status ?? 'pending'}</span>
+                                   Status: <span className="font-mono text-zinc-300 font-bold">{orderbookStatusDetail}</span>
                                </div>
                                <div className="text-[11px] font-sans text-zinc-400 mt-1">
                                    Feed: <span className="font-mono text-zinc-300 font-bold">{orderbookWsLabel}</span>
@@ -5420,20 +5446,27 @@ export const InfraTradingTerminal = ({
                    {orderbookLoading && !orderbook && (
                      <div className="px-4 py-6 text-center text-[11px] font-bold uppercase tracking-[0.18em] text-zinc-500">Loading live book</div>
                    )}
-                   {orderbookError && orderbookLiveVenueCount === 0 && (
+                   {marketDiagnosticsEnabled && orderbookError && orderbookLiveVenueCount === 0 && (
                      <div className="mx-3 my-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] font-semibold text-amber-200">{orderbookError}</div>
                    )}
-                   {orderbookSnapshotStatus === 'blocked' && orderbookLiveVenueCount === 0 && orderbookStreamBlockers.length > 0 && (
+                   {marketDiagnosticsEnabled && orderbookSnapshotStatus === 'blocked' && orderbookLiveVenueCount === 0 && orderbookStreamBlockers.length > 0 && (
                      <div className="mx-3 my-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] font-semibold text-amber-200">
                        {formatVenueLabel(latestOrderbookStream?.venue ?? 'Venue')} unavailable: {orderbookStreamBlockers[0]}
                      </div>
                    )}
                    {orderbookLiveVenueCount === 0 && (orderbookSnapshotStatus === 'stale' || orderbookSnapshotStatus === 'resyncing') && (
                      <div className="mx-3 my-3 rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-[11px] font-semibold text-blue-100">
-                       Live quotes reconnecting{orderbookFreshness ? ` (${orderbookFreshness})` : ''}.
+                       {marketDiagnosticsEnabled
+                         ? `Live quotes reconnecting${orderbookFreshness ? ` (${orderbookFreshness})` : ''}.`
+                         : 'Updating live prices.'}
                      </div>
                    )}
-                   {!orderbookLoading && !orderbookError && displayOrderbook && displayOrderbook.asks.length === 0 && displayOrderbook.bids.length === 0 && (
+                   {!marketDiagnosticsEnabled && !orderbookLoading && orderbookLiveVenueCount === 0 && orderbookSnapshotStatus !== 'stale' && orderbookSnapshotStatus !== 'resyncing' && (!displayOrderbook || (displayOrderbook.asks.length === 0 && displayOrderbook.bids.length === 0)) && (
+                     <div className="px-4 py-6 text-center text-[11px] font-semibold text-zinc-500">
+                       Updating live prices.
+                     </div>
+                   )}
+                   {marketDiagnosticsEnabled && !orderbookLoading && !orderbookError && displayOrderbook && displayOrderbook.asks.length === 0 && displayOrderbook.bids.length === 0 && (
                      <div className="px-4 py-6 text-center text-[11px] font-semibold text-zinc-500">
                        Live quotes reconnecting...
                      </div>
