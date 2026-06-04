@@ -556,6 +556,12 @@ const inverseOutcomePriceLabel = (label: string | null | undefined): string => {
   return `${inverse >= 10 ? inverse.toFixed(0) : inverse.toFixed(1)}${suffix}`;
 };
 
+const displayPriceLabel = (label: string | null | undefined, diagnosticsEnabled = lotusMarketDiagnosticsEnabled()): string => {
+  const normalized = typeof label === 'string' ? label.trim() : '';
+  if (!normalized || normalized === 'Quote' || normalized === 'Unavailable') return diagnosticsEnabled ? 'Quote' : '-';
+  return normalized;
+};
+
 const readableQuoteBlocker = (reason: string | null | undefined): string | null => {
   if (!reason) return null;
   const normalized = reason.toUpperCase();
@@ -718,7 +724,7 @@ const normalizeOrderbookInitialSnapshot = (
     bestAsk: orderbookNumberString(payload.bestAsk) ?? current?.bestAsk ?? null,
     midpoint: orderbookNumberString(payload.midpoint) ?? current?.midpoint ?? null,
     spread: orderbookNumberString(payload.spread) ?? current?.spread ?? null,
-    status: payload.status === 'partial' || payload.status === 'stale' || payload.status === 'unavailable' || payload.status === 'live'
+    status: payload.status === 'partial' || payload.status === 'stale' || payload.status === 'blocked' || payload.status === 'unavailable' || payload.status === 'live'
       ? payload.status
       : current?.status ?? 'live',
     blockers: Array.isArray(payload.blockers) ? payload.blockers as MarketOrderbookResponse['blockers'] : current?.blockers ?? [],
@@ -911,9 +917,16 @@ const isMarketOrderbookStreamPayload = (payload: unknown): payload is MarketOrde
   return isInitialSnapshot || (hasMarketId && typeof record.venue === 'string');
 };
 
+const normalizeStreamOutcomeId = (value: string | null | undefined): string | null => {
+  const trimmed = typeof value === 'string' ? value.trim() : '';
+  if (!trimmed || trimmed === '_') return null;
+  return trimmed.toUpperCase();
+};
+
 const streamOutcomeMatches = (streamOutcomeId: string | null | undefined, selectedOutcomeId: string | null | undefined): boolean => {
-  const normalizedStream = streamOutcomeId && streamOutcomeId !== '_' ? streamOutcomeId : null;
-  const normalizedSelected = selectedOutcomeId && selectedOutcomeId !== '_' ? selectedOutcomeId : null;
+  const normalizedStream = normalizeStreamOutcomeId(streamOutcomeId);
+  const normalizedSelected = normalizeStreamOutcomeId(selectedOutcomeId);
+  if (!normalizedStream || !normalizedSelected) return true;
   return normalizedStream === normalizedSelected;
 };
 
@@ -4107,29 +4120,32 @@ export const InfraTradingTerminal = ({
 
     const applyStreamPriceToOutcomes = (payload: MarketOrderbookStreamPayload) => {
       const quotePrice = orderbookNumericValue(payload.bestAsk ?? payload.bestBid);
+      const diagnosticsEnabled = lotusMarketDiagnosticsEnabled();
       const blocker = (payload.blockers ?? []).map(normalizeStreamBlocker).find(Boolean) ?? null;
-      if (quotePrice === null && !blocker) return;
+      if (quotePrice === null && (!blocker || !diagnosticsEnabled)) return;
       const payloadVenue = payload.venue ?? null;
-      const effectiveOutcomeId = streamPayloadOutcomeId(payload) ?? expectedOutcomeId;
+      const effectiveOutcomeId = streamPayloadOutcomeId(payload) ?? expectedOutcomeId ?? (marketType === 'binary' ? 'YES' : null);
+      if (!effectiveOutcomeId && marketType !== 'binary') return;
+      const displayBlocker = diagnosticsEnabled ? blocker : null;
       setTerminalOutcomes((current) => current.map((outcome) => {
         if (outcome.marketId !== expectedMarketId) return outcome;
         if (!streamOutcomeMatches(effectiveOutcomeId, outcome.quoteOutcomeId)) return outcome;
-        const yesPrice = quotePrice !== null ? formatProbabilityPrice(quotePrice) : 'Quote';
-        const noPrice = quotePrice !== null && marketType === 'binary' ? formatProbabilityPrice(1 - quotePrice) : 'Quote';
+        const yesPrice = quotePrice !== null ? formatProbabilityPrice(quotePrice) : '-';
+        const noPrice = quotePrice !== null && marketType === 'binary' ? formatProbabilityPrice(1 - quotePrice) : '-';
         if (!payloadVenue) {
           return {
             ...outcome,
-            yesPrice: yesPrice !== 'Quote' ? yesPrice : outcome.yesPrice,
-            noPrice: noPrice !== 'Quote' ? noPrice : outcome.noPrice,
+            yesPrice: quotePrice !== null ? yesPrice : outcome.yesPrice,
+            noPrice: quotePrice !== null ? noPrice : outcome.noPrice,
             status: quotePrice !== null ? 'live' : outcome.status,
-            blocker: blocker ?? outcome.blocker,
+            blocker: displayBlocker ?? outcome.blocker,
           };
         }
         const nextVenueQuote: TerminalVenueQuote = {
           venue: payloadVenue,
           yesPrice,
           noPrice,
-          blocker,
+          blocker: displayBlocker,
         };
         const venueQuotes = [
           ...outcome.venueQuotes.filter((quote) => toBackendVenueId(quote.venue) !== toBackendVenueId(payloadVenue)),
@@ -4145,7 +4161,7 @@ export const InfraTradingTerminal = ({
           primaryVenue: outcome.primaryVenue ?? payloadVenue,
           venueQuotes,
           status: quotePrice !== null ? 'live' : outcome.status,
-          blocker: blocker ?? outcome.blocker,
+          blocker: displayBlocker ?? outcome.blocker,
         };
       }));
     };
@@ -5264,7 +5280,7 @@ export const InfraTradingTerminal = ({
                                             {outcomeVenues.length > 0 ? `${outcomeVenues.length} venues` : 'Venue quotes load in terminal'}
                                           </span>
                                         </div>
-                                        <span className="shrink-0 font-mono text-xs font-black text-zinc-100">{yesLabel}</span>
+                                        <span className="shrink-0 font-mono text-xs font-black text-zinc-100">{displayPriceLabel(yesLabel, marketDiagnosticsEnabled)}</span>
                                       </div>
                                       <div className="grid grid-cols-2 gap-2">
                                         <button
@@ -5272,14 +5288,14 @@ export const InfraTradingTerminal = ({
                                           onClick={() => selectSelectorOutcome(outcome, 'yes')}
                                           className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-center text-xs font-bold text-emerald-400 transition-colors hover:bg-emerald-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
                                         >
-                                          Yes {yesLabel}
+                                          Yes {displayPriceLabel(yesLabel, marketDiagnosticsEnabled)}
                                         </button>
                                         <button
                                           type="button"
                                           onClick={() => selectSelectorOutcome(outcome, 'no')}
                                           className="rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-center text-xs font-bold text-red-400 transition-colors hover:bg-red-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
                                         >
-                                          No {noLabel}
+                                          No {displayPriceLabel(noLabel, marketDiagnosticsEnabled)}
                                         </button>
                                       </div>
                                       {venueQuotes.length > 1 && (
@@ -5296,14 +5312,14 @@ export const InfraTradingTerminal = ({
                                                   onClick={() => selectSelectorOutcome(outcome, 'yes')}
                                                   className="rounded bg-emerald-500/10 px-2 py-1 text-[10px] font-bold text-emerald-400 transition-colors hover:bg-emerald-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
                                                 >
-                                                  Yes {quote.yesPrice}
+                                                  Yes {displayPriceLabel(quote.yesPrice, marketDiagnosticsEnabled)}
                                                 </button>
                                                 <button
                                                   type="button"
                                                   onClick={() => selectSelectorOutcome(outcome, 'no')}
                                                   className="rounded bg-red-500/10 px-2 py-1 text-[10px] font-bold text-red-400 transition-colors hover:bg-red-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
                                                 >
-                                                  No {quote.noPrice}
+                                                  No {displayPriceLabel(quote.noPrice, marketDiagnosticsEnabled)}
                                                 </button>
                                               </span>
                                             </div>
@@ -5549,7 +5565,7 @@ export const InfraTradingTerminal = ({
                                          <div className="text-zinc-100 font-bold text-base tracking-wide leading-tight">{m.name}</div>
                                          <div className="text-zinc-500 text-xs mt-0.5 font-medium">
                                            {m.vol} <span className="mx-1">-</span> {m.platforms} venues
-                                           {m.blocker && <span className="ml-2 text-amber-300">{m.blocker}</span>}
+                                           {marketDiagnosticsEnabled && m.blocker && <span className="ml-2 text-amber-300">{m.blocker}</span>}
                                          </div>
                                      </div>
                                  </div>
@@ -5565,7 +5581,7 @@ export const InfraTradingTerminal = ({
                                             }}
                                             className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#1A3A34] text-[#4ade80] text-xs font-bold hover:bg-[#204941] transition-colors"
                                           >
-                                               <VenueLogo id={normalizeVenueId(primaryVenue)} label={formatVenueLabel(primaryVenue)} className="h-3.5 w-3.5 rounded-full" /> Yes {m.yesPrice}
+                                               <VenueLogo id={normalizeVenueId(primaryVenue)} label={formatVenueLabel(primaryVenue)} className="h-3.5 w-3.5 rounded-full" /> Yes {displayPriceLabel(m.yesPrice, marketDiagnosticsEnabled)}
                                           </button>
                                           <button
                                             type="button"
@@ -5576,7 +5592,7 @@ export const InfraTradingTerminal = ({
                                             }}
                                             className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#3F1D24] text-[#f87171] text-xs font-bold hover:bg-[#52252f] transition-colors"
                                           >
-                                               <VenueLogo id={normalizeVenueId(primaryVenue)} label={formatVenueLabel(primaryVenue)} className="h-3.5 w-3.5 rounded-full" /> No {m.noPrice}
+                                               <VenueLogo id={normalizeVenueId(primaryVenue)} label={formatVenueLabel(primaryVenue)} className="h-3.5 w-3.5 rounded-full" /> No {displayPriceLabel(m.noPrice, marketDiagnosticsEnabled)}
                                           </button>
                                           <button
                                             type="button"
@@ -5603,7 +5619,7 @@ export const InfraTradingTerminal = ({
                                          <div className="flex items-center gap-2 text-xs font-bold text-zinc-200">
                                            <VenueLogo id={normalizeVenueId(quote.venue)} label={formatVenueLabel(quote.venue)} className="h-4 w-4 rounded-full" />
                                            {formatVenueLabel(quote.venue)}
-                                           {quote.blocker && <span className="text-[10px] font-medium text-amber-300">{quote.blocker}</span>}
+                                           {marketDiagnosticsEnabled && quote.blocker && <span className="text-[10px] font-medium text-amber-300">{quote.blocker}</span>}
                                          </div>
                                          <div className="flex items-center gap-2">
                                            <button
@@ -5615,7 +5631,7 @@ export const InfraTradingTerminal = ({
                                              }}
                                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#1A3A34] text-[#4ade80] text-xs font-bold hover:bg-[#204941] transition-colors"
                                            >
-                                             <VenueLogo id={normalizeVenueId(quote.venue)} label={formatVenueLabel(quote.venue)} className="h-3.5 w-3.5 rounded-full" /> Yes {quote.yesPrice}
+                                             <VenueLogo id={normalizeVenueId(quote.venue)} label={formatVenueLabel(quote.venue)} className="h-3.5 w-3.5 rounded-full" /> Yes {displayPriceLabel(quote.yesPrice, marketDiagnosticsEnabled)}
                                            </button>
                                            <button
                                              type="button"
@@ -5626,7 +5642,7 @@ export const InfraTradingTerminal = ({
                                              }}
                                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#3F1D24] text-[#f87171] text-xs font-bold hover:bg-[#52252f] transition-colors"
                                            >
-                                             <VenueLogo id={normalizeVenueId(quote.venue)} label={formatVenueLabel(quote.venue)} className="h-3.5 w-3.5 rounded-full" /> No {quote.noPrice}
+                                             <VenueLogo id={normalizeVenueId(quote.venue)} label={formatVenueLabel(quote.venue)} className="h-3.5 w-3.5 rounded-full" /> No {displayPriceLabel(quote.noPrice, marketDiagnosticsEnabled)}
                                            </button>
                                          </div>
                                        </div>
@@ -6351,10 +6367,10 @@ export const InfraTradingTerminal = ({
               <div className="flex flex-col gap-3 p-3 animate-in fade-in duration-300 2xl:p-4 xl:min-h-0 xl:flex-1 xl:overflow-y-auto xl:pr-3 custom-scrollbar">
                   <div className="grid grid-cols-2 gap-3">
                       <button type="button" onClick={() => selectTicketOutcome('yes')} className={`font-bold py-3 rounded-lg flex items-center justify-center gap-2 shadow-sm transition-colors text-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${ticketOutcomeSide === 'yes' ? 'bg-emerald-500 text-white hover:bg-emerald-400' : 'bg-transparent border border-emerald-500/30 text-emerald-500 hover:bg-emerald-500/10'}`}>
-                          YES {selectedTicketOutcome?.yesPrice ?? 'Quote'}
+                          YES {displayPriceLabel(selectedTicketOutcome?.yesPrice, marketDiagnosticsEnabled)}
                       </button>
                       <button type="button" onClick={() => selectTicketOutcome('no')} className={`font-bold py-3 rounded-lg flex items-center justify-center gap-2 shadow-sm transition-colors text-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${ticketOutcomeSide === 'no' ? 'bg-[#E52B50] text-white hover:bg-[#ff3366]' : 'bg-transparent border border-red-500/30 text-red-500 hover:bg-red-500/10'}`}>
-                          NO {selectedTicketOutcome?.noPrice ?? 'Quote'}
+                          NO {displayPriceLabel(selectedTicketOutcome?.noPrice, marketDiagnosticsEnabled)}
                       </button>
                   </div>
 
@@ -6667,10 +6683,10 @@ export const InfraTradingTerminal = ({
                  <div className="p-4 flex flex-col gap-4 animate-in fade-in duration-300">
                      <div className="grid grid-cols-2 gap-3">
                          <button type="button" onClick={() => selectTicketOutcome('yes')} className={`font-bold py-3 rounded-lg flex items-center justify-center gap-2 shadow-sm transition-colors text-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${ticketOutcomeSide === 'yes' ? 'bg-emerald-500 text-white hover:bg-emerald-400' : 'bg-transparent border border-emerald-500/30 text-emerald-500 hover:bg-emerald-500/10'}`}>
-                             YES {selectedTicketOutcome?.yesPrice ?? 'Quote'}
+                             YES {displayPriceLabel(selectedTicketOutcome?.yesPrice, marketDiagnosticsEnabled)}
                          </button>
                          <button type="button" onClick={() => selectTicketOutcome('no')} className={`font-bold py-3 rounded-lg flex items-center justify-center gap-2 shadow-sm transition-colors text-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${ticketOutcomeSide === 'no' ? 'bg-[#E52B50] text-white hover:bg-[#ff3366]' : 'bg-transparent border border-red-500/30 text-red-500 hover:bg-red-500/10'}`}>
-                             NO {selectedTicketOutcome?.noPrice ?? 'Quote'}
+                             NO {displayPriceLabel(selectedTicketOutcome?.noPrice, marketDiagnosticsEnabled)}
                          </button>
                      </div>
 
@@ -6798,10 +6814,10 @@ export const InfraTradingTerminal = ({
                  <div className="p-4 flex flex-col gap-4 animate-in fade-in duration-300">
                      <div className="grid grid-cols-2 gap-3">
                          <button className="bg-transparent border border-emerald-500/30 text-emerald-500 hover:bg-emerald-500/10 font-bold py-3 rounded-lg flex items-center justify-center gap-2 transition-colors text-lg">
-                             YES {selectedOutcome?.yesPrice ?? 'Quote'}
+                             YES {displayPriceLabel(selectedOutcome?.yesPrice, marketDiagnosticsEnabled)}
                          </button>
                          <button className="bg-[#E52B50] hover:bg-[#ff3366] text-white font-bold py-3 rounded-lg flex items-center justify-center gap-2 shadow-sm transition-colors text-lg">
-                             NO {selectedOutcome?.noPrice ?? 'Quote'}
+                             NO {displayPriceLabel(selectedOutcome?.noPrice, marketDiagnosticsEnabled)}
                          </button>
                      </div>
                      

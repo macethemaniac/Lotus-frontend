@@ -137,7 +137,7 @@ export type MarketOrderbookResponse = {
   bestAsk: string | null;
   midpoint: string | null;
   spread: string | null;
-  status: "live" | "partial" | "stale" | "unavailable";
+  status: "live" | "partial" | "stale" | "blocked" | "unavailable";
   blockers: Array<{ venue: string; reason: string; venueMarketId?: string; venueOutcomeId?: string; detailsCode?: string }>;
   stream?: {
     primaryTopic?: string | null;
