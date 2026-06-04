@@ -80,7 +80,6 @@ import { ApiClientError } from '@/lib/api/http-client';
 import { openExecutionSocket, type ExecutionTopic, type ExecutionWsState } from '@/lib/ws/execution-ws-client';
 
 const ORDERBOOK_DISPLAY_REST_FALLBACK_DELAY_MS = 6_000;
-const ORDERBOOK_STREAM_STALE_MS = 30_000;
 const ORDERBOOK_REST_RECOVERY_MIN_INTERVAL_MS = 45_000;
 const ORDERBOOK_STREAM_GAP_RECOVERY_DELAY_MS = 1_500;
 const TERMINAL_CHART_REFRESH_INTERVAL_MS = 30_000;
@@ -4310,11 +4309,11 @@ export const InfraTradingTerminal = ({
         if (active) setOrderbookError(safeMarketDataError(error, 'orderbook'));
       } finally {
         orderbookRestRecoveryInFlightRef.current = false;
-        if (active) scheduleRestRecovery();
+        if (active && !orderbookRef.current) scheduleRestRecovery(ORDERBOOK_REST_RECOVERY_MIN_INTERVAL_MS);
       }
     };
 
-    const scheduleRestRecovery = (delayMs = ORDERBOOK_STREAM_STALE_MS) => {
+    const scheduleRestRecovery = (delayMs: number) => {
       clearScheduledRestRecovery();
       orderbookRestRecoveryTimerRef.current = window.setTimeout(() => {
         orderbookRestRecoveryTimerRef.current = null;
@@ -4436,6 +4435,7 @@ export const InfraTradingTerminal = ({
             reconnectAttempt = 0;
           }
           if (state === 'closed' || state === 'error') {
+            scheduleRestRecovery(ORDERBOOK_STREAM_GAP_RECOVERY_DELAY_MS);
             if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
             const delay = Math.min(8_000, 750 * Math.max(1, 2 ** reconnectAttempt));
             reconnectAttempt += 1;
@@ -4452,7 +4452,6 @@ export const InfraTradingTerminal = ({
           if (payloadOutcomeId && !streamOutcomeMatches(payloadOutcomeId, expectedOutcomeId)) return;
 
           lastOrderbookWsUpdateAtRef.current = Date.now();
-          scheduleRestRecovery();
 
           if (event.type === 'MARKET_ORDERBOOK_UPDATE') {
             if (isOrderbookInitialSnapshotPayload(payload)) {
@@ -4494,7 +4493,6 @@ export const InfraTradingTerminal = ({
     };
 
     connect();
-    scheduleRestRecovery();
 
     return () => {
       active = false;
