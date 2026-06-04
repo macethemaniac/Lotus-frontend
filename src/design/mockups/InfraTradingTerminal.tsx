@@ -2551,6 +2551,7 @@ export const InfraTradingTerminal = ({
   const [orderbookStreamTopics, setOrderbookStreamTopics] = useState<ExecutionTopic[]>([]);
   const [latestOrderbookStream, setLatestOrderbookStream] = useState<MarketOrderbookStreamPayload | null>(null);
   const lastOrderbookWsUpdateAtRef = React.useRef<number | null>(null);
+  const orderbookStreamSeqRef = React.useRef<Map<string, number>>(new Map());
   const lastOrderbookRestRecoveryAtRef = React.useRef<number | null>(null);
   const orderbookRestRecoveryInFlightRef = React.useRef(false);
   const missingRiskProfileKeysRef = React.useRef<Set<string>>(new Set());
@@ -4092,6 +4093,7 @@ export const InfraTradingTerminal = ({
       lastOrderbookRestRecoveryAtRef.current = null;
     };
     void refreshOrderbook();
+    orderbookStreamSeqRef.current.clear();
     const fallbackTimer = window.setTimeout(() => {
       if (cancelled || lastOrderbookWsUpdateAtRef.current !== null) return;
       void loadFallbackOrderbook();
@@ -4117,6 +4119,18 @@ export const InfraTradingTerminal = ({
     const topicSet = new Set(topics);
     const expectedMarketId = orderbookMarketId;
     const expectedOutcomeId = orderbookQuoteOutcomeId ?? null;
+
+    const acceptsStreamSequence = (topic: ExecutionTopic, payload: MarketOrderbookStreamPayload): boolean => {
+      if (typeof payload.seq !== 'number' || !Number.isFinite(payload.seq)) return true;
+      if (payload.updateType === 'snapshot' || payload.source === 'initial_snapshot') {
+        orderbookStreamSeqRef.current.set(topic, payload.seq);
+        return true;
+      }
+      const lastSeq = orderbookStreamSeqRef.current.get(topic);
+      if (typeof lastSeq === 'number' && payload.seq <= lastSeq) return false;
+      orderbookStreamSeqRef.current.set(topic, payload.seq);
+      return true;
+    };
 
     const applyStreamPriceToOutcomes = (payload: MarketOrderbookStreamPayload) => {
       const quotePrice = orderbookNumericValue(payload.bestAsk ?? payload.bestBid);
@@ -4198,6 +4212,7 @@ export const InfraTradingTerminal = ({
         onEvent: (event) => {
           if (!active || !topicSet.has(event.topic) || !isMarketOrderbookStreamPayload(event.payload)) return;
           const payload = event.payload;
+          if (!acceptsStreamSequence(event.topic, payload)) return;
           const payloadMarketId = streamPayloadMarketId(payload);
           const payloadOutcomeId = streamPayloadOutcomeId(payload);
           if (payloadMarketId && payloadMarketId !== expectedMarketId) return;

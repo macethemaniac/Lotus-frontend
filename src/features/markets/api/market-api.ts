@@ -158,21 +158,29 @@ export type MarketOrderbookStreamLevel = {
 };
 
 export type MarketOrderbookStreamPayload = {
+  schemaVersion?: string;
+  updateType?: "snapshot" | "delta";
+  seq?: number;
+  checksum?: string;
   canonicalMarketId?: string;
   marketId?: string;
   canonicalOutcomeId?: string | null;
   outcomeId?: string | null;
-  venue: string;
+  venue?: string;
   venueMarketId?: string | null;
   venueOutcomeId?: string | null;
   source?: string | null;
   quoteQuality?: string | null;
   bestBid?: string | number | null;
   bestAsk?: string | number | null;
+  midpoint?: string | number | null;
+  spread?: string | number | null;
   bidSize?: string | number | null;
   askSize?: string | number | null;
   freshnessMs?: number | null;
   snapshotStatus?: MarketOrderbookSnapshotStatus;
+  venueCount?: number | null;
+  liveVenueCount?: number | null;
   blockers?: unknown[];
   bids?: MarketOrderbookStreamLevel[];
   asks?: MarketOrderbookStreamLevel[];
