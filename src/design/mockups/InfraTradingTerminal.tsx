@@ -6032,8 +6032,8 @@ export const InfraTradingTerminal = ({
                            const rowNoVenue = isSelectedOutcome ? selectedOutcomeBookDisplay.noVenue ?? primaryVenue : primaryVenue;
                            if (expandedOutcomeId === m.id) {
                              return (
-                               <div key={m.id} className="overflow-hidden rounded-2xl border border-zinc-800 bg-[#151517]">
-                                 <div className="flex items-center justify-between gap-4 border-b border-zinc-800 px-6 py-4">
+                               <div key={m.id} className="overflow-hidden rounded-xl border border-zinc-800 bg-[#151517]">
+                                 <div className="flex items-center justify-between gap-4 border-b border-zinc-800 px-5 py-3">
                                    <button
                                      type="button"
                                      onClick={() => focusTerminalOutcomeOrderbook(m.id)}
@@ -6045,21 +6045,21 @@ export const InfraTradingTerminal = ({
                                        icon={terminalMarket.icon}
                                        imageUrl={terminalMarket.imageUrl}
                                        iconUrl={terminalMarket.iconUrl}
-                                       className="h-16 w-16 rounded-lg"
+                                       className="h-12 w-12 rounded-lg"
                                      />
                                      <span className="min-w-0">
-                                       <span className="block truncate text-xl font-black tracking-tight text-white">{m.name}</span>
-                                       <span className="mt-1 block truncate text-sm font-medium text-zinc-500">
+                                       <span className="block truncate text-lg font-black tracking-tight text-white">{m.name}</span>
+                                       <span className="mt-0.5 block truncate text-xs font-medium text-zinc-500">
                                          {m.platforms} Venue{m.platforms === 1 ? '' : 's'} <span className="mx-1">·</span> {m.vol}
                                        </span>
                                      </span>
                                    </button>
                                    <div className="flex shrink-0 items-center gap-4">
-                                     <span className="min-w-[76px] text-right text-3xl font-black tracking-tight text-white">{displayPriceLabel(rowProbability, marketDiagnosticsEnabled)}</span>
+                                     <span className="min-w-[68px] text-right text-2xl font-black tracking-tight text-white">{displayPriceLabel(rowProbability, marketDiagnosticsEnabled)}</span>
                                      <button
                                        type="button"
                                        onClick={() => selectTicketOutcome('yes', m.id)}
-                                       className="flex h-11 min-w-[150px] items-center justify-center gap-2 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-5 text-base font-black text-emerald-400 transition-colors hover:bg-emerald-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
+                                       className="flex h-10 min-w-[132px] items-center justify-center gap-2 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-4 text-sm font-black text-emerald-400 transition-colors hover:bg-emerald-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
                                      >
                                        <VenueLogo id={normalizeVenueId(rowYesVenue)} label={formatVenueLabel(rowYesVenue)} className="h-4 w-4 rounded-full" />
                                        Yes {displayPriceLabel(rowYesPrice, marketDiagnosticsEnabled)}
@@ -6067,7 +6067,7 @@ export const InfraTradingTerminal = ({
                                      <button
                                        type="button"
                                        onClick={() => selectTicketOutcome('no', m.id)}
-                                       className="flex h-11 min-w-[150px] items-center justify-center gap-2 rounded-full bg-zinc-900 px-5 text-base font-black text-white transition-colors hover:bg-zinc-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
+                                       className="flex h-10 min-w-[132px] items-center justify-center gap-2 rounded-full bg-zinc-900 px-4 text-sm font-black text-white transition-colors hover:bg-zinc-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
                                      >
                                        <VenueLogo id={normalizeVenueId(rowNoVenue)} label={formatVenueLabel(rowNoVenue)} className="h-4 w-4 rounded-full" />
                                        No {displayPriceLabel(rowNoPrice, marketDiagnosticsEnabled)}
@@ -6085,25 +6085,26 @@ export const InfraTradingTerminal = ({
                                  <div className="flex border-b border-zinc-800 bg-[#151517]">
                                    <button
                                      type="button"
-                                     className="h-14 border-b-2 border-orange-500 px-7 text-lg font-semibold text-orange-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
+                                     className="h-11 border-b-2 border-orange-500 px-6 text-base font-semibold text-orange-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
                                    >
                                      Order Book
                                    </button>
                                    <button
                                      type="button"
-                                     className="h-14 border-b-2 border-transparent px-7 text-lg font-semibold text-zinc-100 transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
+                                     className="h-11 border-b-2 border-transparent px-6 text-base font-semibold text-zinc-100 transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
                                      onClick={() => focusTerminalOutcomeOrderbook(m.id)}
                                    >
                                      Graph
                                    </button>
                                  </div>
-                                 <div className="grid grid-cols-[1.1fr_0.9fr_0.9fr_0.9fr] border-b border-zinc-800 bg-[#151517] px-4 py-3 text-[12px] font-bold uppercase tracking-[0.14em] text-zinc-500">
+                                 <div className="grid grid-cols-[1.1fr_0.9fr_0.9fr_0.9fr] border-b border-zinc-800 bg-[#151517] px-4 py-2.5 text-[11px] font-bold uppercase tracking-[0.14em] text-zinc-500">
                                    <span>Trade Yes</span>
                                    <span>Price</span>
                                    <span className="text-right">Shares</span>
                                    <span className="text-right">Total</span>
                                  </div>
-                                 <div className="max-h-[500px] overflow-y-auto font-mono custom-scrollbar">
+                                 <div className="max-h-[380px] overflow-y-auto font-mono custom-scrollbar">
+                                   <div className="min-h-[116px]">
                                    {orderbookLoading && !orderbook && (
                                      <div className="px-4 py-8 text-center text-[11px] font-bold uppercase tracking-[0.18em] text-zinc-500">Loading live book</div>
                                    )}
@@ -6114,8 +6115,8 @@ export const InfraTradingTerminal = ({
                                      <div className="px-4 py-8 text-center text-[11px] font-semibold text-zinc-500">Updating live prices.</div>
                                    )}
                                    {orderbook?.asks.slice().reverse().map((level, i) => (
-                                     <div key={`inline-card-ask-${level.venue}-${level.price}-${i}`} className="grid grid-cols-[1.1fr_0.9fr_0.9fr_0.9fr] items-stretch text-base hover:bg-zinc-800/50">
-                                       <span className="relative flex min-h-11 items-center overflow-hidden px-4">
+                                     <div key={`inline-card-ask-${level.venue}-${level.price}-${i}`} className="grid grid-cols-[1.1fr_0.9fr_0.9fr_0.9fr] items-stretch text-sm hover:bg-zinc-800/50">
+                                       <span className="relative flex min-h-9 items-center overflow-hidden px-4">
                                          <span className="absolute inset-y-0 left-0 bg-red-500/10" style={{ width: `${Math.min(76, 18 + i * 10)}%` }} />
                                          {i === 0 && <span className="relative rounded-md border border-red-500/40 bg-red-500/10 px-2 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-red-300">Asks</span>}
                                        </span>
@@ -6127,15 +6128,16 @@ export const InfraTradingTerminal = ({
                                        <span className="px-4 text-right font-bold text-zinc-100">{formatBookLevelNotional(level)}</span>
                                      </div>
                                    ))}
-                                   <div className="grid grid-cols-[1.1fr_0.9fr_0.9fr_0.9fr] border-y border-zinc-800 bg-[#151517] px-4 py-2.5 text-base font-semibold text-zinc-100">
+                                   </div>
+                                   <div className="grid grid-cols-[1.1fr_0.9fr_0.9fr_0.9fr] border-y border-zinc-800 bg-[#151517] px-4 py-2 text-sm font-semibold text-zinc-100">
                                      <span>Last: Yes {formatBookPrice(orderbook?.midpoint)}</span>
                                      <span>Spread: {formatBookPrice(orderbook?.spread)}</span>
                                      <span />
                                      <span />
                                    </div>
                                    {orderbook?.bids.map((level, i) => (
-                                     <div key={`inline-card-bid-${level.venue}-${level.price}-${i}`} className="grid grid-cols-[1.1fr_0.9fr_0.9fr_0.9fr] items-stretch text-base hover:bg-zinc-800/50">
-                                       <span className="relative flex min-h-11 items-center overflow-hidden px-4">
+                                     <div key={`inline-card-bid-${level.venue}-${level.price}-${i}`} className="grid grid-cols-[1.1fr_0.9fr_0.9fr_0.9fr] items-stretch text-sm hover:bg-zinc-800/50">
+                                       <span className="relative flex min-h-9 items-center overflow-hidden px-4">
                                          <span className="absolute inset-y-0 left-0 bg-emerald-500/10" style={{ width: `${Math.min(78, 62 - i * 8)}%` }} />
                                          {i === 0 && <span className="relative rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-emerald-300">Bids</span>}
                                        </span>
