@@ -135,6 +135,7 @@ type ToastPosition = 'top-left' | 'top-center' | 'top-right' | 'bottom-left' | '
 
 const HOME_MARKET_INITIAL_LIMIT = 8;
 const HOME_MARKET_LOAD_MORE_SIZE = 8;
+const HOME_MARKET_SOURCE_PAGE_SIZE = 32;
 const MARKET_PAGE_SIZE = 60;
 const MARKET_CATALOG_FIRST_CURSOR = '0';
 const MARKET_LIVE_PRICE_CHUNK_SIZE = 18;
@@ -1192,7 +1193,6 @@ export const DashboardV2Mockup = ({
   const [marketsError, setMarketsError] = useState<string | null>(null);
   const [marketRows, setMarketRows] = useState<DashboardMarketRow[]>([]);
   const [marketQuotes, setMarketQuotes] = useState<Record<string, DashboardMarketQuote>>({});
-  const [marketCount, setMarketCount] = useState(0);
   const [marketNextCursor, setMarketNextCursor] = useState<string | null>(null);
   const [marketsHasMore, setMarketsHasMore] = useState(false);
   const [marketsLoadingMore, setMarketsLoadingMore] = useState(false);
@@ -1290,12 +1290,12 @@ export const DashboardV2Mockup = ({
       ? quotedMarketRows.filter((market) => market.quoteRequired).length
       : livePriced;
     return {
-      routeable: marketCount || routeable,
+      routeable,
       crossVenue,
       routePreviewRequired,
       livePriced,
     };
-  }, [dashboardDiagnosticsEnabled, marketCount, quotedMarketRows]);
+  }, [dashboardDiagnosticsEnabled, quotedMarketRows]);
   const portfolioCashTotal = portfolioBalances.reduce((sum, balance) => {
     const parsed = Number(balance.availableAmount ?? balance.readyAmount ?? 0);
     return Number.isFinite(parsed) ? sum + parsed : sum;
@@ -1457,7 +1457,7 @@ export const DashboardV2Mockup = ({
         category: filterCategory,
         cursor: MARKET_CATALOG_FIRST_CURSOR,
         search: searchQuery.trim() || undefined,
-        limit: activePage === 'markets' ? MARKET_PAGE_SIZE : HOME_MARKET_INITIAL_LIMIT,
+        limit: activePage === 'markets' ? MARKET_PAGE_SIZE : HOME_MARKET_SOURCE_PAGE_SIZE,
         quoteReadyOnly: true,
         routeCoverage: 'all',
         view: 'compact',
@@ -1465,7 +1465,6 @@ export const DashboardV2Mockup = ({
         .then((response) => {
           if (cancelled) return;
           setMarketRows(mapCatalogMarketsToDashboardRows(response.markets));
-          setMarketCount(response.count);
           setMarketNextCursor(response.nextCursor ?? null);
           setMarketsHasMore(Boolean(response.hasMore));
         })
@@ -1473,7 +1472,6 @@ export const DashboardV2Mockup = ({
           if (cancelled) return;
           setMarketsError(toSafeErrorMessage(error, 'Market catalog is unavailable right now.'));
           setMarketRows([]);
-          setMarketCount(0);
           setMarketNextCursor(null);
           setMarketsHasMore(false);
         })
@@ -1497,7 +1495,7 @@ export const DashboardV2Mockup = ({
         category: filterCategory,
         cursor: marketNextCursor,
         search: searchQuery.trim() || undefined,
-        limit: activePage === 'markets' ? MARKET_PAGE_SIZE : HOME_MARKET_LOAD_MORE_SIZE,
+        limit: activePage === 'markets' ? MARKET_PAGE_SIZE : HOME_MARKET_SOURCE_PAGE_SIZE,
         quoteReadyOnly: true,
         routeCoverage: 'all',
         view: 'compact',
@@ -1508,7 +1506,6 @@ export const DashboardV2Mockup = ({
         for (const row of nextRows) byId.set(row.id, row);
         return [...byId.values()];
       });
-      setMarketCount(response.count);
       setMarketNextCursor(response.nextCursor ?? null);
       setMarketsHasMore(Boolean(response.hasMore));
     } catch (error) {
