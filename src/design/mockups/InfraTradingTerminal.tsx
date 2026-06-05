@@ -6030,6 +6030,127 @@ export const InfraTradingTerminal = ({
                            const rowProbability = isSelectedOutcome ? selectedOutcomeBookDisplay.probability ?? m.prob : m.prob;
                            const rowYesVenue = isSelectedOutcome ? selectedOutcomeBookDisplay.yesVenue ?? primaryVenue : primaryVenue;
                            const rowNoVenue = isSelectedOutcome ? selectedOutcomeBookDisplay.noVenue ?? primaryVenue : primaryVenue;
+                           if (expandedOutcomeId === m.id) {
+                             return (
+                               <div key={m.id} className="overflow-hidden rounded-2xl border border-zinc-800 bg-[#151517]">
+                                 <div className="flex items-center justify-between gap-4 border-b border-zinc-800 px-6 py-4">
+                                   <button
+                                     type="button"
+                                     onClick={() => focusTerminalOutcomeOrderbook(m.id)}
+                                     className="flex min-w-0 flex-1 items-center gap-4 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
+                                     aria-pressed
+                                   >
+                                     <TerminalMarketThumb
+                                       title={m.name}
+                                       icon={terminalMarket.icon}
+                                       imageUrl={terminalMarket.imageUrl}
+                                       iconUrl={terminalMarket.iconUrl}
+                                       className="h-16 w-16 rounded-lg"
+                                     />
+                                     <span className="min-w-0">
+                                       <span className="block truncate text-xl font-black tracking-tight text-white">{m.name}</span>
+                                       <span className="mt-1 block truncate text-sm font-medium text-zinc-500">
+                                         {m.platforms} Venue{m.platforms === 1 ? '' : 's'} <span className="mx-1">·</span> {m.vol}
+                                       </span>
+                                     </span>
+                                   </button>
+                                   <div className="flex shrink-0 items-center gap-4">
+                                     <span className="min-w-[76px] text-right text-3xl font-black tracking-tight text-white">{displayPriceLabel(rowProbability, marketDiagnosticsEnabled)}</span>
+                                     <button
+                                       type="button"
+                                       onClick={() => selectTicketOutcome('yes', m.id)}
+                                       className="flex h-11 min-w-[150px] items-center justify-center gap-2 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-5 text-base font-black text-emerald-400 transition-colors hover:bg-emerald-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
+                                     >
+                                       <VenueLogo id={normalizeVenueId(rowYesVenue)} label={formatVenueLabel(rowYesVenue)} className="h-4 w-4 rounded-full" />
+                                       Yes {displayPriceLabel(rowYesPrice, marketDiagnosticsEnabled)}
+                                     </button>
+                                     <button
+                                       type="button"
+                                       onClick={() => selectTicketOutcome('no', m.id)}
+                                       className="flex h-11 min-w-[150px] items-center justify-center gap-2 rounded-full bg-zinc-900 px-5 text-base font-black text-white transition-colors hover:bg-zinc-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
+                                     >
+                                       <VenueLogo id={normalizeVenueId(rowNoVenue)} label={formatVenueLabel(rowNoVenue)} className="h-4 w-4 rounded-full" />
+                                       No {displayPriceLabel(rowNoPrice, marketDiagnosticsEnabled)}
+                                     </button>
+                                     <button
+                                       type="button"
+                                       onClick={() => setExpandedOutcomeId(null)}
+                                       aria-label={`Close ${m.name} orderbook`}
+                                       className="flex h-10 w-10 items-center justify-center rounded-lg text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
+                                     >
+                                       <ChevronDown className="h-4 w-4 rotate-180" />
+                                     </button>
+                                   </div>
+                                 </div>
+                                 <div className="flex border-b border-zinc-800 bg-[#151517]">
+                                   <button
+                                     type="button"
+                                     className="h-14 border-b-2 border-orange-500 px-7 text-lg font-semibold text-orange-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
+                                   >
+                                     Order Book
+                                   </button>
+                                   <button
+                                     type="button"
+                                     className="h-14 border-b-2 border-transparent px-7 text-lg font-semibold text-zinc-100 transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
+                                     onClick={() => focusTerminalOutcomeOrderbook(m.id)}
+                                   >
+                                     Graph
+                                   </button>
+                                 </div>
+                                 <div className="grid grid-cols-[1.1fr_0.9fr_0.9fr_0.9fr] border-b border-zinc-800 bg-[#151517] px-4 py-3 text-[12px] font-bold uppercase tracking-[0.14em] text-zinc-500">
+                                   <span>Trade Yes</span>
+                                   <span>Price</span>
+                                   <span className="text-right">Shares</span>
+                                   <span className="text-right">Total</span>
+                                 </div>
+                                 <div className="max-h-[500px] overflow-y-auto font-mono custom-scrollbar">
+                                   {orderbookLoading && !orderbook && (
+                                     <div className="px-4 py-8 text-center text-[11px] font-bold uppercase tracking-[0.18em] text-zinc-500">Loading live book</div>
+                                   )}
+                                   {marketDiagnosticsEnabled && orderbookError && inlineOrderbookLiveVenueCount === 0 && (
+                                     <div className="mx-4 my-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] font-semibold text-amber-200">{orderbookError}</div>
+                                   )}
+                                   {!marketDiagnosticsEnabled && !orderbookLoading && inlineOrderbookLiveVenueCount === 0 && (!orderbook || (orderbook.asks.length === 0 && orderbook.bids.length === 0)) && (
+                                     <div className="px-4 py-8 text-center text-[11px] font-semibold text-zinc-500">Updating live prices.</div>
+                                   )}
+                                   {orderbook?.asks.slice().reverse().map((level, i) => (
+                                     <div key={`inline-card-ask-${level.venue}-${level.price}-${i}`} className="grid grid-cols-[1.1fr_0.9fr_0.9fr_0.9fr] items-stretch text-base hover:bg-zinc-800/50">
+                                       <span className="relative flex min-h-11 items-center overflow-hidden px-4">
+                                         <span className="absolute inset-y-0 left-0 bg-red-500/10" style={{ width: `${Math.min(76, 18 + i * 10)}%` }} />
+                                         {i === 0 && <span className="relative rounded-md border border-red-500/40 bg-red-500/10 px-2 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-red-300">Asks</span>}
+                                       </span>
+                                       <span className="flex items-center gap-2 px-4 font-black text-pink-400">
+                                         {formatBookPrice(level.price)}
+                                         <VenueLogo id={normalizeVenueId(level.venue)} label={formatVenueLabel(level.venue)} className="h-4 w-4 rounded-full" />
+                                       </span>
+                                       <span className="px-4 text-right font-semibold text-zinc-100">{formatBookLevelSize(level)}</span>
+                                       <span className="px-4 text-right font-bold text-zinc-100">{formatBookLevelNotional(level)}</span>
+                                     </div>
+                                   ))}
+                                   <div className="grid grid-cols-[1.1fr_0.9fr_0.9fr_0.9fr] border-y border-zinc-800 bg-[#151517] px-4 py-2.5 text-base font-semibold text-zinc-100">
+                                     <span>Last: Yes {formatBookPrice(orderbook?.midpoint)}</span>
+                                     <span>Spread: {formatBookPrice(orderbook?.spread)}</span>
+                                     <span />
+                                     <span />
+                                   </div>
+                                   {orderbook?.bids.map((level, i) => (
+                                     <div key={`inline-card-bid-${level.venue}-${level.price}-${i}`} className="grid grid-cols-[1.1fr_0.9fr_0.9fr_0.9fr] items-stretch text-base hover:bg-zinc-800/50">
+                                       <span className="relative flex min-h-11 items-center overflow-hidden px-4">
+                                         <span className="absolute inset-y-0 left-0 bg-emerald-500/10" style={{ width: `${Math.min(78, 62 - i * 8)}%` }} />
+                                         {i === 0 && <span className="relative rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-emerald-300">Bids</span>}
+                                       </span>
+                                       <span className="flex items-center gap-2 px-4 font-black text-emerald-400">
+                                         {formatBookPrice(level.price)}
+                                         <VenueLogo id={normalizeVenueId(level.venue)} label={formatVenueLabel(level.venue)} className="h-4 w-4 rounded-full" />
+                                       </span>
+                                       <span className="px-4 text-right font-semibold text-zinc-100">{formatBookLevelSize(level)}</span>
+                                       <span className="px-4 text-right font-bold text-zinc-100">{formatBookLevelNotional(level)}</span>
+                                     </div>
+                                   ))}
+                                 </div>
+                               </div>
+                             );
+                           }
                            return (
                             <div key={m.id} className="rounded-xl">
                             <div
@@ -6104,70 +6225,6 @@ export const InfraTradingTerminal = ({
                                           </button>
                                      </div>
                              </div>
-                             {expandedOutcomeId === m.id && (
-                               <div className="mx-5 mb-3 overflow-hidden rounded-xl border border-zinc-800 bg-[#151517]">
-                                 <div className="flex border-b border-zinc-800 bg-[#121214]">
-                                   <button
-                                     type="button"
-                                     className="h-12 border-b-2 border-orange-500 px-6 text-sm font-semibold text-orange-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
-                                   >
-                                     Order Book
-                                   </button>
-                                   <button
-                                     type="button"
-                                     className="h-12 border-b-2 border-transparent px-6 text-sm font-semibold text-zinc-200 transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
-                                     onClick={() => focusTerminalOutcomeOrderbook(m.id)}
-                                   >
-                                     Graph
-                                   </button>
-                                 </div>
-                                 <div className="grid grid-cols-[1.1fr_0.9fr_0.9fr_0.9fr] border-b border-zinc-800 bg-[#141416] px-4 py-3 text-[11px] font-bold uppercase tracking-[0.14em] text-zinc-500">
-                                   <span>Trade Yes</span>
-                                   <span>Price</span>
-                                   <span className="text-right">Shares</span>
-                                   <span className="text-right">Total</span>
-                                 </div>
-                                 <div className="max-h-[420px] overflow-y-auto py-2 font-mono custom-scrollbar">
-                                   {orderbookLoading && !orderbook && (
-                                     <div className="px-4 py-8 text-center text-[11px] font-bold uppercase tracking-[0.18em] text-zinc-500">Loading live book</div>
-                                   )}
-                                   {marketDiagnosticsEnabled && orderbookError && inlineOrderbookLiveVenueCount === 0 && (
-                                     <div className="mx-4 my-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] font-semibold text-amber-200">{orderbookError}</div>
-                                   )}
-                                   {!marketDiagnosticsEnabled && !orderbookLoading && inlineOrderbookLiveVenueCount === 0 && (!orderbook || (orderbook.asks.length === 0 && orderbook.bids.length === 0)) && (
-                                     <div className="px-4 py-8 text-center text-[11px] font-semibold text-zinc-500">Updating live prices.</div>
-                                   )}
-                                   {orderbook?.asks.slice().reverse().map((level, i) => (
-                                     <div key={`inline-ask-${level.venue}-${level.price}-${i}`} className={`grid grid-cols-[1.1fr_0.9fr_0.9fr_0.9fr] items-center px-4 py-2 text-sm hover:bg-zinc-800/50 ${i < 4 ? 'bg-[#E52B50]/5' : ''}`}>
-                                       <span>{i === 0 && <span className="rounded-md border border-red-500/40 bg-red-500/10 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-red-300">Asks</span>}</span>
-                                       <span className="flex items-center gap-2 font-bold text-pink-400">
-                                         {formatBookPrice(level.price)}
-                                         <VenueLogo id={normalizeVenueId(level.venue)} label={formatVenueLabel(level.venue)} className={tinyVenueClass} />
-                                       </span>
-                                       <span className="text-right font-semibold text-zinc-200">{formatBookLevelSize(level)}</span>
-                                       <span className="text-right font-bold text-zinc-100">{formatBookLevelNotional(level)}</span>
-                                     </div>
-                                   ))}
-                                   <div className="grid grid-cols-[1.1fr_0.9fr_0.9fr_0.9fr] border-y border-zinc-800 bg-[#121214] px-4 py-2 text-sm font-semibold text-zinc-200">
-                                     <span>Last: Yes {formatBookPrice(orderbook?.midpoint)}</span>
-                                     <span>Spread: {formatBookPrice(orderbook?.spread)}</span>
-                                     <span />
-                                     <span />
-                                   </div>
-                                   {orderbook?.bids.map((level, i) => (
-                                     <div key={`inline-bid-${level.venue}-${level.price}-${i}`} className={`grid grid-cols-[1.1fr_0.9fr_0.9fr_0.9fr] items-center px-4 py-2 text-sm hover:bg-zinc-800/50 ${i < 4 ? 'bg-emerald-500/5' : ''}`}>
-                                       <span>{i === 0 && <span className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-emerald-300">Bids</span>}</span>
-                                       <span className="flex items-center gap-2 font-bold text-emerald-400">
-                                         {formatBookPrice(level.price)}
-                                         <VenueLogo id={normalizeVenueId(level.venue)} label={formatVenueLabel(level.venue)} className={tinyVenueClass} />
-                                       </span>
-                                       <span className="text-right font-semibold text-zinc-200">{formatBookLevelSize(level)}</span>
-                                       <span className="text-right font-bold text-zinc-100">{formatBookLevelNotional(level)}</span>
-                                     </div>
-                                   ))}
-                                 </div>
-                               </div>
-                             )}
                             </div>
                            );
                          })}
