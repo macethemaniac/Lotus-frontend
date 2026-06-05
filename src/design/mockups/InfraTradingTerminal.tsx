@@ -2960,8 +2960,9 @@ export const InfraTradingTerminal = ({
   React.useEffect(() => {
     selectedOutcomeRef.current = selectedOutcome;
   }, [selectedOutcome]);
-  const orderbookMarketId = selectedOutcomeMarketId ?? terminalMarketId;
-  const orderbookQuoteOutcomeId = selectedQuoteOutcomeId ?? (marketType === 'binary' ? 'YES' : null);
+  const orderbookActive = Boolean(selectedOutcome && expandedOutcomeId === selectedOutcome.id);
+  const orderbookMarketId = orderbookActive ? selectedOutcomeMarketId ?? terminalMarketId : null;
+  const orderbookQuoteOutcomeId = orderbookActive ? selectedQuoteOutcomeId ?? (marketType === 'binary' ? 'YES' : null) : null;
   const orderbookStreamMarketIds = useMemo(
     () => selectedOutcomeCanonicalMarketIds.length > 0
       ? selectedOutcomeCanonicalMarketIds
@@ -3090,6 +3091,12 @@ export const InfraTradingTerminal = ({
     setExpandedOutcomeId(outcomeId);
     setBottomTab('Outcomes');
   }, []);
+
+  const inlineOrderbookLiveVenueCount = useMemo(() => {
+    return (orderbook?.venues ?? []).filter((venue) => {
+      return venue.blockers.length === 0 && (venue.bids.length > 0 || venue.asks.length > 0 || Boolean(venue.bestBid || venue.bestAsk));
+    }).length;
+  }, [orderbook?.venues]);
 
   const refreshOutcomes = useCallback(async () => {
     const fallbackRows = initialOutcomeRows(terminalMarket);
@@ -5825,11 +5832,11 @@ export const InfraTradingTerminal = ({
             </div>
          </div>
          
-         {/* Chart & Order Book Grid */}
-         <div className="min-h-[680px] lg:h-[540px] lg:min-h-0 2xl:h-[620px] bg-[#121214] border border-zinc-800 rounded-xl flex flex-col lg:flex-row overflow-hidden relative shrink-0">
+         {/* Chart */}
+         <div className="min-h-[360px] lg:h-[440px] lg:min-h-0 2xl:h-[500px] bg-[#121214] border border-zinc-800 rounded-xl flex flex-col overflow-hidden relative shrink-0">
             
             {/* Main Chart Section */}
-            <div className="min-h-[320px] flex-1 flex flex-col relative border-b border-zinc-800 p-4 min-w-0 lg:min-h-0 lg:border-b-0 lg:border-r">
+            <div className="min-h-[320px] flex-1 flex flex-col relative p-4 min-w-0 lg:min-h-0">
                <LiveCanonicalChart
                  marketId={selectedOutcomeMarketId}
                  outcomeId={selectedQuoteOutcomeId}
@@ -5839,6 +5846,7 @@ export const InfraTradingTerminal = ({
             </div>
 
             {/* Order Book Panel (Right side of middle container) */}
+            {false && (
             <div className="min-h-[320px] w-full bg-[#121214] flex flex-col text-[10px] font-mono shrink-0 lg:min-h-0 lg:w-[clamp(360px,30vw,460px)] 2xl:w-[clamp(400px,24vw,520px)]">
                <div className="p-3 border-b border-zinc-800 flex justify-between items-center bg-zinc-950/30">
                    <div className="flex items-center gap-3">
@@ -5910,12 +5918,12 @@ export const InfraTradingTerminal = ({
                          : 'Updating live prices.'}
                      </div>
                    )}
-                   {!marketDiagnosticsEnabled && !orderbookLoading && orderbookLiveVenueCount === 0 && orderbookSnapshotStatus !== 'stale' && orderbookSnapshotStatus !== 'resyncing' && (!displayOrderbook || (displayOrderbook.asks.length === 0 && displayOrderbook.bids.length === 0)) && (
+                   {!marketDiagnosticsEnabled && !orderbookLoading && orderbookLiveVenueCount === 0 && orderbookSnapshotStatus !== 'stale' && orderbookSnapshotStatus !== 'resyncing' && ((displayOrderbook?.asks.length ?? 0) === 0 && (displayOrderbook?.bids.length ?? 0) === 0) && (
                      <div className="px-4 py-6 text-center text-[11px] font-semibold text-zinc-500">
                        Updating live prices.
                      </div>
                    )}
-                   {marketDiagnosticsEnabled && !orderbookLoading && !orderbookError && displayOrderbook && displayOrderbook.asks.length === 0 && displayOrderbook.bids.length === 0 && (
+                   {marketDiagnosticsEnabled && !orderbookLoading && !orderbookError && displayOrderbook !== null && (displayOrderbook?.asks.length ?? 0) === 0 && (displayOrderbook?.bids.length ?? 0) === 0 && (
                      <div className="px-4 py-6 text-center text-[11px] font-semibold text-zinc-500">
                        Live quotes reconnecting...
                      </div>
@@ -5982,6 +5990,7 @@ export const InfraTradingTerminal = ({
                    })}
                </div>
             </div>
+            )}
          </div>
 
          {/* Bottom Data Table Section */}
@@ -6015,7 +6024,6 @@ export const InfraTradingTerminal = ({
                          {visibleOutcomeRows.map((m) => {
                            const venues = m.venues.length ? m.venues : marketVenueList;
                            const primaryVenue = m.primaryVenue ?? venues[0] ?? 'lotus';
-                           const alternateVenueQuotes = m.venueQuotes.filter((quote) => quote.venue !== primaryVenue);
                            const isSelectedOutcome = selectedOutcomeId ? selectedOutcomeId === m.id : m.active;
                            const rowYesPrice = isSelectedOutcome ? selectedOutcomeBookDisplay.yesPrice ?? m.yesPrice : m.yesPrice;
                            const rowNoPrice = isSelectedOutcome ? selectedOutcomeBookDisplay.noPrice ?? m.noPrice : m.noPrice;
@@ -6082,7 +6090,11 @@ export const InfraTradingTerminal = ({
                                             type="button"
                                             onClick={(event) => {
                                               event.stopPropagation();
-                                              setExpandedOutcomeId((current) => current === m.id ? null : m.id);
+                                              setExpandedOutcomeId((current) => {
+                                                if (current === m.id) return null;
+                                                setSelectedOutcomeId(m.id);
+                                                return m.id;
+                                              });
                                             }}
                                             aria-label={`Open ${m.name} outcome details`}
                                             className="ml-1 flex h-8 w-8 items-center justify-center rounded-lg text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
@@ -6093,47 +6105,67 @@ export const InfraTradingTerminal = ({
                                      </div>
                              </div>
                              {expandedOutcomeId === m.id && (
-                               <div className="mx-5 mb-2 rounded-xl border border-zinc-800 bg-zinc-950/60 p-3">
-                                 <div className="mb-2 text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500">Other venue prices</div>
-                                 {alternateVenueQuotes.length > 0 ? (
-                                   <div className="flex flex-col gap-2">
-                                     {alternateVenueQuotes.map((quote) => (
-                                       <div key={`${m.id}-${quote.venue}-quote`} className="flex items-center justify-between rounded-lg border border-zinc-800 bg-[#0c0c0e] px-3 py-2">
-                                         <div className="flex items-center gap-2 text-xs font-bold text-zinc-200">
-                                           <VenueLogo id={normalizeVenueId(quote.venue)} label={formatVenueLabel(quote.venue)} className="h-4 w-4 rounded-full" />
-                                           {formatVenueLabel(quote.venue)}
-                                           {marketDiagnosticsEnabled && quote.blocker && <span className="text-[10px] font-medium text-amber-300">{quote.blocker}</span>}
-                                         </div>
-                                         <div className="flex items-center gap-2">
-                                           <button
-                                             type="button"
-                                             onClick={(event) => {
-                                               event.stopPropagation();
-                                               focusTerminalOutcomeOrderbook(m.id);
-                                               selectTicketOutcome('yes', m.id);
-                                             }}
-                                             className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#1A3A34] text-[#4ade80] text-xs font-bold hover:bg-[#204941] transition-colors"
-                                           >
-                                             <VenueLogo id={normalizeVenueId(quote.venue)} label={formatVenueLabel(quote.venue)} className="h-3.5 w-3.5 rounded-full" /> Yes {displayPriceLabel(quote.yesPrice, marketDiagnosticsEnabled)}
-                                           </button>
-                                           <button
-                                             type="button"
-                                             onClick={(event) => {
-                                               event.stopPropagation();
-                                               focusTerminalOutcomeOrderbook(m.id);
-                                               selectTicketOutcome('no', m.id);
-                                             }}
-                                             className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#3F1D24] text-[#f87171] text-xs font-bold hover:bg-[#52252f] transition-colors"
-                                           >
-                                             <VenueLogo id={normalizeVenueId(quote.venue)} label={formatVenueLabel(quote.venue)} className="h-3.5 w-3.5 rounded-full" /> No {displayPriceLabel(quote.noPrice, marketDiagnosticsEnabled)}
-                                           </button>
-                                         </div>
-                                       </div>
-                                     ))}
+                               <div className="mx-5 mb-3 overflow-hidden rounded-xl border border-zinc-800 bg-[#151517]">
+                                 <div className="flex border-b border-zinc-800 bg-[#121214]">
+                                   <button
+                                     type="button"
+                                     className="h-12 border-b-2 border-orange-500 px-6 text-sm font-semibold text-orange-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
+                                   >
+                                     Order Book
+                                   </button>
+                                   <button
+                                     type="button"
+                                     className="h-12 border-b-2 border-transparent px-6 text-sm font-semibold text-zinc-200 transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
+                                     onClick={() => focusTerminalOutcomeOrderbook(m.id)}
+                                   >
+                                     Graph
+                                   </button>
+                                 </div>
+                                 <div className="grid grid-cols-[1.1fr_0.9fr_0.9fr_0.9fr] border-b border-zinc-800 bg-[#141416] px-4 py-3 text-[11px] font-bold uppercase tracking-[0.14em] text-zinc-500">
+                                   <span>Trade Yes</span>
+                                   <span>Price</span>
+                                   <span className="text-right">Shares</span>
+                                   <span className="text-right">Total</span>
+                                 </div>
+                                 <div className="max-h-[420px] overflow-y-auto py-2 font-mono custom-scrollbar">
+                                   {orderbookLoading && !orderbook && (
+                                     <div className="px-4 py-8 text-center text-[11px] font-bold uppercase tracking-[0.18em] text-zinc-500">Loading live book</div>
+                                   )}
+                                   {marketDiagnosticsEnabled && orderbookError && inlineOrderbookLiveVenueCount === 0 && (
+                                     <div className="mx-4 my-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] font-semibold text-amber-200">{orderbookError}</div>
+                                   )}
+                                   {!marketDiagnosticsEnabled && !orderbookLoading && inlineOrderbookLiveVenueCount === 0 && (!orderbook || (orderbook.asks.length === 0 && orderbook.bids.length === 0)) && (
+                                     <div className="px-4 py-8 text-center text-[11px] font-semibold text-zinc-500">Updating live prices.</div>
+                                   )}
+                                   {orderbook?.asks.slice().reverse().map((level, i) => (
+                                     <div key={`inline-ask-${level.venue}-${level.price}-${i}`} className={`grid grid-cols-[1.1fr_0.9fr_0.9fr_0.9fr] items-center px-4 py-2 text-sm hover:bg-zinc-800/50 ${i < 4 ? 'bg-[#E52B50]/5' : ''}`}>
+                                       <span>{i === 0 && <span className="rounded-md border border-red-500/40 bg-red-500/10 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-red-300">Asks</span>}</span>
+                                       <span className="flex items-center gap-2 font-bold text-pink-400">
+                                         {formatBookPrice(level.price)}
+                                         <VenueLogo id={normalizeVenueId(level.venue)} label={formatVenueLabel(level.venue)} className={tinyVenueClass} />
+                                       </span>
+                                       <span className="text-right font-semibold text-zinc-200">{formatBookLevelSize(level)}</span>
+                                       <span className="text-right font-bold text-zinc-100">{formatBookLevelNotional(level)}</span>
+                                     </div>
+                                   ))}
+                                   <div className="grid grid-cols-[1.1fr_0.9fr_0.9fr_0.9fr] border-y border-zinc-800 bg-[#121214] px-4 py-2 text-sm font-semibold text-zinc-200">
+                                     <span>Last: Yes {formatBookPrice(orderbook?.midpoint)}</span>
+                                     <span>Spread: {formatBookPrice(orderbook?.spread)}</span>
+                                     <span />
+                                     <span />
                                    </div>
-                                 ) : (
-                                   <div className="text-xs font-medium text-zinc-500">No additional venue prices returned for this outcome.</div>
-                                 )}
+                                   {orderbook?.bids.map((level, i) => (
+                                     <div key={`inline-bid-${level.venue}-${level.price}-${i}`} className={`grid grid-cols-[1.1fr_0.9fr_0.9fr_0.9fr] items-center px-4 py-2 text-sm hover:bg-zinc-800/50 ${i < 4 ? 'bg-emerald-500/5' : ''}`}>
+                                       <span>{i === 0 && <span className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-emerald-300">Bids</span>}</span>
+                                       <span className="flex items-center gap-2 font-bold text-emerald-400">
+                                         {formatBookPrice(level.price)}
+                                         <VenueLogo id={normalizeVenueId(level.venue)} label={formatVenueLabel(level.venue)} className={tinyVenueClass} />
+                                       </span>
+                                       <span className="text-right font-semibold text-zinc-200">{formatBookLevelSize(level)}</span>
+                                       <span className="text-right font-bold text-zinc-100">{formatBookLevelNotional(level)}</span>
+                                     </div>
+                                   ))}
+                                 </div>
                                </div>
                              )}
                             </div>
