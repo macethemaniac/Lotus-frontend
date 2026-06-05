@@ -4457,8 +4457,10 @@ export const InfraTradingTerminal = ({
     if (orderbookNotFoundKey === requestKey) return;
 
     const localTopics = orderbookStreamMarketIds.map((marketId) => orderbookTopicForSelection(marketId, orderbookQuoteOutcomeId));
-    const loadFallbackOrderbook = async (options: { markWsFresh?: boolean; snapshotOnly?: boolean } = {}) => {
-      if (orderbookRestRecoveryInFlightRef.current) return;
+    const loadFallbackOrderbook = async (
+      options: { markWsFresh?: boolean; snapshotOnly?: boolean } = {}
+    ): Promise<MarketOrderbookResponse | null> => {
+      if (orderbookRestRecoveryInFlightRef.current) return null;
       orderbookRestRecoveryInFlightRef.current = true;
       lastOrderbookRestRecoveryAtRef.current = Date.now();
       try {
@@ -4478,6 +4480,7 @@ export const InfraTradingTerminal = ({
           setOrderbookError(null);
           if (options.markWsFresh) lastOrderbookWsUpdateAtRef.current = Date.now();
         }
+        return response;
       } catch (error) {
         if (!cancelled) {
           orderbookRef.current = null;
@@ -4490,6 +4493,7 @@ export const InfraTradingTerminal = ({
           }
           setOrderbookError(safeMarketDataError(error, 'orderbook'));
         }
+        return null;
       } finally {
         orderbookRestRecoveryInFlightRef.current = false;
         if (!cancelled) setOrderbookLoading(false);
@@ -4509,7 +4513,17 @@ export const InfraTradingTerminal = ({
     };
     void refreshOrderbook();
     orderbookStreamSeqRef.current.clear();
-    void loadFallbackOrderbook({ snapshotOnly: true });
+    void loadFallbackOrderbook({ snapshotOnly: true }).then((response) => {
+      if (
+        cancelled ||
+        lastOrderbookWsUpdateAtRef.current !== null ||
+        hasUsableOrderbookDepth(response) ||
+        hasUsableOrderbookDepth(orderbookRef.current)
+      ) {
+        return;
+      }
+      void loadFallbackOrderbook({ markWsFresh: true });
+    });
     const fallbackTimer = window.setTimeout(() => {
       if (cancelled || lastOrderbookWsUpdateAtRef.current !== null || hasUsableOrderbookDepth(orderbookRef.current)) return;
       void loadFallbackOrderbook({ markWsFresh: true });
