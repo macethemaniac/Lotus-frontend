@@ -80,7 +80,7 @@ import {
 import { ApiClientError } from '@/lib/api/http-client';
 import { openExecutionSocket, type ExecutionTopic, type ExecutionWsState } from '@/lib/ws/execution-ws-client';
 
-const ORDERBOOK_DISPLAY_REST_FALLBACK_DELAY_MS = 6_000;
+const ORDERBOOK_DISPLAY_REST_FALLBACK_DELAY_MS = 1_000;
 const ORDERBOOK_REST_RECOVERY_MIN_INTERVAL_MS = 45_000;
 const ORDERBOOK_STREAM_GAP_RECOVERY_DELAY_MS = 1_500;
 const TERMINAL_CHART_REFRESH_INTERVAL_MS = 60_000;
@@ -4454,7 +4454,7 @@ export const InfraTradingTerminal = ({
     if (orderbookNotFoundKey === requestKey) return;
 
     const localTopics = orderbookStreamMarketIds.map((marketId) => orderbookTopicForSelection(marketId, orderbookQuoteOutcomeId));
-    const loadFallbackOrderbook = async () => {
+    const loadFallbackOrderbook = async (options: { markWsFresh?: boolean } = {}) => {
       if (orderbookRestRecoveryInFlightRef.current) return;
       orderbookRestRecoveryInFlightRef.current = true;
       lastOrderbookRestRecoveryAtRef.current = Date.now();
@@ -4470,7 +4470,7 @@ export const InfraTradingTerminal = ({
           setOrderbookStreamTopics((current) => sameTopicList(current, nextTopics) ? current : nextTopics);
           setOrderbookNotFoundKey(null);
           setOrderbookError(null);
-          lastOrderbookWsUpdateAtRef.current = Date.now();
+          if (options.markWsFresh) lastOrderbookWsUpdateAtRef.current = Date.now();
         }
       } catch (error) {
         if (!cancelled) {
@@ -4503,9 +4503,10 @@ export const InfraTradingTerminal = ({
     };
     void refreshOrderbook();
     orderbookStreamSeqRef.current.clear();
+    void loadFallbackOrderbook();
     const fallbackTimer = window.setTimeout(() => {
-      if (cancelled || lastOrderbookWsUpdateAtRef.current !== null) return;
-      void loadFallbackOrderbook();
+      if (cancelled || lastOrderbookWsUpdateAtRef.current !== null || orderbookRef.current !== null) return;
+      void loadFallbackOrderbook({ markWsFresh: true });
     }, ORDERBOOK_DISPLAY_REST_FALLBACK_DELAY_MS);
     return () => {
       cancelled = true;
