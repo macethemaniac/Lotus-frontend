@@ -3061,6 +3061,35 @@ export const InfraTradingTerminal = ({
     : marketDiagnosticsEnabled
       ? displayOrderbook?.status ?? 'pending'
       : 'updating';
+  const selectedOutcomeBookDisplay = useMemo(() => {
+    if (!orderbook) {
+      return {
+        yesPrice: null as string | null,
+        noPrice: null as string | null,
+        probability: null as string | null,
+        yesVenue: null as string | null,
+        noVenue: null as string | null,
+      };
+    }
+    const bestAsk = orderbookNumericValue(orderbook.bestAsk);
+    const bestBid = orderbookNumericValue(orderbook.bestBid);
+    const midpoint = orderbookNumericValue(orderbook.midpoint);
+    const normalizedBestBid = bestBid !== null && bestBid > 1 ? bestBid / 100 : bestBid;
+    const normalizedMidpoint = midpoint !== null && midpoint > 1 ? midpoint / 100 : midpoint;
+    return {
+      yesPrice: bestAsk !== null ? formatProbabilityPrice(bestAsk) : null,
+      noPrice: normalizedBestBid !== null && marketType === 'binary' ? formatProbabilityPrice(1 - normalizedBestBid) : null,
+      probability: normalizedMidpoint !== null ? formatProbabilityPercent(normalizedMidpoint) : null,
+      yesVenue: orderbook.asks[0]?.venue ?? null,
+      noVenue: orderbook.bids[0]?.venue ?? null,
+    };
+  }, [marketType, orderbook]);
+
+  const focusTerminalOutcomeOrderbook = useCallback((outcomeId: string) => {
+    setSelectedOutcomeId(outcomeId);
+    setExpandedOutcomeId(outcomeId);
+    setBottomTab('Outcomes');
+  }, []);
 
   const refreshOutcomes = useCallback(async () => {
     const fallbackRows = initialOutcomeRows(terminalMarket);
@@ -5987,13 +6016,24 @@ export const InfraTradingTerminal = ({
                            const venues = m.venues.length ? m.venues : marketVenueList;
                            const primaryVenue = m.primaryVenue ?? venues[0] ?? 'lotus';
                            const alternateVenueQuotes = m.venueQuotes.filter((quote) => quote.venue !== primaryVenue);
+                           const isSelectedOutcome = selectedOutcomeId ? selectedOutcomeId === m.id : m.active;
+                           const rowYesPrice = isSelectedOutcome ? selectedOutcomeBookDisplay.yesPrice ?? m.yesPrice : m.yesPrice;
+                           const rowNoPrice = isSelectedOutcome ? selectedOutcomeBookDisplay.noPrice ?? m.noPrice : m.noPrice;
+                           const rowProbability = isSelectedOutcome ? selectedOutcomeBookDisplay.probability ?? m.prob : m.prob;
+                           const rowYesVenue = isSelectedOutcome ? selectedOutcomeBookDisplay.yesVenue ?? primaryVenue : primaryVenue;
+                           const rowNoVenue = isSelectedOutcome ? selectedOutcomeBookDisplay.noVenue ?? primaryVenue : primaryVenue;
                            return (
                             <div key={m.id} className="rounded-xl">
                             <div
-                              onClick={() => setSelectedOutcomeId(m.id)}
-                              className={`px-5 py-2.5 rounded-xl flex items-center justify-between transition-colors cursor-pointer ${(selectedOutcomeId ? selectedOutcomeId === m.id : m.active) ? 'border border-emerald-500/30 bg-emerald-500/5 shadow-[0_0_15px_rgba(16,185,129,0.05)]' : 'border border-transparent hover:border-zinc-800 hover:bg-zinc-900/30 bg-transparent'}`}
+                              className={`w-full px-5 py-2.5 rounded-xl flex items-center justify-between gap-4 transition-colors ${(isSelectedOutcome) ? 'border border-emerald-500/30 bg-emerald-500/5 shadow-[0_0_15px_rgba(16,185,129,0.05)]' : 'border border-transparent hover:border-zinc-800 hover:bg-zinc-900/30 bg-transparent'}`}
                             >
-                                 <div className="flex items-center gap-5">
+                                 <button
+                                   type="button"
+                                   onClick={() => focusTerminalOutcomeOrderbook(m.id)}
+                                   className="flex min-w-0 flex-1 items-center justify-between gap-6 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
+                                   aria-pressed={isSelectedOutcome}
+                                 >
+                                   <div className="flex min-w-0 items-center gap-5">
                                      <div className="flex items-center [&>div:first-child]:hidden">
                                          <div className="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center border-[2.5px] border-[#121214] text-white text-[11px] font-bold z-30 relative shadow-sm">L</div>
                                          {venues.slice(0, 4).map((venue, index) => (
@@ -6005,38 +6045,38 @@ export const InfraTradingTerminal = ({
                                            />
                                          ))}
                                      </div>
-                                     <div>
-                                         <div className="text-zinc-100 font-bold text-base tracking-wide leading-tight">{m.name}</div>
-                                         <div className="text-zinc-500 text-xs mt-0.5 font-medium">
+                                     <div className="min-w-0">
+                                         <span className="block truncate text-zinc-100 font-bold text-base tracking-wide leading-tight">{m.name}</span>
+                                         <span className="block truncate text-zinc-500 text-xs mt-0.5 font-medium">
                                            {m.vol} <span className="mx-1">-</span> {m.platforms} venues
                                            {marketDiagnosticsEnabled && m.blocker && <span className="ml-2 text-amber-300">{m.blocker}</span>}
-                                         </div>
+                                         </span>
                                      </div>
-                                 </div>
-                                 <div className="flex items-center gap-6">
-                                     <div className="text-white font-black text-xl w-14 text-right tracking-tight">{displayPriceLabel(m.prob, marketDiagnosticsEnabled)}</div>
+                                   </div>
+                                   <span className="shrink-0 text-white font-black text-xl w-14 text-right tracking-tight">{displayPriceLabel(rowProbability, marketDiagnosticsEnabled)}</span>
+                                 </button>
                                      <div className="flex items-center gap-2">
                                           <button
                                             type="button"
                                             onClick={(event) => {
                                               event.stopPropagation();
-                                              setSelectedOutcomeId(m.id);
+                                              focusTerminalOutcomeOrderbook(m.id);
                                               selectTicketOutcome('yes', m.id);
                                             }}
                                             className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#1A3A34] text-[#4ade80] text-xs font-bold hover:bg-[#204941] transition-colors"
                                           >
-                                               <VenueLogo id={normalizeVenueId(primaryVenue)} label={formatVenueLabel(primaryVenue)} className="h-3.5 w-3.5 rounded-full" /> Yes {displayPriceLabel(m.yesPrice, marketDiagnosticsEnabled)}
+                                               <VenueLogo id={normalizeVenueId(rowYesVenue)} label={formatVenueLabel(rowYesVenue)} className="h-3.5 w-3.5 rounded-full" /> Yes {displayPriceLabel(rowYesPrice, marketDiagnosticsEnabled)}
                                           </button>
                                           <button
                                             type="button"
                                             onClick={(event) => {
                                               event.stopPropagation();
-                                              setSelectedOutcomeId(m.id);
+                                              focusTerminalOutcomeOrderbook(m.id);
                                               selectTicketOutcome('no', m.id);
                                             }}
                                             className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#3F1D24] text-[#f87171] text-xs font-bold hover:bg-[#52252f] transition-colors"
                                           >
-                                               <VenueLogo id={normalizeVenueId(primaryVenue)} label={formatVenueLabel(primaryVenue)} className="h-3.5 w-3.5 rounded-full" /> No {displayPriceLabel(m.noPrice, marketDiagnosticsEnabled)}
+                                               <VenueLogo id={normalizeVenueId(rowNoVenue)} label={formatVenueLabel(rowNoVenue)} className="h-3.5 w-3.5 rounded-full" /> No {displayPriceLabel(rowNoPrice, marketDiagnosticsEnabled)}
                                           </button>
                                           <button
                                             type="button"
@@ -6051,7 +6091,6 @@ export const InfraTradingTerminal = ({
                                             <ChevronDown className={`w-4 h-4 transition-transform ${expandedOutcomeId === m.id ? 'rotate-180' : ''}`} />
                                           </button>
                                      </div>
-                                 </div>
                              </div>
                              {expandedOutcomeId === m.id && (
                                <div className="mx-5 mb-2 rounded-xl border border-zinc-800 bg-zinc-950/60 p-3">
@@ -6070,7 +6109,7 @@ export const InfraTradingTerminal = ({
                                              type="button"
                                              onClick={(event) => {
                                                event.stopPropagation();
-                                               setSelectedOutcomeId(m.id);
+                                               focusTerminalOutcomeOrderbook(m.id);
                                                selectTicketOutcome('yes', m.id);
                                              }}
                                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#1A3A34] text-[#4ade80] text-xs font-bold hover:bg-[#204941] transition-colors"
@@ -6081,7 +6120,7 @@ export const InfraTradingTerminal = ({
                                              type="button"
                                              onClick={(event) => {
                                                event.stopPropagation();
-                                               setSelectedOutcomeId(m.id);
+                                               focusTerminalOutcomeOrderbook(m.id);
                                                selectTicketOutcome('no', m.id);
                                              }}
                                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#3F1D24] text-[#f87171] text-xs font-bold hover:bg-[#52252f] transition-colors"
