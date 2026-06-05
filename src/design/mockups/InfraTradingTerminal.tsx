@@ -83,7 +83,7 @@ import { openExecutionSocket, type ExecutionTopic, type ExecutionWsState } from 
 const ORDERBOOK_DISPLAY_REST_FALLBACK_DELAY_MS = 6_000;
 const ORDERBOOK_REST_RECOVERY_MIN_INTERVAL_MS = 45_000;
 const ORDERBOOK_STREAM_GAP_RECOVERY_DELAY_MS = 1_500;
-const TERMINAL_CHART_REFRESH_INTERVAL_MS = 30_000;
+const TERMINAL_CHART_REFRESH_INTERVAL_MS = 60_000;
 const TERMINAL_ACCOUNT_REFRESH_INTERVAL_MS = 30_000;
 const TERMINAL_ALL_OUTCOME_PRICE_REFRESH_INTERVAL_MS = 8_000;
 const TERMINAL_FULL_OUTCOME_REFRESH_INTERVAL_MS = 120_000;
@@ -284,6 +284,7 @@ export type TerminalMarketSelection = {
   outcomes?: Array<{
     id: string;
     marketId?: string;
+    canonicalMarketIds?: string[];
     eventId?: string;
     canonicalEventId?: string;
     quoteOutcomeId?: string;
@@ -360,6 +361,7 @@ type TerminalBottomTab = 'Outcomes' | 'Positions' | 'Open Orders' | 'Trade Histo
 type TerminalOutcomeRow = {
   id: string;
   marketId: string | null;
+  canonicalMarketIds: string[];
   quoteOutcomeId: string;
   name: string;
   vol: string;
@@ -541,6 +543,37 @@ const uniqueVenueCount = (markets: TerminalMarketSelection[]): number => {
 
 const terminalMarketKey = (market: TerminalMarketSelection): string =>
   market.marketId ?? market.id ?? `${market.title}:${market.category}`;
+
+const uniqueNonEmptyStrings = (values: readonly (string | null | undefined)[]): string[] =>
+  [...new Set(values.map((value) => value?.trim()).filter((value): value is string => Boolean(value)))];
+
+const canonicalIdsForTerminalOutcome = (
+  primaryMarketId: string | null | undefined,
+  explicitIds: readonly string[] | null | undefined,
+  marketIds: readonly string[] | null | undefined,
+  outcomeCount = 1,
+): string[] => {
+  const explicit = uniqueNonEmptyStrings(explicitIds ?? []);
+  if (explicit.length > 0) return explicit;
+  const primary = uniqueNonEmptyStrings([primaryMarketId]);
+  if (outcomeCount > 1 && primary.length > 0) return primary;
+  return uniqueNonEmptyStrings([...(marketIds ?? []), ...primary]);
+};
+
+const terminalOutcomeMatchesMarketAlias = (
+  outcome: TerminalOutcomeRow,
+  marketId: string | null | undefined,
+  fallbackMarketId: string | null | undefined,
+): boolean => {
+  if (!marketId) return true;
+  const aliases = new Set(canonicalIdsForTerminalOutcome(
+    outcome.marketId ?? fallbackMarketId,
+    outcome.canonicalMarketIds,
+    [],
+    1,
+  ));
+  return aliases.has(marketId);
+};
 
 const sameTerminalEvent = (market: TerminalMarketSelection, selected: TerminalMarketSelection): boolean => {
   const selectedEventIds = [selected.eventId, selected.canonicalEventId].filter(Boolean);
@@ -1915,6 +1948,12 @@ const initialOutcomeRows = (market: TerminalMarketSelection): TerminalOutcomeRow
   return rows.map((outcome, index) => ({
     id: outcome.id,
     marketId: outcome.marketId ?? fallbackMarketId,
+    canonicalMarketIds: canonicalIdsForTerminalOutcome(
+      outcome.marketId ?? fallbackMarketId,
+      outcome.canonicalMarketIds,
+      market.canonicalMarketIds,
+      rows.length,
+    ),
     quoteOutcomeId: outcome.quoteOutcomeId ?? canonicalQuoteOutcomeId(outcome.name),
     name: outcome.name,
     vol: market.volume,
@@ -2394,6 +2433,16 @@ const LiveCanonicalChart = ({
       };
     });
   }, [marketId, marketType, outcomes]);
+  const binaryOutcomeFetchKey = useMemo(
+    () => binaryOutcomeInputs
+      .map((outcome) => `${outcome.id}:${outcome.marketId ?? ''}:${outcome.quoteOutcomeId}:${outcome.key}`)
+      .join('|'),
+    [binaryOutcomeInputs]
+  );
+  const binaryOutcomeChartInputs = useMemo(
+    () => binaryOutcomeInputs.map(({ latestValue: _latestValue, ...outcome }) => outcome),
+    [binaryOutcomeFetchKey]
+  );
   const liveOutcomeValuesByKey = useMemo(
     () => new Map(binaryOutcomeInputs.map((outcome) => [outcome.key, outcome.latestValue])),
     [binaryOutcomeInputs]
@@ -2422,7 +2471,7 @@ const LiveCanonicalChart = ({
       try {
         if (marketType === 'binary') {
           const uniqueInputs = Array.from(new Map(
-            binaryOutcomeInputs
+            binaryOutcomeChartInputs
               .filter((outcome) => outcome.marketId)
               .map((outcome) => [outcome.key, outcome])
           ).values());
@@ -2486,7 +2535,7 @@ const LiveCanonicalChart = ({
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [activeTab, binaryOutcomeInputs, marketId, marketType, notFoundKey, outcomeId, requestKey]);
+  }, [activeTab, binaryOutcomeChartInputs, marketId, marketType, notFoundKey, outcomeId, requestKey]);
 
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (!active || !payload?.length) return null;
@@ -2872,11 +2921,26 @@ export const InfraTradingTerminal = ({
   const selectedOutcomeMarketId = selectedOutcome?.marketId ?? terminalMarketId;
   const selectedQuoteOutcomeId = selectedOutcome?.quoteOutcomeId ?? selectedOutcomeId;
   const selectedOutcomeRefreshKey = `${selectedOutcome?.id ?? 'none'}:${selectedOutcomeMarketId ?? 'none'}:${selectedQuoteOutcomeId ?? 'none'}`;
+  const selectedOutcomeCanonicalMarketIds = useMemo(
+    () => canonicalIdsForTerminalOutcome(
+      selectedOutcomeMarketId,
+      selectedOutcome?.canonicalMarketIds,
+      terminalMarket.canonicalMarketIds,
+      terminalOutcomes.length,
+    ),
+    [selectedOutcome?.canonicalMarketIds, selectedOutcomeMarketId, terminalMarket.canonicalMarketIds, terminalOutcomes.length],
+  );
   React.useEffect(() => {
     selectedOutcomeRef.current = selectedOutcome;
   }, [selectedOutcome]);
   const orderbookMarketId = selectedOutcomeMarketId ?? terminalMarketId;
   const orderbookQuoteOutcomeId = selectedQuoteOutcomeId ?? (marketType === 'binary' ? 'YES' : null);
+  const orderbookStreamMarketIds = useMemo(
+    () => selectedOutcomeCanonicalMarketIds.length > 0
+      ? selectedOutcomeCanonicalMarketIds
+      : uniqueNonEmptyStrings([orderbookMarketId]),
+    [orderbookMarketId, selectedOutcomeCanonicalMarketIds],
+  );
   const selectedTicketOutcomeId = outcomeIdForTicketSide(terminalOutcomes, ticketOutcomeSide, selectedOutcomeId);
   const selectedTicketOutcome = terminalOutcomes.find((outcome) => outcome.id === selectedTicketOutcomeId) ?? selectedOutcome;
   const selectedTicketMarketId = selectedTicketOutcome?.marketId ?? selectedOutcomeMarketId ?? terminalMarketId;
@@ -2990,6 +3054,7 @@ export const InfraTradingTerminal = ({
         label: row.name,
         venues: row.venues,
         marketId: row.marketId,
+        canonicalMarketIds: row.canonicalMarketIds,
         quoteOutcomeId: row.quoteOutcomeId,
       }));
       const outcomeResponse = seededEventOutcomes ? null : await getMarketOutcomes(terminalMarketId);
@@ -3001,6 +3066,7 @@ export const InfraTradingTerminal = ({
             label: outcome.label,
             venues: outcome.venues,
             marketId: terminalMarketId,
+            canonicalMarketIds: canonicalIdsForTerminalOutcome(terminalMarketId, null, terminalMarket.canonicalMarketIds, outcomeResponse.outcomes.length),
             quoteOutcomeId: canonicalQuoteOutcomeId(outcome.label),
           }))
           : seededOutcomes;
@@ -3008,9 +3074,12 @@ export const InfraTradingTerminal = ({
       const livePriceResponse = await getMarketLivePrices({
         items: baseOutcomes.map((outcome) => ({
           marketId: outcome.marketId ?? terminalMarketId,
-          canonicalMarketIds: terminalMarket.canonicalMarketIds?.length
-            ? terminalMarket.canonicalMarketIds
-            : [outcome.marketId ?? terminalMarketId],
+          canonicalMarketIds: canonicalIdsForTerminalOutcome(
+            outcome.marketId ?? terminalMarketId,
+            outcome.canonicalMarketIds,
+            terminalMarket.canonicalMarketIds,
+            baseOutcomes.length,
+          ),
           outcomeId: outcome.quoteOutcomeId ?? canonicalQuoteOutcomeId(outcome.label),
         })),
       });
@@ -3019,6 +3088,12 @@ export const InfraTradingTerminal = ({
       const rows = baseOutcomes.map((outcome, index): TerminalOutcomeRow => {
         const outcomeMarketId = outcome.marketId ?? terminalMarketId;
         const quoteOutcomeId = outcome.quoteOutcomeId ?? canonicalQuoteOutcomeId(outcome.label);
+        const canonicalMarketIds = canonicalIdsForTerminalOutcome(
+          outcomeMarketId,
+          outcome.canonicalMarketIds,
+          terminalMarket.canonicalMarketIds,
+          baseOutcomes.length,
+        );
         const venues = outcome.venues.length ? outcome.venues : marketVenueList;
         const livePrice = livePriceByKey.get(`${outcomeMarketId}:${quoteOutcomeId}`);
         const parsedPrice = orderbookNumericValue(livePrice?.price ?? livePrice?.bestAsk ?? livePrice?.midpoint ?? livePrice?.bestBid);
@@ -3028,6 +3103,7 @@ export const InfraTradingTerminal = ({
         return {
           id: outcome.id,
           marketId: outcomeMarketId,
+          canonicalMarketIds,
           quoteOutcomeId,
           name: outcome.label,
           vol: `${formatMoneyMetric(terminalMarket.volume) ?? terminalMarket.volume} Vol.`,
@@ -3079,9 +3155,12 @@ export const InfraTradingTerminal = ({
         return {
           rowId: outcome.id,
           marketId: outcomeMarketId,
-          canonicalMarketIds: terminalMarket.canonicalMarketIds?.length
-            ? terminalMarket.canonicalMarketIds
-            : [outcomeMarketId],
+          canonicalMarketIds: canonicalIdsForTerminalOutcome(
+            outcomeMarketId,
+            outcome.canonicalMarketIds,
+            terminalMarket.canonicalMarketIds,
+            currentOutcomes.length,
+          ),
           outcomeId: quoteOutcomeId,
         };
       })
@@ -3105,7 +3184,11 @@ export const InfraTradingTerminal = ({
         const quoteOutcomeId = outcome.quoteOutcomeId ?? canonicalQuoteOutcomeId(outcome.name);
         const livePrice =
           priceByKey.get(`${outcomeMarketId}:${quoteOutcomeId}`) ??
-          prices.find((price) => price.marketId === outcomeMarketId && streamOutcomeMatches(price.outcomeId ?? quoteOutcomeId, quoteOutcomeId));
+          prices.find((price) =>
+            canonicalIdsForTerminalOutcome(outcomeMarketId, outcome.canonicalMarketIds, terminalMarket.canonicalMarketIds, current.length)
+              .includes(price.marketId) &&
+            streamOutcomeMatches(price.outcomeId ?? quoteOutcomeId, quoteOutcomeId)
+          );
         const parsedPrice = orderbookNumericValue(livePrice?.price ?? livePrice?.bestAsk ?? livePrice?.midpoint ?? livePrice?.bestBid);
         if (parsedPrice === null) return outcome;
         const yesPrice = formatProbabilityPrice(parsedPrice);
@@ -4279,7 +4362,7 @@ export const InfraTradingTerminal = ({
     }
     if (orderbookNotFoundKey === requestKey) return;
 
-    const localTopics = [orderbookTopicForSelection(orderbookMarketId, orderbookQuoteOutcomeId)];
+    const localTopics = orderbookStreamMarketIds.map((marketId) => orderbookTopicForSelection(marketId, orderbookQuoteOutcomeId));
     const loadFallbackOrderbook = async () => {
       if (orderbookRestRecoveryInFlightRef.current) return;
       orderbookRestRecoveryInFlightRef.current = true;
@@ -4337,7 +4420,7 @@ export const InfraTradingTerminal = ({
       cancelled = true;
       window.clearTimeout(fallbackTimer);
     };
-  }, [orderbookMarketId, orderbookNotFoundKey, orderbookQuoteOutcomeId]);
+  }, [orderbookMarketId, orderbookNotFoundKey, orderbookQuoteOutcomeId, orderbookStreamMarketIds]);
 
   React.useEffect(() => {
     if (!orderbookMarketId || orderbookStreamTopics.length === 0) {
@@ -4353,8 +4436,9 @@ export const InfraTradingTerminal = ({
     const topics = [...new Set(orderbookStreamTopics)];
     const topicSet = new Set(topics);
     const expectedMarketId = orderbookMarketId;
+    const expectedMarketAliases = new Set(orderbookStreamMarketIds);
     const expectedOutcomeId = orderbookQuoteOutcomeId ?? null;
-    const localTopics = [orderbookTopicForSelection(expectedMarketId, expectedOutcomeId)];
+    const localTopics = orderbookStreamMarketIds.map((marketId) => orderbookTopicForSelection(marketId, expectedOutcomeId));
 
     const clearScheduledRestRecovery = () => {
       if (orderbookRestRecoveryTimerRef.current !== null) {
@@ -4454,7 +4538,9 @@ export const InfraTradingTerminal = ({
       if (!effectiveOutcomeId && marketType !== 'binary') return;
       const displayBlocker = diagnosticsEnabled ? blocker : null;
       setTerminalOutcomes((current) => current.map((outcome) => {
-        if (outcome.marketId !== expectedMarketId) return outcome;
+        const payloadMarketId = streamPayloadMarketId(payload);
+        if (payloadMarketId && !terminalOutcomeMatchesMarketAlias(outcome, payloadMarketId, expectedMarketId)) return outcome;
+        if (!payloadMarketId && outcome.marketId !== expectedMarketId) return outcome;
         if (!streamOutcomeMatches(effectiveOutcomeId, outcome.quoteOutcomeId)) return outcome;
         const yesPrice = quotePrice !== null ? formatProbabilityPrice(quotePrice) : '-';
         const noPrice = quotePrice !== null && marketType === 'binary' ? formatProbabilityPrice(1 - quotePrice) : '-';
@@ -4528,7 +4614,7 @@ export const InfraTradingTerminal = ({
           if (!acceptsStreamSequence(event.topic, payload)) return;
           const payloadMarketId = streamPayloadMarketId(payload);
           const payloadOutcomeId = streamPayloadOutcomeId(payload);
-          if (payloadMarketId && payloadMarketId !== expectedMarketId) return;
+          if (payloadMarketId && !expectedMarketAliases.has(payloadMarketId)) return;
           if (payloadOutcomeId && !streamOutcomeMatches(payloadOutcomeId, expectedOutcomeId)) return;
 
           lastOrderbookWsUpdateAtRef.current = Date.now();
@@ -4585,7 +4671,7 @@ export const InfraTradingTerminal = ({
         client.socket.close();
       }
     };
-  }, [marketType, orderbookMarketId, orderbookQuoteOutcomeId, orderbookStreamTopics]);
+  }, [marketType, orderbookMarketId, orderbookQuoteOutcomeId, orderbookStreamMarketIds, orderbookStreamTopics]);
 
   const refreshAccountData = useCallback(async () => {
     if (!token) {
@@ -5484,6 +5570,7 @@ export const InfraTradingTerminal = ({
                               : [{
                                 id: market.marketId ?? market.id ?? marketKey,
                                 marketId: market.marketId,
+                                canonicalMarketIds: market.canonicalMarketIds,
                                 quoteOutcomeId: 'YES',
                                 name: market.title,
                                 prob: outcomePriceLabel(market, 'YES', market.priceLabel ?? 'Quote'),
@@ -5503,6 +5590,7 @@ export const InfraTradingTerminal = ({
                                 ...market,
                                 id: outcome.marketId ?? market.id,
                                 marketId: outcome.marketId ?? market.marketId,
+                                canonicalMarketIds: outcome.canonicalMarketIds ?? market.canonicalMarketIds,
                                 eventId: outcome.eventId ?? market.eventId,
                                 canonicalEventId: outcome.canonicalEventId ?? market.canonicalEventId,
                                 venues: outcome.venues ?? market.venues,

@@ -51,6 +51,7 @@ export type LotusAppPage = 'home' | 'markets' | 'terminal' | 'portfolio' | 'sett
 type DashboardOutcomeRow = {
   id: string;
   marketId: string;
+  canonicalMarketIds?: string[];
   eventId?: string;
   canonicalEventId: string;
   quoteOutcomeId: string;
@@ -710,6 +711,7 @@ const compactFallbackOutcome = (market: MarketCatalogMarket): DashboardOutcomeRo
   return {
     id: market.displayOutcomeKey || canonicalQuoteOutcomeId(label) || 'YES',
     marketId,
+    canonicalMarketIds: market.canonicalMarketIds,
     eventId: market.eventId ?? market.canonicalEventId,
     canonicalEventId: market.canonicalEventId,
     quoteOutcomeId: canonicalQuoteOutcomeId(label),
@@ -730,6 +732,7 @@ const binaryCandidateOutcomeRow = (market: MarketCatalogMarket): DashboardOutcom
   return {
     id: marketId,
     marketId,
+    canonicalMarketIds: market.canonicalMarketIds,
     eventId: market.eventId ?? market.canonicalEventId,
     canonicalEventId: market.canonicalEventId,
     quoteOutcomeId: 'YES',
@@ -785,6 +788,7 @@ const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardM
       outcomeByLabel.set(label.toLowerCase(), {
         id: outcome.id || normalizeOutcomeId(label),
         marketId,
+        canonicalMarketIds: market.canonicalMarketIds,
         eventId: market.eventId ?? market.canonicalEventId,
         canonicalEventId: market.canonicalEventId,
         quoteOutcomeId: canonicalQuoteOutcomeId(label),
@@ -840,7 +844,7 @@ const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardM
     lastQuoteAt: market.lastQuoteAt ?? null,
     outcomes: outcomeRows.length > 0
       ? outcomeRows
-      : [{ id: 'OUTCOMES', marketId, eventId: market.eventId ?? market.canonicalEventId, canonicalEventId: market.canonicalEventId, quoteOutcomeId: 'OUTCOMES', name: 'Outcomes load in terminal', prob: pendingPricePlaceholder(), liveStatus: 'not_requested' }],
+      : [{ id: 'OUTCOMES', marketId, canonicalMarketIds: market.canonicalMarketIds, eventId: market.eventId ?? market.canonicalEventId, canonicalEventId: market.canonicalEventId, quoteOutcomeId: 'OUTCOMES', name: 'Outcomes load in terminal', prob: pendingPricePlaceholder(), liveStatus: 'not_requested' }],
     imageUrl: getSafeMediaUrl(market.imageUrl),
     iconUrl: getSafeMediaUrl(market.iconUrl),
     priceLabel: diagnosticsEnabled ? marketQuoteStatusPriceLabel(quoteStatus, diagnosticsEnabled) : '-',
@@ -1249,6 +1253,7 @@ export const DashboardV2Mockup = ({
     () => quotedMarketRows.map((market) => ({
       id: market.id,
       marketId: market.marketId,
+      canonicalMarketIds: market.canonicalMarketIds,
       eventId: market.eventId,
       canonicalEventId: market.canonicalEventId,
       title: market.title,
