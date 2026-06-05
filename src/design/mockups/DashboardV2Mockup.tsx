@@ -1458,6 +1458,8 @@ export const DashboardV2Mockup = ({
         category: filterCategory,
         search: searchQuery.trim() || undefined,
         limit: MARKET_CATALOG_FETCH_LIMIT,
+        quoteReadyOnly: true,
+        routeCoverage: 'all',
         view: 'compact',
       })
         .then((response) => {
