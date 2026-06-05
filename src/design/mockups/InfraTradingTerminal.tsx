@@ -85,7 +85,7 @@ const ORDERBOOK_REST_RECOVERY_MIN_INTERVAL_MS = 45_000;
 const ORDERBOOK_STREAM_GAP_RECOVERY_DELAY_MS = 1_500;
 const TERMINAL_CHART_REFRESH_INTERVAL_MS = 60_000;
 const TERMINAL_ACCOUNT_REFRESH_INTERVAL_MS = 30_000;
-const TERMINAL_ALL_OUTCOME_PRICE_REFRESH_INTERVAL_MS = 8_000;
+const TERMINAL_ALL_OUTCOME_PRICE_REFRESH_INTERVAL_MS = 12_000;
 const TERMINAL_FULL_OUTCOME_REFRESH_INTERVAL_MS = 120_000;
 const TERMINAL_LIVE_PRICE_BATCH_SIZE = 80;
 
@@ -2779,6 +2779,8 @@ export const InfraTradingTerminal = ({
   const lastOrderbookRestRecoveryAtRef = React.useRef<number | null>(null);
   const orderbookRestRecoveryInFlightRef = React.useRef(false);
   const orderbookRestRecoveryTimerRef = React.useRef<number | null>(null);
+  const terminalLivePriceRefreshInFlightRef = React.useRef(false);
+  const terminalLivePriceRefreshQueuedRef = React.useRef(false);
   const missingRiskProfileKeysRef = React.useRef<Set<string>>(new Set());
   const selectedOutcomeRef = React.useRef<TerminalOutcomeRow | null>(null);
   const terminalOutcomesRef = React.useRef<TerminalOutcomeRow[]>([]);
@@ -3216,77 +3218,89 @@ export const InfraTradingTerminal = ({
   }, [marketVenueList, terminalMarket, terminalMarketId]);
 
   const refreshAllOutcomePrices = useCallback(async () => {
-    const currentOutcomes = terminalOutcomesRef.current;
-    if (!terminalMarketId || currentOutcomes.length === 0) return;
-    const requestItems = currentOutcomes
-      .map((outcome) => {
-        const outcomeMarketId = outcome.marketId ?? terminalMarketId;
-        const quoteOutcomeId = outcome.quoteOutcomeId ?? canonicalQuoteOutcomeId(outcome.name);
-        return {
-          rowId: outcome.id,
-          marketId: outcomeMarketId,
-          canonicalMarketIds: canonicalIdsForTerminalOutcome(
-            outcomeMarketId,
-            outcome.canonicalMarketIds,
-            terminalMarket.canonicalMarketIds,
-            currentOutcomes.length,
-          ),
-          outcomeId: quoteOutcomeId,
-        };
-      })
-      .filter((item) => Boolean(item.marketId && item.outcomeId));
+    if (terminalLivePriceRefreshInFlightRef.current) {
+      terminalLivePriceRefreshQueuedRef.current = true;
+      return;
+    }
+    terminalLivePriceRefreshInFlightRef.current = true;
     try {
-      const prices: MarketLivePriceItem[] = [];
-      for (let index = 0; index < requestItems.length; index += TERMINAL_LIVE_PRICE_BATCH_SIZE) {
-        const chunk = requestItems.slice(index, index + TERMINAL_LIVE_PRICE_BATCH_SIZE);
-        const response = await getMarketLivePrices({
-          items: chunk.map((item) => ({
-            marketId: item.marketId,
-            canonicalMarketIds: item.canonicalMarketIds,
-            outcomeId: item.outcomeId,
-          })),
-        });
-        prices.push(...response.prices);
-      }
-      const priceByKey = new Map(prices.map((price) => [`${price.marketId}:${price.outcomeId ?? ''}`, price]));
-      setTerminalOutcomes((current) => current.map((outcome) => {
-        const outcomeMarketId = outcome.marketId ?? terminalMarketId;
-        const quoteOutcomeId = outcome.quoteOutcomeId ?? canonicalQuoteOutcomeId(outcome.name);
-        const livePrice =
-          priceByKey.get(`${outcomeMarketId}:${quoteOutcomeId}`) ??
-          prices.find((price) =>
-            canonicalIdsForTerminalOutcome(outcomeMarketId, outcome.canonicalMarketIds, terminalMarket.canonicalMarketIds, current.length)
-              .includes(price.marketId) &&
-            streamOutcomeMatches(price.outcomeId ?? quoteOutcomeId, quoteOutcomeId)
-          );
-        const parsedPrice = orderbookNumericValue(livePrice?.price ?? livePrice?.bestAsk ?? livePrice?.midpoint ?? livePrice?.bestBid);
-        if (parsedPrice === null) return outcome;
-        const yesPrice = formatProbabilityPrice(parsedPrice);
-        const noPrice = terminalMarket.marketType === 'binary' ? formatProbabilityPrice(1 - parsedPrice) : '-';
-        const quoteVenues = livePrice?.linkedVenues?.length
-          ? livePrice.linkedVenues
-          : livePrice?.venues?.length
-            ? livePrice.venues
-            : outcome.venues;
-        const liveQuoteVenues = livePrice?.liveVenues?.length
-          ? livePrice.liveVenues
-          : livePrice?.venues ?? [];
-        return {
-          ...outcome,
-          prob: formatProbabilityPercent(parsedPrice),
-          yesPrice,
-          noPrice,
-          primaryVenue: livePrice?.bestVenue ?? outcome.primaryVenue ?? quoteVenues[0] ?? null,
-          venueQuotes: livePrice?.bestVenue
-            ? placeholderVenueQuotes(liveQuoteVenues.length ? liveQuoteVenues : [livePrice.bestVenue], yesPrice, noPrice, null)
-            : outcome.venueQuotes,
-          venues: quoteVenues.length ? quoteVenues : outcome.venues,
-          status: 'live',
-          blocker: null,
-        };
-      }));
-    } catch {
-      // Keep websocket/orderbook prices and last-good rows visible; the next active-market refresh will retry.
+      do {
+        terminalLivePriceRefreshQueuedRef.current = false;
+        const currentOutcomes = terminalOutcomesRef.current;
+        if (!terminalMarketId || currentOutcomes.length === 0) return;
+        const requestItems = currentOutcomes
+          .map((outcome) => {
+            const outcomeMarketId = outcome.marketId ?? terminalMarketId;
+            const quoteOutcomeId = outcome.quoteOutcomeId ?? canonicalQuoteOutcomeId(outcome.name);
+            return {
+              rowId: outcome.id,
+              marketId: outcomeMarketId,
+              canonicalMarketIds: canonicalIdsForTerminalOutcome(
+                outcomeMarketId,
+                outcome.canonicalMarketIds,
+                terminalMarket.canonicalMarketIds,
+                currentOutcomes.length,
+              ),
+              outcomeId: quoteOutcomeId,
+            };
+          })
+          .filter((item) => Boolean(item.marketId && item.outcomeId));
+        try {
+          const prices: MarketLivePriceItem[] = [];
+          for (let index = 0; index < requestItems.length; index += TERMINAL_LIVE_PRICE_BATCH_SIZE) {
+            const chunk = requestItems.slice(index, index + TERMINAL_LIVE_PRICE_BATCH_SIZE);
+            const response = await getMarketLivePrices({
+              items: chunk.map((item) => ({
+                marketId: item.marketId,
+                canonicalMarketIds: item.canonicalMarketIds,
+                outcomeId: item.outcomeId,
+              })),
+            });
+            prices.push(...response.prices);
+          }
+          const priceByKey = new Map(prices.map((price) => [`${price.marketId}:${price.outcomeId ?? ''}`, price]));
+          setTerminalOutcomes((current) => current.map((outcome) => {
+            const outcomeMarketId = outcome.marketId ?? terminalMarketId;
+            const quoteOutcomeId = outcome.quoteOutcomeId ?? canonicalQuoteOutcomeId(outcome.name);
+            const livePrice =
+              priceByKey.get(`${outcomeMarketId}:${quoteOutcomeId}`) ??
+              prices.find((price) =>
+                canonicalIdsForTerminalOutcome(outcomeMarketId, outcome.canonicalMarketIds, terminalMarket.canonicalMarketIds, current.length)
+                  .includes(price.marketId) &&
+                streamOutcomeMatches(price.outcomeId ?? quoteOutcomeId, quoteOutcomeId)
+              );
+            const parsedPrice = orderbookNumericValue(livePrice?.price ?? livePrice?.bestAsk ?? livePrice?.midpoint ?? livePrice?.bestBid);
+            if (parsedPrice === null) return outcome;
+            const yesPrice = formatProbabilityPrice(parsedPrice);
+            const noPrice = terminalMarket.marketType === 'binary' ? formatProbabilityPrice(1 - parsedPrice) : '-';
+            const quoteVenues = livePrice?.linkedVenues?.length
+              ? livePrice.linkedVenues
+              : livePrice?.venues?.length
+                ? livePrice.venues
+                : outcome.venues;
+            const liveQuoteVenues = livePrice?.liveVenues?.length
+              ? livePrice.liveVenues
+              : livePrice?.venues ?? [];
+            return {
+              ...outcome,
+              prob: formatProbabilityPercent(parsedPrice),
+              yesPrice,
+              noPrice,
+              primaryVenue: livePrice?.bestVenue ?? outcome.primaryVenue ?? quoteVenues[0] ?? null,
+              venueQuotes: livePrice?.bestVenue
+                ? placeholderVenueQuotes(liveQuoteVenues.length ? liveQuoteVenues : [livePrice.bestVenue], yesPrice, noPrice, null)
+                : outcome.venueQuotes,
+              venues: quoteVenues.length ? quoteVenues : outcome.venues,
+              status: 'live',
+              blocker: null,
+            };
+          }));
+        } catch {
+          // Keep websocket/orderbook prices and last-good rows visible; the next active-market refresh will retry.
+        }
+      } while (terminalLivePriceRefreshQueuedRef.current && document.visibilityState !== 'hidden');
+    } finally {
+      terminalLivePriceRefreshInFlightRef.current = false;
     }
   }, [terminalMarket.canonicalMarketIds, terminalMarket.marketType, terminalMarketId]);
 
@@ -4778,14 +4792,21 @@ export const InfraTradingTerminal = ({
     }
   }, [bottomTab, terminalMarketId, token]);
 
+  const accountPollingActive = bottomTab === 'Positions' || bottomTab === 'Open Orders' || bottomTab === 'Trade History';
+
   React.useEffect(() => {
+    if (!token) {
+      void refreshAccountData();
+      return;
+    }
     void refreshAccountData();
+    if (!accountPollingActive) return;
     const interval = window.setInterval(() => {
       if (document.visibilityState === 'hidden') return;
       void refreshAccountData();
     }, TERMINAL_ACCOUNT_REFRESH_INTERVAL_MS);
     return () => window.clearInterval(interval);
-  }, [refreshAccountData]);
+  }, [accountPollingActive, refreshAccountData, token]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -6105,16 +6126,16 @@ export const InfraTradingTerminal = ({
                                  </div>
                                  <div className="max-h-[380px] overflow-y-auto font-mono custom-scrollbar">
                                    <div className="min-h-[116px]">
-                                   {orderbookLoading && !orderbook && (
+                                   {orderbookLoading && !displayOrderbook && (
                                      <div className="px-4 py-8 text-center text-[11px] font-bold uppercase tracking-[0.18em] text-zinc-500">Loading live book</div>
                                    )}
                                    {marketDiagnosticsEnabled && orderbookError && inlineOrderbookLiveVenueCount === 0 && (
                                      <div className="mx-4 my-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] font-semibold text-amber-200">{orderbookError}</div>
                                    )}
-                                   {!marketDiagnosticsEnabled && !orderbookLoading && inlineOrderbookLiveVenueCount === 0 && (!orderbook || (orderbook.asks.length === 0 && orderbook.bids.length === 0)) && (
+                                   {!marketDiagnosticsEnabled && !orderbookLoading && inlineOrderbookLiveVenueCount === 0 && (!displayOrderbook || (displayOrderbook.asks.length === 0 && displayOrderbook.bids.length === 0)) && (
                                      <div className="px-4 py-8 text-center text-[11px] font-semibold text-zinc-500">Updating live prices.</div>
                                    )}
-                                   {orderbook?.asks.slice().reverse().map((level, i) => (
+                                   {displayOrderbook?.asks.slice().reverse().map((level, i) => (
                                      <div key={`inline-card-ask-${level.venue}-${level.price}-${i}`} className="grid grid-cols-[1.1fr_0.9fr_0.9fr_0.9fr] items-stretch text-sm hover:bg-zinc-800/50">
                                        <span className="relative flex min-h-9 items-center overflow-hidden px-4">
                                          <span className="absolute inset-y-0 left-0 bg-red-500/10" style={{ width: `${Math.min(76, 18 + i * 10)}%` }} />
@@ -6130,12 +6151,12 @@ export const InfraTradingTerminal = ({
                                    ))}
                                    </div>
                                    <div className="grid grid-cols-[1.1fr_0.9fr_0.9fr_0.9fr] border-y border-zinc-800 bg-[#151517] px-4 py-2 text-sm font-semibold text-zinc-100">
-                                     <span>Last: Yes {formatBookPrice(orderbook?.midpoint)}</span>
-                                     <span>Spread: {formatBookPrice(orderbook?.spread)}</span>
+                                     <span>Last: Yes {formatBookPrice(displayOrderbook?.midpoint)}</span>
+                                     <span>Spread: {formatBookPrice(displayOrderbook?.spread)}</span>
                                      <span />
                                      <span />
                                    </div>
-                                   {orderbook?.bids.map((level, i) => (
+                                   {displayOrderbook?.bids.map((level, i) => (
                                      <div key={`inline-card-bid-${level.venue}-${level.price}-${i}`} className="grid grid-cols-[1.1fr_0.9fr_0.9fr_0.9fr] items-stretch text-sm hover:bg-zinc-800/50">
                                        <span className="relative flex min-h-9 items-center overflow-hidden px-4">
                                          <span className="absolute inset-y-0 left-0 bg-emerald-500/10" style={{ width: `${Math.min(78, 62 - i * 8)}%` }} />
