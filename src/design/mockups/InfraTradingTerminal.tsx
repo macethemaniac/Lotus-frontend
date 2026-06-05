@@ -3099,7 +3099,14 @@ export const InfraTradingTerminal = ({
         const parsedPrice = orderbookNumericValue(livePrice?.price ?? livePrice?.bestAsk ?? livePrice?.midpoint ?? livePrice?.bestBid);
         const yesPrice = parsedPrice !== null ? formatProbabilityPrice(parsedPrice) : '-';
         const noPrice = parsedPrice !== null && terminalMarket.marketType === 'binary' ? formatProbabilityPrice(1 - parsedPrice) : '-';
-        const quoteVenues = livePrice?.venues?.length ? livePrice.venues : venues;
+        const quoteVenues = livePrice?.linkedVenues?.length
+          ? livePrice.linkedVenues
+          : livePrice?.venues?.length
+            ? livePrice.venues
+            : venues;
+        const liveQuoteVenues = livePrice?.liveVenues?.length
+          ? livePrice.liveVenues
+          : livePrice?.venues ?? [];
         return {
           id: outcome.id,
           marketId: outcomeMarketId,
@@ -3113,7 +3120,7 @@ export const InfraTradingTerminal = ({
           noPrice,
           primaryVenue: livePrice?.bestVenue ?? quoteVenues[0] ?? null,
           venueQuotes: livePrice?.bestVenue && parsedPrice !== null
-            ? [{ venue: livePrice.bestVenue, yesPrice, noPrice, blocker: null }]
+            ? placeholderVenueQuotes(liveQuoteVenues.length ? liveQuoteVenues : [livePrice.bestVenue], yesPrice, noPrice, null)
             : placeholderVenueQuotes(quoteVenues, '-', '-', null),
           active: index === 0,
           venues: quoteVenues,
@@ -3193,7 +3200,14 @@ export const InfraTradingTerminal = ({
         if (parsedPrice === null) return outcome;
         const yesPrice = formatProbabilityPrice(parsedPrice);
         const noPrice = terminalMarket.marketType === 'binary' ? formatProbabilityPrice(1 - parsedPrice) : '-';
-        const quoteVenues = livePrice?.venues?.length ? livePrice.venues : outcome.venues;
+        const quoteVenues = livePrice?.linkedVenues?.length
+          ? livePrice.linkedVenues
+          : livePrice?.venues?.length
+            ? livePrice.venues
+            : outcome.venues;
+        const liveQuoteVenues = livePrice?.liveVenues?.length
+          ? livePrice.liveVenues
+          : livePrice?.venues ?? [];
         return {
           ...outcome,
           prob: formatProbabilityPercent(parsedPrice),
@@ -3201,7 +3215,7 @@ export const InfraTradingTerminal = ({
           noPrice,
           primaryVenue: livePrice?.bestVenue ?? outcome.primaryVenue ?? quoteVenues[0] ?? null,
           venueQuotes: livePrice?.bestVenue
-            ? [{ venue: livePrice.bestVenue, yesPrice, noPrice, blocker: null }]
+            ? placeholderVenueQuotes(liveQuoteVenues.length ? liveQuoteVenues : [livePrice.bestVenue], yesPrice, noPrice, null)
             : outcome.venueQuotes,
           venues: quoteVenues.length ? quoteVenues : outcome.venues,
           status: 'live',

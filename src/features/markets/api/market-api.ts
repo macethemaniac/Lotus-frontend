@@ -271,6 +271,11 @@ export type MarketLivePriceItem = {
   bestVenue: string | null;
   venueCount: number;
   venues: string[];
+  liveVenueCount?: number;
+  liveVenues?: string[];
+  linkedVenueCount?: number;
+  linkedVenues?: string[];
+  averagePrice?: string | null;
   freshnessMs: number | null;
 };
 
