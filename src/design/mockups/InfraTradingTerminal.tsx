@@ -1087,6 +1087,9 @@ const filterOrderbookForVenue = (
   };
 };
 
+const hasUsableOrderbookDepth = (orderbook: MarketOrderbookResponse | null): boolean =>
+  Boolean(orderbook && (orderbook.bids.length > 0 || orderbook.asks.length > 0 || orderbook.bestBid || orderbook.bestAsk));
+
 const isMarketOrderbookStreamPayload = (payload: unknown): payload is MarketOrderbookStreamPayload => {
   if (!payload || typeof payload !== 'object') return false;
   const record = payload as Record<string, unknown>;
@@ -4454,7 +4457,7 @@ export const InfraTradingTerminal = ({
     if (orderbookNotFoundKey === requestKey) return;
 
     const localTopics = orderbookStreamMarketIds.map((marketId) => orderbookTopicForSelection(marketId, orderbookQuoteOutcomeId));
-    const loadFallbackOrderbook = async (options: { markWsFresh?: boolean } = {}) => {
+    const loadFallbackOrderbook = async (options: { markWsFresh?: boolean; snapshotOnly?: boolean } = {}) => {
       if (orderbookRestRecoveryInFlightRef.current) return;
       orderbookRestRecoveryInFlightRef.current = true;
       lastOrderbookRestRecoveryAtRef.current = Date.now();
@@ -4462,9 +4465,12 @@ export const InfraTradingTerminal = ({
         const response = await getMarketOrderbook(orderbookMarketId, {
           outcomeId: orderbookQuoteOutcomeId,
           depth: 20,
+          ...(options.snapshotOnly ? { snapshotOnly: true } : {}),
         });
         if (!cancelled) {
-          orderbookRef.current = response;
+          if (hasUsableOrderbookDepth(response) || !options.snapshotOnly) {
+            orderbookRef.current = response;
+          }
           setOrderbook(response);
           const nextTopics = mergeOrderbookStreamTopics(localTopics, normalizeOrderbookStreamTopics(response.stream?.topics));
           setOrderbookStreamTopics((current) => sameTopicList(current, nextTopics) ? current : nextTopics);
@@ -4503,9 +4509,9 @@ export const InfraTradingTerminal = ({
     };
     void refreshOrderbook();
     orderbookStreamSeqRef.current.clear();
-    void loadFallbackOrderbook();
+    void loadFallbackOrderbook({ snapshotOnly: true });
     const fallbackTimer = window.setTimeout(() => {
-      if (cancelled || lastOrderbookWsUpdateAtRef.current !== null || orderbookRef.current !== null) return;
+      if (cancelled || lastOrderbookWsUpdateAtRef.current !== null || hasUsableOrderbookDepth(orderbookRef.current)) return;
       void loadFallbackOrderbook({ markWsFresh: true });
     }, ORDERBOOK_DISPLAY_REST_FALLBACK_DELAY_MS);
     return () => {

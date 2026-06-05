@@ -388,12 +388,13 @@ export function getMarketOutcomes(marketId: string) {
 
 export function getMarketOrderbook(
   marketId: string,
-  input: { outcomeId?: string | null; depth?: number; venue?: string | null } = {}
+  input: { outcomeId?: string | null; depth?: number; venue?: string | null; snapshotOnly?: boolean } = {}
 ) {
   const params = new URLSearchParams();
   if (input.outcomeId) params.set("outcomeId", input.outcomeId);
   if (input.depth) params.set("depth", String(input.depth));
   if (input.venue) params.set("venue", input.venue);
+  if (input.snapshotOnly) params.set("snapshotOnly", "true");
   const query = params.toString();
   const path = `/markets/${encodeURIComponent(marketId)}/orderbook${query ? `?${query}` : ""}`;
   return staleWhileRevalidate(`orderbook:${path}`, () =>
