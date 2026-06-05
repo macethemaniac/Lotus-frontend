@@ -314,11 +314,29 @@ export type ResolutionRiskProfile = {
 
 export type MarketListInput = {
   category?: string;
+  cursor?: string;
   search?: string;
   limit?: number;
   quoteReadyOnly?: boolean;
   routeCoverage?: "all" | "single" | "pair" | "tri" | "strict_all";
   view?: "full" | "compact";
+};
+
+export type MarketListResponse = {
+  markets: MarketCatalogMarket[];
+  count: number;
+  view?: "compact";
+  pageSize?: number;
+  nextCursor?: string | null;
+  hasMore?: boolean;
+};
+
+export type MarketEventListResponse = {
+  events: MarketCatalogEvent[];
+  count: number;
+  pageSize?: number;
+  nextCursor?: string | null;
+  hasMore?: boolean;
 };
 
 export function listMarketCategories() {
@@ -328,7 +346,7 @@ export function listMarketCategories() {
 export function listMarkets(input: MarketListInput = {}) {
   const params = buildMarketParams(input);
   return staleWhileRevalidate(`markets:${params}`, () =>
-    apiRequest<{ markets: MarketCatalogMarket[]; count: number; view?: "compact" }>(`/markets${params}`)
+    apiRequest<MarketListResponse>(`/markets${params}`)
       .then((response) => ({
         ...response,
         markets: response.markets.map(normalizeMarketCatalogMarket),
@@ -340,7 +358,7 @@ export function listMarkets(input: MarketListInput = {}) {
 export function listEvents(input: MarketListInput = {}) {
   const params = buildMarketParams(input);
   return staleWhileRevalidate(`events:${params}`, () =>
-    apiRequest<{ events: MarketCatalogEvent[]; count: number }>(`/events${params}`),
+    apiRequest<MarketEventListResponse>(`/events${params}`),
     { ttlMs: 20_000, maxStaleMs: 5 * 60_000 }
   );
 }
@@ -437,6 +455,7 @@ export function getVenueMarketResolutionRisk(venue: string, marketId: string) {
 function buildMarketParams(input: MarketListInput): string {
   const params = new URLSearchParams();
   if (input.category) params.set("category", input.category);
+  if (input.cursor) params.set("cursor", input.cursor);
   if (input.search) params.set("search", input.search);
   if (input.limit) params.set("limit", String(input.limit));
   if (typeof input.quoteReadyOnly === "boolean") params.set("quoteReadyOnly", String(input.quoteReadyOnly));

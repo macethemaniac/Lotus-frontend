@@ -44,7 +44,13 @@ export function lotusWsUrl(): string {
 
 export function lotusMarketDiagnosticsEnabled(): boolean {
   if (typeof window === "undefined") return true;
-  return window.location.hostname.toLowerCase() !== "app.uselotus.xyz";
+  return lotusMarketDiagnosticsEnabledForHost(window.location.hostname);
+}
+
+export function lotusMarketDiagnosticsEnabledForHost(hostname: string): boolean {
+  const normalized = hostname.toLowerCase();
+  if (normalized === "app.uselotus.xyz") return false;
+  return true;
 }
 
 function resolveLotusWsBaseUrl(): string {

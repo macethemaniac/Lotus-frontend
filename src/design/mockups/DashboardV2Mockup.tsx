@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTurnkey } from '@turnkey/react-wallet-kit';
 import { OAuthProviders } from '@turnkey/sdk-types';
 import { LotusLogo } from '@/components/icons/lotus-icons';
@@ -133,10 +133,11 @@ type DashboardRouteFilter = 'Single' | 'Pair' | 'Tri' | 'Strict all';
 type DashboardSortKey = 'volume' | 'liquidity' | 'closing' | 'buys' | 'sells' | 'best_route';
 type ToastPosition = 'top-left' | 'top-center' | 'top-right' | 'bottom-left' | 'bottom-center' | 'bottom-right';
 
-const HOME_MARKET_INITIAL_LIMIT = 30;
-const HOME_MARKET_LOAD_MORE_SIZE = 30;
-const MARKET_CATALOG_FETCH_LIMIT = 250;
-const HOME_LIVE_QUOTE_BATCH_LIMIT = 24;
+const HOME_MARKET_INITIAL_LIMIT = 8;
+const HOME_MARKET_LOAD_MORE_SIZE = 8;
+const MARKET_PAGE_SIZE = 60;
+const MARKET_CATALOG_FIRST_CURSOR = '0';
+const MARKET_LIVE_PRICE_CHUNK_SIZE = 18;
 
 const watchlistStorageKey = 'lotus.watchlist.marketIds';
 const notificationSettingsStorageKey = 'lotus.notification.settings';
@@ -1192,8 +1193,10 @@ export const DashboardV2Mockup = ({
   const [marketRows, setMarketRows] = useState<DashboardMarketRow[]>([]);
   const [marketQuotes, setMarketQuotes] = useState<Record<string, DashboardMarketQuote>>({});
   const [marketCount, setMarketCount] = useState(0);
+  const [marketNextCursor, setMarketNextCursor] = useState<string | null>(null);
+  const [marketsHasMore, setMarketsHasMore] = useState(false);
+  const [marketsLoadingMore, setMarketsLoadingMore] = useState(false);
   const [marketFilter, setMarketFilter] = useState<MarketQuickFilter>('all');
-  const [homeMarketLimit, setHomeMarketLimit] = useState(HOME_MARKET_INITIAL_LIMIT);
   const [watchlistIds, setWatchlistIds] = useState<string[]>(loadWatchlistIds);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [notificationsError, setNotificationsError] = useState<string | null>(null);
@@ -1268,9 +1271,8 @@ export const DashboardV2Mockup = ({
     })),
     [quotedMarketRows],
   );
-  const baseDisplayedMarkets = activePage === 'home' ? filteredMarketRows.slice(0, homeMarketLimit) : filteredMarketRows;
-  const displayedMarkets = baseDisplayedMarkets;
-  const canLoadMoreMarkets = activePage === 'home' && homeMarketLimit < filteredMarketRows.length;
+  const displayedMarkets = filteredMarketRows;
+  const canLoadMoreMarkets = isMarketSurface && marketsHasMore && Boolean(marketNextCursor);
   const dashboardDiagnosticsEnabled = lotusMarketDiagnosticsEnabled();
   const emptyMarketCopy = marketFilter === 'watchlist'
     ? 'Your watchlist is empty. Bookmark markets from the cards or list to track them here.'
@@ -1446,10 +1448,6 @@ export const DashboardV2Mockup = ({
   ];
 
   useEffect(() => {
-    setHomeMarketLimit(HOME_MARKET_INITIAL_LIMIT);
-  }, [filterCategory, marketFilter, marketSortKey, searchQuery, selectedCategories, selectedRouteTypes]);
-
-  useEffect(() => {
     if (!isMarketSurface) return;
     let cancelled = false;
     const timer = window.setTimeout(() => {
@@ -1457,8 +1455,9 @@ export const DashboardV2Mockup = ({
       setMarketsError(null);
       listMarkets({
         category: filterCategory,
+        cursor: MARKET_CATALOG_FIRST_CURSOR,
         search: searchQuery.trim() || undefined,
-        limit: MARKET_CATALOG_FETCH_LIMIT,
+        limit: activePage === 'markets' ? MARKET_PAGE_SIZE : HOME_MARKET_INITIAL_LIMIT,
         quoteReadyOnly: true,
         routeCoverage: 'all',
         view: 'compact',
@@ -1467,12 +1466,16 @@ export const DashboardV2Mockup = ({
           if (cancelled) return;
           setMarketRows(mapCatalogMarketsToDashboardRows(response.markets));
           setMarketCount(response.count);
+          setMarketNextCursor(response.nextCursor ?? null);
+          setMarketsHasMore(Boolean(response.hasMore));
         })
         .catch((error) => {
           if (cancelled) return;
           setMarketsError(toSafeErrorMessage(error, 'Market catalog is unavailable right now.'));
           setMarketRows([]);
           setMarketCount(0);
+          setMarketNextCursor(null);
+          setMarketsHasMore(false);
         })
         .finally(() => {
           if (!cancelled) setMarketsLoading(false);
@@ -1483,7 +1486,45 @@ export const DashboardV2Mockup = ({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [activePage, filterCategory, isMarketSurface, searchQuery, selectedRouteTypes]);
+  }, [activePage, filterCategory, isMarketSurface, searchQuery]);
+
+  const loadMoreMarkets = useCallback(async () => {
+    if (!isMarketSurface || !marketNextCursor || marketsLoading || marketsLoadingMore) return;
+    setMarketsLoadingMore(true);
+    setMarketsError(null);
+    try {
+      const response = await listMarkets({
+        category: filterCategory,
+        cursor: marketNextCursor,
+        search: searchQuery.trim() || undefined,
+        limit: activePage === 'markets' ? MARKET_PAGE_SIZE : HOME_MARKET_LOAD_MORE_SIZE,
+        quoteReadyOnly: true,
+        routeCoverage: 'all',
+        view: 'compact',
+      });
+      const nextRows = mapCatalogMarketsToDashboardRows(response.markets);
+      setMarketRows((current) => {
+        const byId = new Map(current.map((market) => [market.id, market]));
+        for (const row of nextRows) byId.set(row.id, row);
+        return [...byId.values()];
+      });
+      setMarketCount(response.count);
+      setMarketNextCursor(response.nextCursor ?? null);
+      setMarketsHasMore(Boolean(response.hasMore));
+    } catch (error) {
+      setMarketsError(toSafeErrorMessage(error, 'Market catalog is unavailable right now.'));
+    } finally {
+      setMarketsLoadingMore(false);
+    }
+  }, [
+    activePage,
+    filterCategory,
+    isMarketSurface,
+    marketNextCursor,
+    marketsLoading,
+    marketsLoadingMore,
+    searchQuery,
+  ]);
 
   useEffect(() => {
     if (!isMarketSurface || marketRows.length === 0) {
@@ -1492,11 +1533,7 @@ export const DashboardV2Mockup = ({
     }
 
     let cancelled = false;
-    const quoteLimit = activePage === 'markets'
-      ? 60
-      : Math.min(homeMarketLimit, HOME_LIVE_QUOTE_BATCH_LIMIT);
     const marketsToQuote = marketRows
-      .slice(0, quoteLimit)
       .map((market) => ({
         market,
         outcomes: market.outcomes,
@@ -1523,7 +1560,7 @@ export const DashboardV2Mockup = ({
         }))
       );
 
-      const chunks = chunkArray(requestItems, 18);
+      const chunks = chunkArray(requestItems, MARKET_LIVE_PRICE_CHUNK_SIZE);
       await Promise.all(chunks.map(async (chunk) => {
         try {
           if (!diagnosticsEnabled) {
@@ -1610,7 +1647,7 @@ export const DashboardV2Mockup = ({
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [activePage, homeMarketLimit, isMarketSurface, marketRows]);
+  }, [isMarketSurface, marketRows]);
 
   useEffect(() => {
     if (!session?.userJwt) return;
@@ -2313,10 +2350,11 @@ export const DashboardV2Mockup = ({
                 <div className="mt-4 mb-10 flex justify-center">
                   <button
                     type="button"
-                    onClick={() => setHomeMarketLimit((current) => Math.min(current + HOME_MARKET_LOAD_MORE_SIZE, filteredMarketRows.length))}
-                    className="rounded-lg border border-[#ccff00]/40 bg-[#ccff00]/10 px-4 py-2 text-xs font-bold text-[#ccff00] transition hover:bg-[#ccff00]/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
+                    onClick={loadMoreMarkets}
+                    disabled={marketsLoadingMore}
+                    className="rounded-lg border border-[#ccff00]/40 bg-[#ccff00]/10 px-4 py-2 text-xs font-bold text-[#ccff00] transition hover:bg-[#ccff00]/20 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
                   >
-                    Load {HOME_MARKET_LOAD_MORE_SIZE} more
+                    {marketsLoadingMore ? 'Loading markets...' : `Load ${activePage === 'markets' ? MARKET_PAGE_SIZE : HOME_MARKET_LOAD_MORE_SIZE} more`}
                   </button>
                 </div>
               )}
