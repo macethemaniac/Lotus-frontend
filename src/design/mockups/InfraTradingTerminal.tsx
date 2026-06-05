@@ -2403,7 +2403,7 @@ const LiveCanonicalChart = ({
   marketType: 'binary' | 'multi';
   outcomes?: TerminalOutcomeRow[];
 }) => {
-  const [activeTab, setActiveTab] = useState<MarketChartTimeframe>('ALL');
+  const [activeTab, setActiveTab] = useState<MarketChartTimeframe>('1D');
   const [venueChart, setVenueChart] = useState<MarketChartResponse | null>(null);
   const [outcomeCharts, setOutcomeCharts] = useState<OutcomeChartEntry[]>([]);
   const [loading, setLoading] = useState(false);
@@ -2411,15 +2411,25 @@ const LiveCanonicalChart = ({
   const [notFoundKey, setNotFoundKey] = useState<string | null>(null);
   const tabs: MarketChartTimeframe[] = ['1H', '6H', '1D', '1W', '1M', 'ALL'];
   const requestKey = `${marketId ?? 'none'}:${outcomeId ?? 'none'}`;
+  const selectedChartOutcome = useMemo(() => {
+    if (marketType !== 'binary' || outcomes.length === 0) return null;
+    return outcomes.find((outcome) => outcome.id === outcomeId) ??
+      outcomes.find((outcome) => marketId && outcome.marketId === marketId && streamOutcomeMatches(outcome.quoteOutcomeId, outcomeId)) ??
+      outcomes.find((outcome) => marketId && outcome.marketId === marketId) ??
+      outcomes.find((outcome) => streamOutcomeMatches(outcome.quoteOutcomeId, outcomeId)) ??
+      outcomes[0] ??
+      null;
+  }, [marketId, marketType, outcomeId, outcomes]);
   const binaryOutcomeInputs = useMemo(() => {
     if (marketType !== 'binary') return [];
-    const source = outcomes.length > 0
-      ? outcomes
+    const source = selectedChartOutcome
+      ? [selectedChartOutcome]
+      : outcomes.length > 0
+      ? [outcomes[0]!]
       : [
           { id: 'YES', marketId, quoteOutcomeId: 'YES', name: 'Yes' } as TerminalOutcomeRow,
-          { id: 'NO', marketId, quoteOutcomeId: 'NO', name: 'No' } as TerminalOutcomeRow
         ];
-    return source.slice(0, 5).map((outcome, index): OutcomeChartInput => {
+    return source.slice(0, 1).map((outcome, index): OutcomeChartInput => {
       const chartMarketId = outcome.marketId ?? marketId;
       const quoteOutcomeId = outcome.quoteOutcomeId || canonicalQuoteOutcomeId(outcome.name || outcome.id);
       return {
@@ -2432,7 +2442,7 @@ const LiveCanonicalChart = ({
         latestValue: liveOutcomeChartPercent(outcome),
       };
     });
-  }, [marketId, marketType, outcomes]);
+  }, [marketId, marketType, outcomes, selectedChartOutcome]);
   const binaryOutcomeFetchKey = useMemo(
     () => binaryOutcomeInputs
       .map((outcome) => `${outcome.id}:${outcome.marketId ?? ''}:${outcome.quoteOutcomeId}:${outcome.key}`)
@@ -2648,17 +2658,34 @@ const LiveCanonicalChart = ({
             {series.map((item) => (
               <Line
                 key={item.id}
-                type="linear"
+                type="stepAfter"
                 dataKey={item.id}
                 name={item.label}
                 stroke={item.color}
-                strokeWidth={item.emphasis ? 2.5 : 1.8}
+                strokeWidth={item.emphasis || series.length === 1 ? 2.5 : 1.8}
                 dot={false}
                 strokeDasharray={item.dashed ? '4 2' : undefined}
-                activeDot={{ r: item.emphasis ? 5 : 4, stroke: '#18181b', strokeWidth: 2 }}
+                activeDot={{ r: item.emphasis || series.length === 1 ? 5 : 4, stroke: '#18181b', strokeWidth: 2 }}
                 connectNulls
               />
             ))}
+            {series.length === 1 && (() => {
+              const item = series[0]!;
+              const latest = [...rows].reverse().find((point) => typeof point[item.id] === 'number');
+              const latestValue = latest?.[item.id];
+              if (typeof latest?.timestamp !== 'number' || typeof latestValue !== 'number') return null;
+              return (
+                <ReferenceDot
+                  key={`${item.id}-latest-dot`}
+                  x={latest.timestamp}
+                  y={latestValue}
+                  r={5}
+                  fill={item.color}
+                  stroke="#0c0c0c"
+                  strokeWidth={2}
+                />
+              );
+            })()}
           </LineChart>
         </ResponsiveContainer>
       </div>
