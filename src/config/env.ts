@@ -13,6 +13,10 @@ function isEnabledFlag(value: unknown): boolean {
   return typeof value === "string" && value.trim().toLowerCase() === "true";
 }
 
+function isDisabledFlag(value: unknown): boolean {
+  return typeof value === "string" && value.trim().toLowerCase() === "false";
+}
+
 export const env = {
   lotusApiBaseUrl: configuredLotusApiBaseUrl(apiBaseUrl),
   turnkeyAuthEnabled: turnkeyEnabled === "true",
@@ -27,7 +31,7 @@ export const env = {
   lotusAuthExchangePath: typeof lotusAuthExchangePath === "string" && lotusAuthExchangePath.length > 0
     ? lotusAuthExchangePath
     : "/auth/turnkey/exchange",
-  executionOrchestratorV1Enabled: isEnabledFlag(executionOrchestratorV1Enabled),
+  executionOrchestratorV1Enabled: executionOrchestratorEnabledForCurrentHost(executionOrchestratorV1Enabled),
 };
 
 export function lotusWsUrl(): string {
@@ -95,6 +99,13 @@ function configuredLotusApiBaseUrl(value: unknown): string {
   }
 
   return trimmed;
+}
+
+function executionOrchestratorEnabledForCurrentHost(value: unknown): boolean {
+  if (isDisabledFlag(value)) return false;
+  if (isEnabledFlag(value)) return true;
+  if (typeof window === "undefined") return false;
+  return isDeployedFrontendHost(window.location.hostname.toLowerCase());
 }
 
 function deployedLotusApiBaseUrl(hostname: string): string | undefined {
