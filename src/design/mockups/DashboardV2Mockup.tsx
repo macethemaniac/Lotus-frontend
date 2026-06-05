@@ -1302,19 +1302,19 @@ export const DashboardV2Mockup = ({
     : portfolioSummary?.totalMarkValue !== null && portfolioSummary?.totalMarkValue !== undefined
       ? formatCurrencyValue(portfolioSummary.totalMarkValue)
       : portfolioError
-        ? 'Unavailable'
+        ? dashboardDiagnosticsEnabled ? 'Unavailable' : 'Updating'
         : formatCurrencyValue(portfolioCashTotal);
   const portfolioCashLabel = portfolioLoading
     ? 'Syncing'
     : portfolioError
-        ? 'Unavailable'
+        ? dashboardDiagnosticsEnabled ? 'Unavailable' : 'Updating'
         : formatCurrencyValue(portfolioCashTotal);
   const portfolioPositionsLabel = portfolioLoading
     ? 'Syncing'
     : portfolioSummary
       ? `${portfolioSummary.positionCount} verified`
       : portfolioError
-        ? 'Unavailable'
+        ? dashboardDiagnosticsEnabled ? 'Unavailable' : 'Updating'
         : 'Verified only';
   const portfolioMtmLabel = portfolioSummary
     ? !dashboardDiagnosticsEnabled
@@ -3387,8 +3387,11 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
     : fallbackMode === 'blocker'
       ? 'Blocked'
       : fallbackMode === 'pending'
-        ? 'Route'
-        : 'Fallback';
+      ? 'Route'
+      : 'Fallback';
+  const liveVenueCaption = quoteReadyVenueCount > 0
+    ? `${quoteReadyVenueCount} live venue${quoteReadyVenueCount === 1 ? '' : 's'}`
+    : `${venueCount} venue${venueCount === 1 ? '' : 's'} scanned`;
   const terminalPayload = { id, marketId, eventId, canonicalEventId, title, category, icon, volume, venueCount, routeType, venues, venueMarkets, marketType, outcomes, imageUrl, iconUrl, priceLabel, priceVenue, changeLabel };
   const outcomeRailOverflowClass = outcomesExpanded ? 'overflow-x-hidden overflow-y-auto custom-scrollbar' : 'overflow-hidden';
 
@@ -3468,10 +3471,20 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
           <div className="grid h-full grid-cols-[minmax(0,1fr)_auto] items-center gap-2 overflow-hidden rounded-lg border border-[#ccff00]/20 bg-[#ccff00]/5 px-3 py-1.5 text-[10px] font-medium">
             <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
               <span className="text-zinc-700 dark:text-zinc-300"><span className="text-zinc-500 dark:text-zinc-400">Route:</span> {routeType}</span>
-              <span className="text-zinc-700 dark:text-zinc-300"><span className="text-zinc-500 dark:text-zinc-400">Savings:</span> <span className="text-[#99cc00] font-bold">{savings}</span></span>
-              {spread && <span className="text-zinc-700 dark:text-zinc-300"><span className="text-zinc-500 dark:text-zinc-400">Spread:</span> {spread}</span>}
+              {diagnosticsEnabled ? (
+                <>
+                  <span className="text-zinc-700 dark:text-zinc-300"><span className="text-zinc-500 dark:text-zinc-400">Savings:</span> <span className="text-[#99cc00] font-bold">{savings}</span></span>
+                  {spread && <span className="text-zinc-700 dark:text-zinc-300"><span className="text-zinc-500 dark:text-zinc-400">Spread:</span> {spread}</span>}
+                </>
+              ) : (
+                <span className="text-zinc-700 dark:text-zinc-300"><span className="text-zinc-500 dark:text-zinc-400">Venues:</span> {liveVenueCaption}</span>
+              )}
             </div>
-            <span className="whitespace-nowrap text-zinc-700 dark:text-zinc-300"><span className="text-zinc-500 dark:text-zinc-400">{routeVenueCaption}:</span> {fallbackText}</span>
+            {diagnosticsEnabled ? (
+              <span className="whitespace-nowrap text-zinc-700 dark:text-zinc-300"><span className="text-zinc-500 dark:text-zinc-400">{routeVenueCaption}:</span> {fallbackText}</span>
+            ) : (
+              <span className="whitespace-nowrap text-zinc-700 dark:text-zinc-300">Live</span>
+            )}
           </div>
         ) : null}
       </div>
