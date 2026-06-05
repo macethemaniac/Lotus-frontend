@@ -1227,7 +1227,8 @@ export const DashboardV2Mockup = ({
 
   const pageTitle = activePage === 'markets' ? 'Markets' : 'Top Opportunities';
   const effectiveMarketViewMode = activePage === 'markets' ? 'list' : marketViewMode;
-  const isMarketSurface = activePage === 'home' || activePage === 'markets';
+  const terminalApiFocusActive = activePage === 'terminal';
+  const isMarketSurface = !terminalApiFocusActive && (activePage === 'home' || activePage === 'markets');
   const quotedMarketRows = useMemo(
     () => marketRows.map((market) => applyLiveQuoteToMarket(market, marketQuotes[market.id])),
     [marketRows, marketQuotes],
@@ -1637,6 +1638,11 @@ export const DashboardV2Mockup = ({
       setPortfolioSummary(null);
       setPortfolioBalances([]);
       setPortfolioError(null);
+      setPortfolioLoading(false);
+      return;
+    }
+    if (terminalApiFocusActive) {
+      setPortfolioLoading(false);
       return;
     }
 
@@ -1666,7 +1672,7 @@ export const DashboardV2Mockup = ({
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [session?.userJwt]);
+  }, [session?.userJwt, terminalApiFocusActive]);
 
   const handleReadNotification = (notification: UserNotification) => {
     if (!session?.userJwt || notification.readAt) return;

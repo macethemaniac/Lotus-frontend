@@ -84,6 +84,8 @@ const ORDERBOOK_REST_RECOVERY_MIN_INTERVAL_MS = 45_000;
 const ORDERBOOK_STREAM_GAP_RECOVERY_DELAY_MS = 1_500;
 const TERMINAL_CHART_REFRESH_INTERVAL_MS = 30_000;
 const TERMINAL_ACCOUNT_REFRESH_INTERVAL_MS = 30_000;
+const TERMINAL_SELECTED_PRICE_REFRESH_INTERVAL_MS = 8_000;
+const TERMINAL_FULL_OUTCOME_REFRESH_INTERVAL_MS = 120_000;
 
 const walletAddressEquals = (left?: string | null, right?: string | null): boolean => {
   if (!left || !right) return false;
@@ -2700,6 +2702,7 @@ export const InfraTradingTerminal = ({
   const orderbookRestRecoveryInFlightRef = React.useRef(false);
   const orderbookRestRecoveryTimerRef = React.useRef<number | null>(null);
   const missingRiskProfileKeysRef = React.useRef<Set<string>>(new Set());
+  const selectedOutcomeRef = React.useRef<TerminalOutcomeRow | null>(null);
   const autoPolymarketClobSyncKeyRef = React.useRef<string | null>(null);
   const orchestratorPreviewSeqRef = React.useRef(0);
   const orchestratorPollTimeoutRef = React.useRef<number | null>(null);
@@ -2861,6 +2864,10 @@ export const InfraTradingTerminal = ({
   const selectedOutcome = terminalOutcomes.find((outcome) => outcome.id === selectedOutcomeId) ?? terminalOutcomes[0] ?? null;
   const selectedOutcomeMarketId = selectedOutcome?.marketId ?? terminalMarketId;
   const selectedQuoteOutcomeId = selectedOutcome?.quoteOutcomeId ?? selectedOutcomeId;
+  const selectedOutcomeRefreshKey = `${selectedOutcome?.id ?? 'none'}:${selectedOutcomeMarketId ?? 'none'}:${selectedQuoteOutcomeId ?? 'none'}`;
+  React.useEffect(() => {
+    selectedOutcomeRef.current = selectedOutcome;
+  }, [selectedOutcome]);
   const orderbookMarketId = selectedOutcomeMarketId ?? terminalMarketId;
   const orderbookQuoteOutcomeId = selectedQuoteOutcomeId ?? (marketType === 'binary' ? 'YES' : null);
   const selectedTicketOutcomeId = outcomeIdForTicketSide(terminalOutcomes, ticketOutcomeSide, selectedOutcomeId);
@@ -3054,6 +3061,53 @@ export const InfraTradingTerminal = ({
       setOutcomesLoading(false);
     }
   }, [marketVenueList, terminalMarket, terminalMarketId]);
+
+  const refreshSelectedOutcomePrice = useCallback(async () => {
+    const currentOutcome = selectedOutcomeRef.current;
+    if (!terminalMarketId || !currentOutcome) return;
+    const outcomeMarketId = currentOutcome.marketId ?? terminalMarketId;
+    const quoteOutcomeId = currentOutcome.quoteOutcomeId ?? selectedQuoteOutcomeId ?? canonicalQuoteOutcomeId(currentOutcome.name);
+    try {
+      const response = await getMarketLivePrices({
+        items: [{
+          marketId: outcomeMarketId,
+          canonicalMarketIds: terminalMarket.canonicalMarketIds?.length
+            ? terminalMarket.canonicalMarketIds
+            : [outcomeMarketId],
+          outcomeId: quoteOutcomeId,
+        }],
+      });
+      const livePrice =
+        response.prices.find((price) =>
+          price.marketId === outcomeMarketId &&
+          streamOutcomeMatches(price.outcomeId ?? quoteOutcomeId, quoteOutcomeId)
+        ) ?? response.prices[0];
+      const parsedPrice = orderbookNumericValue(livePrice?.price ?? livePrice?.bestAsk ?? livePrice?.midpoint ?? livePrice?.bestBid);
+      if (parsedPrice === null) return;
+      const yesPrice = formatProbabilityPrice(parsedPrice);
+      const noPrice = terminalMarket.marketType === 'binary' ? formatProbabilityPrice(1 - parsedPrice) : '-';
+      const quoteVenues = livePrice?.venues?.length ? livePrice.venues : currentOutcome.venues;
+      setTerminalOutcomes((current) => current.map((outcome) => {
+        if (outcome.marketId !== outcomeMarketId) return outcome;
+        if (!streamOutcomeMatches(outcome.quoteOutcomeId, quoteOutcomeId)) return outcome;
+        return {
+          ...outcome,
+          prob: formatProbabilityPercent(parsedPrice),
+          yesPrice,
+          noPrice,
+          primaryVenue: livePrice?.bestVenue ?? outcome.primaryVenue ?? quoteVenues[0] ?? null,
+          venueQuotes: livePrice?.bestVenue
+            ? [{ venue: livePrice.bestVenue, yesPrice, noPrice, blocker: null }]
+            : outcome.venueQuotes,
+          venues: quoteVenues.length ? quoteVenues : outcome.venues,
+          status: 'live',
+          blocker: null,
+        };
+      }));
+    } catch {
+      // Keep websocket/orderbook prices and last-good rows visible; the next selected refresh will retry.
+    }
+  }, [selectedQuoteOutcomeId, terminalMarket.canonicalMarketIds, terminalMarket.marketType, terminalMarketId]);
 
   React.useEffect(() => {
     setShowAllOutcomes(false);
@@ -4171,11 +4225,24 @@ export const InfraTradingTerminal = ({
 
   React.useEffect(() => {
     void refreshOutcomes();
-    const interval = window.setInterval(() => {
+    const fullOutcomeInterval = window.setInterval(() => {
+      if (document.visibilityState === 'hidden') return;
       void refreshOutcomes();
-    }, 30_000);
-    return () => window.clearInterval(interval);
+    }, TERMINAL_FULL_OUTCOME_REFRESH_INTERVAL_MS);
+    return () => {
+      window.clearInterval(fullOutcomeInterval);
+    };
   }, [refreshOutcomes]);
+
+  React.useEffect(() => {
+    if (!selectedOutcomeRef.current || selectedOutcomeRefreshKey.startsWith('none:')) return;
+    void refreshSelectedOutcomePrice();
+    const selectedPriceInterval = window.setInterval(() => {
+      if (document.visibilityState === 'hidden') return;
+      void refreshSelectedOutcomePrice();
+    }, TERMINAL_SELECTED_PRICE_REFRESH_INTERVAL_MS);
+    return () => window.clearInterval(selectedPriceInterval);
+  }, [refreshSelectedOutcomePrice, selectedOutcomeRefreshKey]);
 
   React.useEffect(() => {
     let cancelled = false;
