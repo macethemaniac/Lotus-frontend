@@ -688,18 +688,6 @@ const formatBookNotional = (value: string | null | undefined): string => {
   return metric ? `$${metric}` : '-';
 };
 
-const scaleVenueOrderbookDisplayValue = (
-  venue: string,
-  value: string | number | null | undefined
-): string | null => {
-  const parsed = orderbookNumericValue(value);
-  if (parsed === null) return null;
-  if (toBackendVenueId(venue) === 'LIMITLESS' && Math.abs(parsed) >= 1_000_000) {
-    return String(parsed / 1_000_000);
-  }
-  return String(parsed);
-};
-
 const formatBookLevelSize = (level: MarketOrderbookLevel): string =>
   formatBookSize(level.size);
 
