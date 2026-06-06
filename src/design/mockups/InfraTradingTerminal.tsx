@@ -551,18 +551,25 @@ const canonicalIdsForTerminalOutcome = (
   primaryMarketId: string | null | undefined,
   explicitIds: readonly string[] | null | undefined,
   marketIds: readonly string[] | null | undefined,
-  outcomeCount = 1,
+  _outcomeCount = 1,
 ): string[] => {
   const explicit = uniqueNonEmptyStrings(explicitIds ?? []);
   const primary = uniqueNonEmptyStrings([primaryMarketId]);
-  // When the primary market is already present in marketIds, the explicit per-outcome list
-  // may be incomplete (e.g. only [:POLYMARKET] when [:PREDICT] is also linked). Merge so that
-  // linked-venue canonical IDs from terminalMarket.canonicalMarketIds are always included.
-  // When primary is NOT in marketIds (different outcome market), return explicit-only to avoid
-  // cross-contaminating e.g. a 2B outcome with the 1B terminal market's canonical IDs.
-  const primaryInMarketIds = primary.some((p) => (marketIds ?? []).includes(p));
-  if (explicit.length > 0 && !primaryInMarketIds) return explicit;
-  return uniqueNonEmptyStrings([...(marketIds ?? []), ...explicit, ...primary]);
+  if (explicit.length === 0) {
+    // No per-outcome canonical IDs from the backend: fall back to terminal market IDs.
+    return uniqueNonEmptyStrings([...(marketIds ?? []), ...primary]);
+  }
+  // If any explicit ID appears in the terminal market's canonical IDs the outcome belongs
+  // to the same base market — merge both lists so linked-venue IDs absent from the per-outcome
+  // explicit list (e.g. a PREDICT canonical absent from a POLYMARKET-only catalog entry) are
+  // included. If there is no overlap the outcome is a different market (e.g. 2B when terminal
+  // is 1B) — return explicit only to avoid subscribing to the wrong market's orderbook.
+  const marketIdSet = new Set(marketIds ?? []);
+  const sameBaseMarket = explicit.some((id) => marketIdSet.has(id));
+  if (sameBaseMarket) {
+    return uniqueNonEmptyStrings([...(marketIds ?? []), ...explicit, ...primary]);
+  }
+  return explicit;
 };
 
 const terminalOutcomeMatchesMarketAlias = (
@@ -694,7 +701,7 @@ const scaleVenueOrderbookDisplayValue = (
 };
 
 const formatBookLevelSize = (level: MarketOrderbookLevel): string =>
-  formatBookSize(scaleVenueOrderbookDisplayValue(level.venue, level.size));
+  formatBookSize(level.size);
 
 const formatBookLevelNotional = (level: MarketOrderbookLevel): string =>
   formatBookNotional(level.cumulativeNotional);
@@ -815,10 +822,7 @@ const sortAndCumulativeLevels = (
     .slice(0, depth)
     .map((level) => {
       const price = orderbookNumericValue(level.price) ?? 0;
-      const rawSize = orderbookNumericValue(level.size) ?? 0;
-      // Normalize LIMITLESS micro-unit sizes to shares before accumulating so
-      // cross-venue cumulative totals are in consistent display units.
-      const displaySize = orderbookNumericValue(scaleVenueOrderbookDisplayValue(level.venue, rawSize)) ?? rawSize;
+      const displaySize = orderbookNumericValue(level.size) ?? 0;
       cumulativeSize += displaySize;
       cumulativeNotional += price * displaySize;
       return {
@@ -1204,6 +1208,20 @@ const toVenueQuotes = (candidates: TradeRouteCandidate[], marketType: 'binary' |
 
 const placeholderVenueQuotes = (venues: string[], yesPrice = 'Quote', noPrice = 'Quote', blocker: string | null = null): TerminalVenueQuote[] =>
   venues.map((venue) => ({ venue, yesPrice, noPrice, blocker }));
+
+const venueQuotesFromBreakdown = (
+  breakdown: Array<{ venue: string; price: string | null; status: string }>,
+  marketType: 'binary' | 'multi' | undefined,
+): TerminalVenueQuote[] =>
+  breakdown.map(({ venue, price }) => {
+    const parsed = orderbookNumericValue(price);
+    return {
+      venue,
+      yesPrice: parsed !== null ? formatProbabilityPrice(parsed) : '-',
+      noPrice: parsed !== null && marketType === 'binary' ? formatProbabilityPrice(1 - parsed) : '-',
+      blocker: null,
+    };
+  });
 
 const canonicalQuoteOutcomeId = (label: string): string => {
   const trimmed = label.trim();
@@ -3147,7 +3165,7 @@ export const InfraTradingTerminal = ({
             label: outcome.label,
             venues: outcome.venues,
             marketId: terminalMarketId,
-            canonicalMarketIds: canonicalIdsForTerminalOutcome(terminalMarketId, null, terminalMarket.canonicalMarketIds, outcomeResponse.outcomes.length),
+            canonicalMarketIds: canonicalIdsForTerminalOutcome(terminalMarketId, outcome.canonicalMarketIds ?? null, terminalMarket.canonicalMarketIds, outcomeResponse.outcomes.length),
             quoteOutcomeId: canonicalQuoteOutcomeId(outcome.label),
             volume: outcome.volume ?? null,
             volume24h: outcome.volume24h ?? null,
@@ -3202,9 +3220,11 @@ export const InfraTradingTerminal = ({
           yesPrice,
           noPrice,
           primaryVenue: livePrice?.bestVenue ?? quoteVenues[0] ?? null,
-          venueQuotes: livePrice?.bestVenue && parsedPrice !== null
-            ? placeholderVenueQuotes(quoteVenues.length ? quoteVenues : [livePrice.bestVenue], yesPrice, noPrice, null)
-            : placeholderVenueQuotes(quoteVenues, '-', '-', null),
+          venueQuotes: livePrice?.venueBreakdown?.length
+            ? venueQuotesFromBreakdown(livePrice.venueBreakdown, terminalMarket.marketType)
+            : livePrice?.bestVenue && parsedPrice !== null
+              ? placeholderVenueQuotes(quoteVenues.length ? quoteVenues : [livePrice.bestVenue], yesPrice, noPrice, null)
+              : placeholderVenueQuotes(quoteVenues, '-', '-', null),
           active: index === 0,
           venues: quoteVenues,
           status: parsedPrice !== null ? 'live' : 'pending',
@@ -3305,9 +3325,11 @@ export const InfraTradingTerminal = ({
               yesPrice,
               noPrice,
               primaryVenue: livePrice?.bestVenue ?? outcome.primaryVenue ?? quoteVenues[0] ?? null,
-              venueQuotes: livePrice?.bestVenue
-                ? placeholderVenueQuotes(quoteVenues.length ? quoteVenues : [livePrice.bestVenue], yesPrice, noPrice, null)
-                : outcome.venueQuotes,
+              venueQuotes: livePrice?.venueBreakdown?.length
+                ? venueQuotesFromBreakdown(livePrice.venueBreakdown, terminalMarket.marketType)
+                : livePrice?.bestVenue
+                  ? placeholderVenueQuotes(quoteVenues.length ? quoteVenues : [livePrice.bestVenue], yesPrice, noPrice, null)
+                  : outcome.venueQuotes,
               venues: quoteVenues.length ? quoteVenues : outcome.venues,
               status: 'live',
               blocker: null,

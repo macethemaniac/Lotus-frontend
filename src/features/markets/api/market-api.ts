@@ -94,6 +94,7 @@ export type MarketOutcome = {
   id: string;
   label: string;
   venues: string[];
+  canonicalMarketIds?: string[];
   volume?: string | null;
   volume24h?: string | null;
 };
@@ -260,6 +261,14 @@ export type MarketLivePriceRequestItem = {
   outcomeId?: string | null;
 };
 
+export type MarketLivePriceVenueBreakdown = {
+  venue: string;
+  price: string | null;
+  bestBid: string | null;
+  bestAsk: string | null;
+  status: "live" | "no_live_price";
+};
+
 export type MarketLivePriceItem = {
   marketId: string;
   outcomeId: string | null;
@@ -279,6 +288,7 @@ export type MarketLivePriceItem = {
   linkedVenues?: string[];
   averagePrice?: string | null;
   freshnessMs: number | null;
+  venueBreakdown?: MarketLivePriceVenueBreakdown[];
 };
 
 export type MarketLivePricesResponse = {
