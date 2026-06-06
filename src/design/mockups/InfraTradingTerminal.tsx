@@ -555,8 +555,11 @@ const canonicalIdsForTerminalOutcome = (
 ): string[] => {
   const explicit = uniqueNonEmptyStrings(explicitIds ?? []);
   if (explicit.length > 0) return explicit;
+  // Include all market-level canonical IDs so multi-venue linked markets (e.g. POLYMARKET +
+  // PREDICT_FUN for the same binary event) all get WebSocket subscriptions and are merged
+  // into the orderbook. The previous early-return for outcomeCount > 1 skipped marketIds,
+  // leaving linked venues unsubscribed for binary markets.
   const primary = uniqueNonEmptyStrings([primaryMarketId]);
-  if (outcomeCount > 1 && primary.length > 0) return primary;
   return uniqueNonEmptyStrings([...(marketIds ?? []), ...primary]);
 };
 
@@ -802,7 +805,9 @@ const sortAndCumulativeLevels = (
     .sort((left, right) => {
       const leftPrice = orderbookNumericValue(left.price) ?? 0;
       const rightPrice = orderbookNumericValue(right.price) ?? 0;
-      return side === 'bid' ? rightPrice - leftPrice : leftPrice - rightPrice;
+      const priceDiff = side === 'bid' ? rightPrice - leftPrice : leftPrice - rightPrice;
+      if (priceDiff !== 0) return priceDiff;
+      return left.venue.localeCompare(right.venue);
     })
     .slice(0, depth)
     .map((level) => {
