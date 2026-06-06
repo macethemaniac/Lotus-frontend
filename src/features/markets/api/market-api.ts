@@ -94,6 +94,8 @@ export type MarketOutcome = {
   id: string;
   label: string;
   venues: string[];
+  volume?: string | null;
+  volume24h?: string | null;
 };
 
 export type MarketOrderbookLevel = {

@@ -554,13 +554,15 @@ const canonicalIdsForTerminalOutcome = (
   outcomeCount = 1,
 ): string[] => {
   const explicit = uniqueNonEmptyStrings(explicitIds ?? []);
-  if (explicit.length > 0) return explicit;
-  // Include all market-level canonical IDs so multi-venue linked markets (e.g. POLYMARKET +
-  // PREDICT_FUN for the same binary event) all get WebSocket subscriptions and are merged
-  // into the orderbook. The previous early-return for outcomeCount > 1 skipped marketIds,
-  // leaving linked venues unsubscribed for binary markets.
   const primary = uniqueNonEmptyStrings([primaryMarketId]);
-  return uniqueNonEmptyStrings([...(marketIds ?? []), ...primary]);
+  // When the primary market is already present in marketIds, the explicit per-outcome list
+  // may be incomplete (e.g. only [:POLYMARKET] when [:PREDICT] is also linked). Merge so that
+  // linked-venue canonical IDs from terminalMarket.canonicalMarketIds are always included.
+  // When primary is NOT in marketIds (different outcome market), return explicit-only to avoid
+  // cross-contaminating e.g. a 2B outcome with the 1B terminal market's canonical IDs.
+  const primaryInMarketIds = primary.some((p) => (marketIds ?? []).includes(p));
+  if (explicit.length > 0 && !primaryInMarketIds) return explicit;
+  return uniqueNonEmptyStrings([...(marketIds ?? []), ...explicit, ...primary]);
 };
 
 const terminalOutcomeMatchesMarketAlias = (
@@ -695,7 +697,7 @@ const formatBookLevelSize = (level: MarketOrderbookLevel): string =>
   formatBookSize(scaleVenueOrderbookDisplayValue(level.venue, level.size));
 
 const formatBookLevelNotional = (level: MarketOrderbookLevel): string =>
-  formatBookNotional(scaleVenueOrderbookDisplayValue(level.venue, level.cumulativeNotional));
+  formatBookNotional(level.cumulativeNotional);
 
 const orderbookNumberString = (value: string | number | null | undefined): string | null => {
   if (value === null || typeof value === 'undefined') return null;
@@ -754,14 +756,15 @@ const normalizeOrderbookInitialSnapshot = (
 ): MarketOrderbookResponse => {
   const marketId = streamPayloadMarketId(payload) ?? expectedMarketId;
   const outcomeId = streamPayloadOutcomeId(payload) ?? expectedOutcomeId;
+  const depth = typeof payload.depth === 'number' ? payload.depth : current?.depth ?? 20;
   return {
     marketId,
     outcomeId: outcomeId && outcomeId !== '_' ? outcomeId : null,
     generatedAt: typeof payload.generatedAt === 'string' ? payload.generatedAt : new Date().toISOString(),
-    depth: typeof payload.depth === 'number' ? payload.depth : current?.depth ?? 20,
+    depth,
     venues: Array.isArray(payload.venues) ? payload.venues : current?.venues ?? [],
-    bids: Array.isArray(payload.bids) ? payload.bids : current?.bids ?? [],
-    asks: Array.isArray(payload.asks) ? payload.asks : current?.asks ?? [],
+    bids: sortAndCumulativeLevels(Array.isArray(payload.bids) ? payload.bids as unknown as MarketOrderbookLevel[] : current?.bids ?? [], 'bid', depth),
+    asks: sortAndCumulativeLevels(Array.isArray(payload.asks) ? payload.asks as unknown as MarketOrderbookLevel[] : current?.asks ?? [], 'ask', depth),
     bestBid: orderbookNumberString(payload.bestBid) ?? current?.bestBid ?? null,
     bestAsk: orderbookNumberString(payload.bestAsk) ?? current?.bestAsk ?? null,
     midpoint: orderbookNumberString(payload.midpoint) ?? current?.midpoint ?? null,
@@ -812,9 +815,12 @@ const sortAndCumulativeLevels = (
     .slice(0, depth)
     .map((level) => {
       const price = orderbookNumericValue(level.price) ?? 0;
-      const size = orderbookNumericValue(level.size) ?? 0;
-      cumulativeSize += size;
-      cumulativeNotional += price * size;
+      const rawSize = orderbookNumericValue(level.size) ?? 0;
+      // Normalize LIMITLESS micro-unit sizes to shares before accumulating so
+      // cross-venue cumulative totals are in consistent display units.
+      const displaySize = orderbookNumericValue(scaleVenueOrderbookDisplayValue(level.venue, rawSize)) ?? rawSize;
+      cumulativeSize += displaySize;
+      cumulativeNotional += price * displaySize;
       return {
         ...level,
         cumulativeSize: String(cumulativeSize),
@@ -3129,6 +3135,8 @@ export const InfraTradingTerminal = ({
         marketId: row.marketId,
         canonicalMarketIds: row.canonicalMarketIds,
         quoteOutcomeId: row.quoteOutcomeId,
+        volume: null as string | null,
+        volume24h: null as string | null,
       }));
       const outcomeResponse = seededEventOutcomes ? null : await getMarketOutcomes(terminalMarketId);
       const baseOutcomes = seededEventOutcomes
@@ -3141,6 +3149,8 @@ export const InfraTradingTerminal = ({
             marketId: terminalMarketId,
             canonicalMarketIds: canonicalIdsForTerminalOutcome(terminalMarketId, null, terminalMarket.canonicalMarketIds, outcomeResponse.outcomes.length),
             quoteOutcomeId: canonicalQuoteOutcomeId(outcome.label),
+            volume: outcome.volume ?? null,
+            volume24h: outcome.volume24h ?? null,
           }))
           : seededOutcomes;
 
@@ -3186,14 +3196,14 @@ export const InfraTradingTerminal = ({
           canonicalMarketIds,
           quoteOutcomeId,
           name: outcome.label,
-          vol: `${formatMoneyMetric(terminalMarket.volume) ?? terminalMarket.volume} Vol.`,
+          vol: `${formatMoneyMetric(outcome.volume ?? terminalMarket.volume) ?? outcome.volume ?? terminalMarket.volume} Vol.`,
           platforms: quoteVenues.length || terminalMarket.venueCount,
           prob: parsedPrice !== null ? formatProbabilityPercent(parsedPrice) : '-',
           yesPrice,
           noPrice,
           primaryVenue: livePrice?.bestVenue ?? quoteVenues[0] ?? null,
           venueQuotes: livePrice?.bestVenue && parsedPrice !== null
-            ? placeholderVenueQuotes(liveQuoteVenues.length ? liveQuoteVenues : [livePrice.bestVenue], yesPrice, noPrice, null)
+            ? placeholderVenueQuotes(quoteVenues.length ? quoteVenues : [livePrice.bestVenue], yesPrice, noPrice, null)
             : placeholderVenueQuotes(quoteVenues, '-', '-', null),
           active: index === 0,
           venues: quoteVenues,
@@ -3296,7 +3306,7 @@ export const InfraTradingTerminal = ({
               noPrice,
               primaryVenue: livePrice?.bestVenue ?? outcome.primaryVenue ?? quoteVenues[0] ?? null,
               venueQuotes: livePrice?.bestVenue
-                ? placeholderVenueQuotes(liveQuoteVenues.length ? liveQuoteVenues : [livePrice.bestVenue], yesPrice, noPrice, null)
+                ? placeholderVenueQuotes(quoteVenues.length ? quoteVenues : [livePrice.bestVenue], yesPrice, noPrice, null)
                 : outcome.venueQuotes,
               venues: quoteVenues.length ? quoteVenues : outcome.venues,
               status: 'live',
