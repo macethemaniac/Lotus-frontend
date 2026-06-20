@@ -2997,10 +2997,22 @@ export const InfraTradingTerminal = ({
   const selectedTicketQuoteOutcomeId = quoteOutcomeIdForTicketSide(selectedTicketOutcome, ticketOutcomeSide)
     ?? selectedTicketOutcomeId;
   const ticketVenuePreference = useMemo<ExecutionOrderVenuePreference>(() => {
-    // The orderbook venue selector is only a display filter. Execution should
-    // stay route-controlled unless a dedicated venue-lock control is added.
+    // When the trader explicitly picks a venue in the orderbook venue selector, lock execution to
+    // that venue instead of letting BEST_ROUTE silently route elsewhere (which made the selected
+    // venue and the executed venue disagree). 'ALL' keeps the best-route behaviour.
+    if (orderbookVenue && orderbookVenue !== 'ALL') {
+      const backendVenue = toBackendVenueId(orderbookVenue);
+      if (
+        backendVenue === 'POLYMARKET' ||
+        backendVenue === 'LIMITLESS' ||
+        backendVenue === 'PREDICT_FUN' ||
+        backendVenue === 'OPINION'
+      ) {
+        return backendVenue;
+      }
+    }
     return 'BEST_ROUTE';
-  }, []);
+  }, [orderbookVenue]);
   const ticketOrchestratorRoutePath = routePathFromExecutionOrder(ticketOrchestratorOrder);
   const legacyTicketRoutePath = routePath(ticketQuote);
   const ticketRoutePath = executionOrchestratorEnabled ? ticketOrchestratorRoutePath : legacyTicketRoutePath;
