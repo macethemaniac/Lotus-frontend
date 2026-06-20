@@ -2984,7 +2984,12 @@ export const InfraTradingTerminal = ({
   }, [selectedOutcome]);
   const orderbookActive = Boolean(selectedOutcome && expandedOutcomeId === selectedOutcome.id);
   const orderbookMarketId = orderbookActive ? selectedOutcomeMarketId ?? terminalMarketId : null;
-  const orderbookQuoteOutcomeId = orderbookActive ? selectedQuoteOutcomeId ?? (marketType === 'binary' ? 'YES' : null) : null;
+  const orderbookSideLabel = ticketOutcomeSide === 'no' ? 'No' : 'Yes';
+  const orderbookQuoteOutcomeId = orderbookActive
+    ? ticketOutcomeSide === 'no'
+      ? quoteOutcomeIdForTicketSide(selectedOutcome, 'no') ?? (marketType === 'binary' ? 'NO' : null)
+      : selectedQuoteOutcomeId ?? quoteOutcomeIdForTicketSide(selectedOutcome, 'yes') ?? (marketType === 'binary' ? 'YES' : null)
+    : null;
   const orderbookStreamMarketIds = useMemo(
     () => selectedOutcomeCanonicalMarketIds.length > 0
       ? selectedOutcomeCanonicalMarketIds
@@ -6109,6 +6114,8 @@ export const InfraTradingTerminal = ({
                            const rowProbability = isSelectedOutcome ? selectedOutcomeBookDisplay.probability ?? m.prob : m.prob;
                            const rowYesVenue = isSelectedOutcome ? selectedOutcomeBookDisplay.yesVenue ?? primaryVenue : primaryVenue;
                            const rowNoVenue = isSelectedOutcome ? selectedOutcomeBookDisplay.noVenue ?? primaryVenue : primaryVenue;
+                           const rowYesSelected = isSelectedOutcome && ticketOutcomeSide === 'yes';
+                           const rowNoSelected = isSelectedOutcome && ticketOutcomeSide === 'no';
                            if (expandedOutcomeId === m.id) {
                              return (
                                <div key={m.id} className="overflow-hidden rounded-xl border border-zinc-800 bg-[#151517]">
@@ -6138,7 +6145,8 @@ export const InfraTradingTerminal = ({
                                      <button
                                        type="button"
                                        onClick={() => selectTicketOutcome('yes', m.id)}
-                                       className="flex h-10 min-w-[132px] items-center justify-center gap-2 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-4 text-sm font-black text-emerald-400 transition-colors hover:bg-emerald-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
+                                       className={`flex h-10 min-w-[132px] items-center justify-center gap-2 rounded-full border px-4 text-sm font-black transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${rowYesSelected ? 'border-emerald-400 bg-emerald-500 text-white shadow-[0_0_18px_rgba(16,185,129,0.22)] hover:bg-emerald-400' : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20'}`}
+                                       aria-pressed={rowYesSelected}
                                      >
                                        <VenueLogo id={normalizeVenueId(rowYesVenue)} label={formatVenueLabel(rowYesVenue)} className="h-4 w-4 rounded-full" />
                                        Yes {displayPriceLabel(rowYesPrice, marketDiagnosticsEnabled)}
@@ -6146,7 +6154,8 @@ export const InfraTradingTerminal = ({
                                      <button
                                        type="button"
                                        onClick={() => selectTicketOutcome('no', m.id)}
-                                       className="flex h-10 min-w-[132px] items-center justify-center gap-2 rounded-full bg-zinc-900 px-4 text-sm font-black text-white transition-colors hover:bg-zinc-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
+                                       className={`flex h-10 min-w-[132px] items-center justify-center gap-2 rounded-full border px-4 text-sm font-black transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${rowNoSelected ? 'border-red-400 bg-[#E52B50] text-white shadow-[0_0_18px_rgba(229,43,80,0.24)] hover:bg-[#ff3366]' : 'border-red-500/25 bg-[#3F1D24] text-red-200 hover:bg-[#52252f]'}`}
+                                       aria-pressed={rowNoSelected}
                                      >
                                        <VenueLogo id={normalizeVenueId(rowNoVenue)} label={formatVenueLabel(rowNoVenue)} className="h-4 w-4 rounded-full" />
                                        No {displayPriceLabel(rowNoPrice, marketDiagnosticsEnabled)}
@@ -6177,7 +6186,7 @@ export const InfraTradingTerminal = ({
                                    </button>
                                  </div>
                                  <div className="grid grid-cols-[1.1fr_0.9fr_0.9fr_0.9fr] border-b border-zinc-800 bg-[#151517] px-4 py-2.5 text-[11px] font-bold uppercase tracking-[0.14em] text-zinc-500">
-                                   <span>Trade Yes</span>
+                                   <span>Trade {orderbookSideLabel}</span>
                                    <span>Price</span>
                                    <span className="text-right">Shares</span>
                                    <span className="text-right">Total</span>
@@ -6209,7 +6218,7 @@ export const InfraTradingTerminal = ({
                                    ))}
                                    </div>
                                    <div className="grid grid-cols-[1.1fr_0.9fr_0.9fr_0.9fr] border-y border-zinc-800 bg-[#151517] px-4 py-2 text-sm font-semibold text-zinc-100">
-                                     <span>Last: Yes {formatBookPrice(displayOrderbook?.midpoint)}</span>
+                                     <span>Last: {orderbookSideLabel} {formatBookPrice(displayOrderbook?.midpoint)}</span>
                                      <span>Spread: {formatBookPrice(displayOrderbook?.spread)}</span>
                                      <span />
                                      <span />
@@ -6273,7 +6282,8 @@ export const InfraTradingTerminal = ({
                                               focusTerminalOutcomeOrderbook(m.id);
                                               selectTicketOutcome('yes', m.id);
                                             }}
-                                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#1A3A34] text-[#4ade80] text-xs font-bold hover:bg-[#204941] transition-colors"
+                                            className={`flex min-h-8 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${rowYesSelected ? 'border-emerald-400 bg-emerald-500 text-white shadow-[0_0_14px_rgba(16,185,129,0.2)] hover:bg-emerald-400' : 'border-transparent bg-[#1A3A34] text-[#4ade80] hover:bg-[#204941]'}`}
+                                            aria-pressed={rowYesSelected}
                                           >
                                                <VenueLogo id={normalizeVenueId(rowYesVenue)} label={formatVenueLabel(rowYesVenue)} className="h-3.5 w-3.5 rounded-full" /> Yes {displayPriceLabel(rowYesPrice, marketDiagnosticsEnabled)}
                                           </button>
@@ -6284,7 +6294,8 @@ export const InfraTradingTerminal = ({
                                               focusTerminalOutcomeOrderbook(m.id);
                                               selectTicketOutcome('no', m.id);
                                             }}
-                                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#3F1D24] text-[#f87171] text-xs font-bold hover:bg-[#52252f] transition-colors"
+                                            className={`flex min-h-8 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${rowNoSelected ? 'border-red-400 bg-[#E52B50] text-white shadow-[0_0_14px_rgba(229,43,80,0.22)] hover:bg-[#ff3366]' : 'border-transparent bg-[#3F1D24] text-[#f87171] hover:bg-[#52252f]'}`}
+                                            aria-pressed={rowNoSelected}
                                           >
                                                <VenueLogo id={normalizeVenueId(rowNoVenue)} label={formatVenueLabel(rowNoVenue)} className="h-3.5 w-3.5 rounded-full" /> No {displayPriceLabel(rowNoPrice, marketDiagnosticsEnabled)}
                                           </button>
