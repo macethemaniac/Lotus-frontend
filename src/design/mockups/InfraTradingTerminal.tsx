@@ -1880,6 +1880,108 @@ const executionOrderEstimatedSavings = (order: ExecutionOrderResponse | null): n
   numericField(order?.priceSummary, ['estimatedSavings', 'savings', 'totalSavings']) ??
   numericField(order?.routeSummary, ['estimatedSavings', 'savings', 'totalSavings']);
 
+type InsufficientExecutableDepthSummary = {
+  requestedNotional: number | null;
+  executableNotional: number | null;
+  executableShares: number | null;
+  averageExecutablePrice: number | null;
+  residualNotional: number | null;
+  venuesConsidered: string[];
+};
+
+const INSUFFICIENT_EXECUTABLE_DEPTH_CODE = 'INSUFFICIENT_EXECUTABLE_DEPTH';
+
+const nestedRecord = (value: unknown, fields: string[]): Record<string, unknown> | null => {
+  const source = recordValue(value);
+  for (const field of fields) {
+    const candidate = source[field];
+    if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) return recordValue(candidate);
+  }
+  return null;
+};
+
+const executionOrderDetailSources = (order: ExecutionOrderResponse | null): Record<string, unknown>[] => {
+  const sources: Record<string, unknown>[] = [];
+  for (const blocker of order?.blockers ?? []) {
+    if (blocker && typeof blocker === 'object') {
+      const source = recordValue(blocker);
+      sources.push(source);
+      const details = nestedRecord(source, ['details', 'metadata', 'data']);
+      if (details) sources.push(details);
+    }
+  }
+  const lastError = order?.lastError;
+  if (lastError && typeof lastError === 'object') {
+    const source = recordValue(lastError);
+    sources.push(source);
+    const details = nestedRecord(source, ['details', 'metadata', 'data']);
+    if (details) sources.push(details);
+  }
+  for (const source of [order?.priceSummary, order?.routeSummary]) {
+    if (source && typeof source === 'object') {
+      const record = recordValue(source);
+      sources.push(record);
+      const details = nestedRecord(record, ['insufficientDepth', 'insufficientExecutableDepth', 'depth', 'details', 'metadata']);
+      if (details) sources.push(details);
+    }
+  }
+  return sources;
+};
+
+const textCodeField = (value: unknown): string | null => {
+  const source = recordValue(value);
+  const direct = source.code ?? source.reasonCode ?? source.detailsCode;
+  if (typeof direct === 'string' && direct.trim()) return direct.trim().toUpperCase();
+  const details = nestedRecord(source, ['details', 'metadata', 'data']);
+  const nested = details?.code ?? details?.reasonCode ?? details?.detailsCode;
+  return typeof nested === 'string' && nested.trim() ? nested.trim().toUpperCase() : null;
+};
+
+const executionOrderHasInsufficientDepth = (order: ExecutionOrderResponse | null): boolean => {
+  if (!order) return false;
+  const codedSources = executionOrderDetailSources(order);
+  if (codedSources.some((source) => textCodeField(source) === INSUFFICIENT_EXECUTABLE_DEPTH_CODE)) return true;
+  const text = [
+    executionOrderBlockerMessage(order),
+    typeof order.lastError === 'string' ? order.lastError : null,
+  ].filter(Boolean).join(' ').toUpperCase();
+  return text.includes(INSUFFICIENT_EXECUTABLE_DEPTH_CODE);
+};
+
+const numericFromSources = (sources: readonly Record<string, unknown>[], fields: string[]): number | null => {
+  for (const source of sources) {
+    const value = numericField(source, fields);
+    if (value !== null) return value;
+  }
+  return null;
+};
+
+const venuesFromSources = (sources: readonly Record<string, unknown>[]): string[] => {
+  for (const source of sources) {
+    const candidate = source.venuesConsidered ?? source.venues ?? source.venuePath;
+    if (Array.isArray(candidate)) {
+      const venues = candidate
+        .map((item) => typeof item === 'string' ? item : textField(item, ['venue', 'venueId', 'name']))
+        .filter((item): item is string => Boolean(item));
+      if (venues.length > 0) return [...new Set(venues)];
+    }
+  }
+  return [];
+};
+
+const insufficientDepthFromExecutionOrder = (order: ExecutionOrderResponse | null): InsufficientExecutableDepthSummary | null => {
+  if (!executionOrderHasInsufficientDepth(order)) return null;
+  const sources = executionOrderDetailSources(order);
+  return {
+    requestedNotional: numericFromSources(sources, ['requestedNotional', 'requestedNotionalUsd', 'requestedNotionalUSDC', 'notionalAmount', 'requestedAmount']),
+    executableNotional: numericFromSources(sources, ['executableNotional', 'executableNotionalUsd', 'executableNotionalUSDC', 'maxExecutableNotional', 'availableNotional']),
+    executableShares: numericFromSources(sources, ['executableShares', 'maxExecutableShares', 'availableShares', 'executableAmount']),
+    averageExecutablePrice: numericFromSources(sources, ['averageExecutablePrice', 'avgExecutablePrice', 'averagePrice', 'avgPrice', 'effectivePrice']),
+    residualNotional: numericFromSources(sources, ['residualNotional', 'residualNotionalUsd', 'residualNotionalUSDC', 'unfilledNotional', 'remainingNotional']),
+    venuesConsidered: venuesFromSources(sources),
+  };
+};
+
 const describeOutcomeSchema = (schema: Record<string, unknown> | null | undefined): string => {
   if (!schema) return 'Outcome schema not specified';
   const yes = typeof schema.yesLabel === 'string' ? schema.yesLabel : 'Yes';
@@ -4948,27 +5050,31 @@ export const InfraTradingTerminal = ({
       if (!options.quiet) setTicketError(side === 'buy' ? 'Enter a USDC amount.' : 'Enter shares to sell.');
       return null;
     }
-    const backendAmountValue = side === 'buy'
-      ? estimateShares(trimmedAmount, ticketPriceForSide(selectedTicketOutcome, ticketOutcomeSide))
-      : amountValue;
-    if (!backendAmountValue) {
-      if (!options.quiet) setTicketError(side === 'buy' ? 'Enter a USDC amount after a live outcome price is available.' : 'Enter shares to sell.');
-      return null;
-    }
-    const backendAmount = formatRouteAmount(backendAmountValue);
+    const backendAmount = formatRouteAmount(amountValue);
     const previewSeq = ++orchestratorPreviewSeqRef.current;
     if (!options.quiet) setTicketLoading(true);
     setTicketOrchestratorAutoRenewFailed(false);
     try {
-      const order = await previewExecutionOrder(token, {
+      const commonPreviewFields = {
         marketId: selectedTicketMarketId,
         outcomeId: selectedTicketQuoteOutcomeId,
-        side,
-        amount: backendAmount,
         venuePreference: ticketVenuePreference,
         orderPolicy: ticketOrderPolicy,
         slippageToleranceBps: slippageTolerancePercentToBps(ticketSlippageTolerance),
-      });
+      };
+      const order = await previewExecutionOrder(token, side === 'buy'
+        ? {
+          ...commonPreviewFields,
+          side: 'buy',
+          amountType: 'NOTIONAL_USDC',
+          notionalAmount: backendAmount,
+        }
+        : {
+          ...commonPreviewFields,
+          side: 'sell',
+          amountType: 'SHARES',
+          shareAmount: backendAmount,
+        });
       if (previewSeq !== orchestratorPreviewSeqRef.current) return null;
       if (order.state === 'EXPIRED' && order.canAutoRenew && options.allowAutoRenew !== false) {
         return previewOrchestratorOrder({ ...options, allowAutoRenew: false });
@@ -4998,12 +5104,10 @@ export const InfraTradingTerminal = ({
     executionOrchestratorEnabled,
     selectedTicketMarketId,
     selectedTicketQuoteOutcomeId,
-    selectedTicketOutcome,
     side,
     ticketAmount,
     ticketOrderPolicy,
     ticketSlippageTolerance,
-    ticketOutcomeSide,
     ticketVenuePreference,
     token,
   ]);
@@ -5243,6 +5347,7 @@ export const InfraTradingTerminal = ({
   const ticketAmountValue = ticketAmountNumber(ticketAmount);
   const ticketOrchestratorBlocker = executionOrderBlockerMessage(ticketOrchestratorOrder);
   const ticketOrchestratorState = ticketOrchestratorOrder?.state ?? null;
+  const ticketInsufficientDepth = insufficientDepthFromExecutionOrder(ticketOrchestratorOrder);
   const ticketOrchestratorRouteLegs = routeLegsFromExecutionOrder(ticketOrchestratorOrder);
   const ticketOrchestratorRouteType = executionOrderRouteType(ticketOrchestratorOrder);
   const ticketOrchestratorRouteBadge = ticketOrchestratorRouteLegs.length === 1 ? 'SINGLE_VENUE' : ticketOrchestratorRouteType;
@@ -5356,6 +5461,24 @@ export const InfraTradingTerminal = ({
     ? formatSignedShares(ticketSellableShares)
     : ticketFundingLabel;
   const ticketAvailabilityCopy = side === 'sell' ? 'Sellable shares' : 'Venue-ready balance';
+  const depthMoneyLabel = (value: number | null | undefined): string =>
+    typeof value === 'number' && Number.isFinite(value) ? formatUsdc(value) : 'Unavailable';
+  const depthSharesLabel = (value: number | null | undefined): string =>
+    typeof value === 'number' && Number.isFinite(value) ? formatSignedShares(value) : 'Unavailable';
+  const ticketDepthExecutableLabel = depthMoneyLabel(ticketInsufficientDepth?.executableNotional);
+  const ticketDepthRequestedLabel = depthMoneyLabel(ticketInsufficientDepth?.requestedNotional);
+  const ticketDepthResidualLabel = depthMoneyLabel(ticketInsufficientDepth?.residualNotional);
+  const ticketDepthSharesLabel = depthSharesLabel(ticketInsufficientDepth?.executableShares);
+  const ticketDepthPriceLabel = typeof ticketInsufficientDepth?.averageExecutablePrice === 'number'
+    ? formatProbabilityPrice(ticketInsufficientDepth.averageExecutablePrice)
+    : 'Unavailable';
+  const ticketDepthVenuesLabel = ticketInsufficientDepth?.venuesConsidered.length
+    ? ticketInsufficientDepth.venuesConsidered.map(formatVenueLabel).join(', ')
+    : 'Unavailable';
+  const ticketDepthUseMaxAvailable = side === 'buy' &&
+    typeof ticketInsufficientDepth?.executableNotional === 'number' &&
+    Number.isFinite(ticketInsufficientDepth.executableNotional) &&
+    ticketInsufficientDepth.executableNotional > 0;
   const ticketReceiveEstimate = side === 'buy'
     ? parsePositiveNumber(ticketQuote?.executableAmount) ?? ticketEstimatedShares
     : ticketAmountValue && ticketEffectivePrice
@@ -5376,6 +5499,7 @@ export const InfraTradingTerminal = ({
       ticketOrchestratorPlacing ||
       ticketOrchestratorSigning ||
       ticketSellUnavailable ||
+      Boolean(ticketInsufficientDepth) ||
       ticketOrchestratorWaiting ||
       ticketOrchestratorState === 'NEEDS_SIGNATURE' ||
       ticketOrchestratorState === 'BLOCKED_ACTION_REQUIRED' ||
@@ -5407,6 +5531,8 @@ export const InfraTradingTerminal = ({
         ? 'Waiting for venue readiness...'
       : ticketOrchestratorState === 'NEEDS_SIGNATURE'
         ? 'Waiting for signature...'
+      : ticketInsufficientDepth
+        ? 'Insufficient depth'
       : ticketOrchestratorState === 'BLOCKED_ACTION_REQUIRED'
         ? 'Execution blocked'
       : ticketOrchestratorState === 'SUBMITTING'
@@ -7120,6 +7246,63 @@ export const InfraTradingTerminal = ({
                               </span>
                             </div>
                           )}
+                        </div>
+                      )}
+                      {executionOrchestratorEnabled && ticketInsufficientDepth && (
+                        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-[10px] font-semibold text-amber-100">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <div className="text-[12px] font-black text-amber-50">
+                                Only {ticketDepthExecutableLabel} is executable right now across venues.
+                              </div>
+                              <div className="mt-1 text-amber-100/75">
+                                Reduce the notional or use the executable max. Lotus will preview again before any submit.
+                              </div>
+                            </div>
+                            <span className="shrink-0 rounded border border-amber-400/30 bg-amber-400/10 px-1.5 py-0.5 font-mono text-[8px] uppercase tracking-widest text-amber-100">
+                              depth
+                            </span>
+                          </div>
+                          <div className="mt-3 grid grid-cols-2 gap-2 text-amber-100/90">
+                            <div className="rounded border border-amber-500/20 bg-black/20 p-2">
+                              <div className="text-[8px] uppercase tracking-widest text-amber-100/50">Requested</div>
+                              <div className="mt-0.5 font-mono text-amber-50">{ticketDepthRequestedLabel}</div>
+                            </div>
+                            <div className="rounded border border-amber-500/20 bg-black/20 p-2">
+                              <div className="text-[8px] uppercase tracking-widest text-amber-100/50">Executable</div>
+                              <div className="mt-0.5 font-mono text-amber-50">{ticketDepthExecutableLabel}</div>
+                            </div>
+                            <div className="rounded border border-amber-500/20 bg-black/20 p-2">
+                              <div className="text-[8px] uppercase tracking-widest text-amber-100/50">Shares</div>
+                              <div className="mt-0.5 font-mono text-amber-50">{ticketDepthSharesLabel}</div>
+                            </div>
+                            <div className="rounded border border-amber-500/20 bg-black/20 p-2">
+                              <div className="text-[8px] uppercase tracking-widest text-amber-100/50">Avg. price</div>
+                              <div className="mt-0.5 font-mono text-amber-50">{ticketDepthPriceLabel}</div>
+                            </div>
+                            <div className="rounded border border-amber-500/20 bg-black/20 p-2">
+                              <div className="text-[8px] uppercase tracking-widest text-amber-100/50">Residual</div>
+                              <div className="mt-0.5 font-mono text-amber-50">{ticketDepthResidualLabel}</div>
+                            </div>
+                            <div className="rounded border border-amber-500/20 bg-black/20 p-2">
+                              <div className="text-[8px] uppercase tracking-widest text-amber-100/50">Venues</div>
+                              <div className="mt-0.5 truncate font-mono text-amber-50">{ticketDepthVenuesLabel}</div>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            disabled={!ticketDepthUseMaxAvailable}
+                            onClick={() => {
+                              if (!ticketDepthUseMaxAvailable || typeof ticketInsufficientDepth.executableNotional !== 'number') return;
+                              setTicketAmount(formatRouteAmount(ticketInsufficientDepth.executableNotional));
+                              setTicketConfirmArmed(false);
+                              setTicketError(null);
+                              setTicketStatusMessage('Previewing executable max notional.');
+                            }}
+                            className="mt-3 flex h-9 w-full items-center justify-center rounded-lg border border-[#ccff00]/30 bg-[#ccff00]/15 px-3 text-[10px] font-black uppercase tracking-wide text-[#ccff00] transition-colors hover:bg-[#ccff00]/25 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
+                          >
+                            Use max
+                          </button>
                         </div>
                       )}
                       {!executionOrchestratorEnabled && ticketQuote && (

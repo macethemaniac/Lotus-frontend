@@ -107,12 +107,21 @@ export type ExecutionOrderSignatureRequest = SignatureBundle["signatureRequests"
 export type ExecutionOrderPreviewRequest = {
   marketId: string;
   outcomeId: string;
-  side: TradeSide;
-  amount: string;
   venuePreference: ExecutionOrderVenuePreference;
   orderPolicy?: "FOK" | "FAK";
   slippageToleranceBps?: number;
-};
+} & (
+  | {
+      side: "buy";
+      amountType: "NOTIONAL_USDC";
+      notionalAmount: string;
+    }
+  | {
+      side: "sell";
+      amountType: "SHARES";
+      shareAmount: string;
+    }
+);
 
 export type ExecutionOrderResponse = {
   orderId: string;
@@ -126,8 +135,8 @@ export type ExecutionOrderResponse = {
   venuePreference?: ExecutionOrderVenuePreference | string | null;
   readinessSummary?: Record<string, unknown> | null;
   venueCapabilitySummary?: Record<string, unknown> | null;
-  blockers?: Array<string | { message?: string; reason?: string; code?: string; venue?: string }>;
-  lastError?: string | { message?: string; code?: string } | null;
+  blockers?: Array<string | { message?: string; reason?: string; code?: string; venue?: string; details?: Record<string, unknown>; [key: string]: unknown }>;
+  lastError?: string | { message?: string; code?: string; details?: Record<string, unknown>; [key: string]: unknown } | null;
   signatureRequests?: ExecutionOrderSignatureRequest[];
   nextPollAt?: string | null;
   canAutoRenew?: boolean;
