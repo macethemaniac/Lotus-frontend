@@ -3107,8 +3107,6 @@ export const InfraTradingTerminal = ({
         yesPrice: null as string | null,
         noPrice: null as string | null,
         probability: null as string | null,
-        yesVenue: null as string | null,
-        noVenue: null as string | null,
       };
     }
     const bestAsk = orderbookNumericValue(orderbook.bestAsk);
@@ -3120,8 +3118,6 @@ export const InfraTradingTerminal = ({
       yesPrice: bestAsk !== null ? formatProbabilityPrice(bestAsk) : null,
       noPrice: normalizedBestBid !== null && marketType === 'binary' ? formatProbabilityPrice(1 - normalizedBestBid) : null,
       probability: normalizedMidpoint !== null ? formatProbabilityPercent(normalizedMidpoint) : null,
-      yesVenue: orderbook.asks[0]?.venue ?? null,
-      noVenue: orderbook.bids[0]?.venue ?? null,
     };
   }, [marketType, orderbook]);
 
@@ -4509,6 +4505,7 @@ export const InfraTradingTerminal = ({
         const response = await getMarketOrderbook(orderbookMarketId, {
           outcomeId: orderbookQuoteOutcomeId,
           depth: 20,
+          canonicalMarketIds: orderbookStreamMarketIds,
           ...(options.snapshotOnly ? { snapshotOnly: true } : {}),
         });
         if (!cancelled) {
@@ -4615,6 +4612,7 @@ export const InfraTradingTerminal = ({
         const response = await getMarketOrderbook(expectedMarketId, {
           outcomeId: expectedOutcomeId,
           depth: 20,
+          canonicalMarketIds: orderbookStreamMarketIds,
         });
         if (!active) return;
         orderbookRef.current = response;
@@ -6112,8 +6110,8 @@ export const InfraTradingTerminal = ({
                            const rowYesPrice = isSelectedOutcome ? selectedOutcomeBookDisplay.yesPrice ?? m.yesPrice : m.yesPrice;
                            const rowNoPrice = isSelectedOutcome ? selectedOutcomeBookDisplay.noPrice ?? m.noPrice : m.noPrice;
                            const rowProbability = isSelectedOutcome ? selectedOutcomeBookDisplay.probability ?? m.prob : m.prob;
-                           const rowYesVenue = isSelectedOutcome ? selectedOutcomeBookDisplay.yesVenue ?? primaryVenue : primaryVenue;
-                           const rowNoVenue = isSelectedOutcome ? selectedOutcomeBookDisplay.noVenue ?? primaryVenue : primaryVenue;
+                           const rowYesVenue = primaryVenue;
+                           const rowNoVenue = primaryVenue;
                            const rowYesSelected = isSelectedOutcome && ticketOutcomeSide === 'yes';
                            const rowNoSelected = isSelectedOutcome && ticketOutcomeSide === 'no';
                            if (expandedOutcomeId === m.id) {
