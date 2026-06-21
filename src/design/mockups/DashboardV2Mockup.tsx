@@ -1565,63 +1565,53 @@ export const DashboardV2Mockup = ({
       const chunks = chunkArray(requestItems, MARKET_LIVE_PRICE_CHUNK_SIZE);
       await Promise.all(chunks.map(async (chunk) => {
         try {
-          if (!diagnosticsEnabled) {
-            const response = await getMarketLivePrices({
-              items: chunk.map((item) => ({
-                marketId: item.marketId,
-                canonicalMarketIds: item.canonicalMarketIds,
-                outcomeId: item.quoteOutcomeId,
-              })),
-            });
-            if (cancelled) return;
-            const priceByKey = new Map(response.prices.map((price) => [`${price.marketId}:${price.outcomeId ?? ''}`, price]));
-            const nextByMarket = new Map<string, Record<string, DashboardOutcomeQuote>>();
-            for (const item of chunk) {
-              const price =
-                priceByKey.get(`${item.marketId}:${item.quoteOutcomeId}`) ??
-                priceByKey.get(`${item.marketId}:${normalizeOutcomeId(item.quoteOutcomeId)}`) ??
-                (item.quoteOutcomeId === 'YES' ? priceByKey.get(`${item.marketId}:`) : undefined);
-              const bucket = nextByMarket.get(item.parentMarketId) ?? {};
-              bucket[item.outcomeId] = toOutcomeQuoteFromLivePrice(item.outcomeId, price);
-              nextByMarket.set(item.parentMarketId, bucket);
-            }
-            setMarketQuotes((current) => {
-              const next = { ...current };
-              for (const [marketId, outcomes] of nextByMarket.entries()) {
-                next[marketId] = {
-                  marketId,
-                  outcomes: {
-                    ...(next[marketId]?.outcomes ?? {}),
-                    ...outcomes,
-                  },
-                  sellOutcomes: next[marketId]?.sellOutcomes,
-                };
-              }
-              return next;
-            });
-            return;
-          }
-
-          const response = await getMarketBatchQuotes({
+          const response = await getMarketLivePrices({
             items: chunk.map((item) => ({
               marketId: item.marketId,
+              canonicalMarketIds: item.canonicalMarketIds,
               outcomeId: item.quoteOutcomeId,
-              side: 'buy' as const,
-              amount: '1',
             })),
-            displayMode,
           });
           if (cancelled) return;
-          const quoteByKey = new Map(response.quotes.map((quote) => [`${quote.marketId}:${quote.outcomeId}:buy`, quote]));
+          const priceByKey = new Map(response.prices.map((price) => [`${price.marketId}:${price.outcomeId ?? ''}`, price]));
           const nextByMarket = new Map<string, Record<string, DashboardOutcomeQuote>>();
+          const missingForDiagnostics: typeof chunk = [];
           for (const item of chunk) {
-            const quote = quoteByKey.get(`${item.marketId}:${item.quoteOutcomeId}:buy`);
+            const price =
+              priceByKey.get(`${item.marketId}:${item.quoteOutcomeId}`) ??
+              priceByKey.get(`${item.marketId}:${normalizeOutcomeId(item.quoteOutcomeId)}`) ??
+              (item.quoteOutcomeId === 'YES' ? priceByKey.get(`${item.marketId}:`) : undefined);
+            const displayQuote = toOutcomeQuoteFromLivePrice(item.outcomeId, price);
             const bucket = nextByMarket.get(item.parentMarketId) ?? {};
-            bucket[item.outcomeId] = quote
-              ? toOutcomeQuoteFromBatch(quote)
-              : toOutcomeQuote(item.outcomeId, null, new Error('QUOTE_UNAVAILABLE'));
+            bucket[item.outcomeId] = displayQuote;
             nextByMarket.set(item.parentMarketId, bucket);
+            if (diagnosticsEnabled && displayQuote.status !== 'live') {
+              missingForDiagnostics.push(item);
+            }
           }
+
+          if (diagnosticsEnabled && missingForDiagnostics.length > 0) {
+            const batchResponse = await getMarketBatchQuotes({
+              items: missingForDiagnostics.map((item) => ({
+                marketId: item.marketId,
+                outcomeId: item.quoteOutcomeId,
+                side: 'buy' as const,
+                amount: '1',
+              })),
+              displayMode,
+            });
+            if (cancelled) return;
+            const quoteByKey = new Map(batchResponse.quotes.map((quote) => [`${quote.marketId}:${quote.outcomeId}:buy`, quote]));
+            for (const item of missingForDiagnostics) {
+              const quote = quoteByKey.get(`${item.marketId}:${item.quoteOutcomeId}:buy`);
+              const bucket = nextByMarket.get(item.parentMarketId) ?? {};
+              bucket[item.outcomeId] = quote
+                ? toOutcomeQuoteFromBatch(quote)
+                : toOutcomeQuote(item.outcomeId, null, new Error('QUOTE_UNAVAILABLE'));
+              nextByMarket.set(item.parentMarketId, bucket);
+            }
+          }
+
           setMarketQuotes((current) => {
             const next = { ...current };
             for (const [marketId, outcomes] of nextByMarket.entries()) {
