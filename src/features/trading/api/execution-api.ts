@@ -104,6 +104,27 @@ export type ExecutionOrderVenuePreference =
 
 export type ExecutionOrderSignatureRequest = SignatureBundle["signatureRequests"][number];
 
+export type ExecutionImprovement = {
+  routeType?: "SINGLE_VENUE" | "PAIR" | "TRI" | string;
+  isCrossVenue?: boolean;
+  baselineVenue?: string | null;
+  baselineShares?: number | string | null;
+  baselineAveragePrice?: number | string | null;
+  routeShares?: number | string | null;
+  routeAveragePrice?: number | string | null;
+  pricePerShareImprovement?: number | string | null;
+  priceImprovementBps?: number | string | null;
+  extraShares?: number | string | null;
+  amountSavedUsd?: number | string | null;
+  extraSharesValue?: number | string | null;
+  projectedUserBenefit?: number | string | null;
+  traderRetainedValue?: number | string | null;
+  floorBps?: number | string | null;
+  shareImprovementUncapped?: boolean;
+  floorOnly?: boolean;
+  captureMode?: string | null;
+};
+
 export type ExecutionOrderPreviewRequest = {
   marketId: string;
   outcomeId: string;
@@ -132,6 +153,7 @@ export type ExecutionOrderResponse = {
   signingMode?: string | null;
   routeSummary?: Record<string, unknown> | null;
   priceSummary?: Record<string, unknown> | null;
+  executionImprovement?: ExecutionImprovement | null;
   venuePreference?: ExecutionOrderVenuePreference | string | null;
   readinessSummary?: Record<string, unknown> | null;
   venueCapabilitySummary?: Record<string, unknown> | null;

@@ -1874,11 +1874,39 @@ const orderReceiveAmount = (order: ExecutionOrderResponse | null): string | null
 
 const executionOrderRouteType = (order: ExecutionOrderResponse | null): string =>
   textField(order?.routeSummary, ['routeType', 'type', 'strategy']) ??
+  textField(order?.executionImprovement, ['routeType']) ??
   (order?.venuePreference === 'BEST_ROUTE' ? 'BEST_ROUTE' : 'SINGLE_VENUE');
 
-const executionOrderEstimatedSavings = (order: ExecutionOrderResponse | null): number | null =>
-  numericField(order?.priceSummary, ['estimatedSavings', 'savings', 'totalSavings']) ??
-  numericField(order?.routeSummary, ['estimatedSavings', 'savings', 'totalSavings']);
+type ExecutionImprovementSummary = {
+  savingsUsd: number;
+  extraShares: number;
+  priceImprovementBps: number | null;
+  baselineAveragePrice: number | null;
+  routeAveragePrice: number | null;
+  isImproved: boolean;
+  captureMode: string | null;
+};
+
+const executionImprovementSummary = (order: ExecutionOrderResponse | null): ExecutionImprovementSummary | null => {
+  const improvement = order?.executionImprovement;
+  if (!improvement) return null;
+  const captureMode = typeof improvement.captureMode === 'string' ? improvement.captureMode.toUpperCase() : null;
+  const grossSaved = parseFiniteNumber(improvement.amountSavedUsd ?? improvement.extraSharesValue ?? improvement.projectedUserBenefit);
+  const retainedSaved = parseFiniteNumber(improvement.traderRetainedValue);
+  const savingsUsd = captureMode && captureMode !== 'SHADOW'
+    ? retainedSaved ?? grossSaved ?? 0
+    : grossSaved ?? 0;
+  const extraShares = parseFiniteNumber(improvement.extraShares) ?? 0;
+  return {
+    savingsUsd: Math.max(0, savingsUsd),
+    extraShares: Math.max(0, extraShares),
+    priceImprovementBps: parseFiniteNumber(improvement.priceImprovementBps),
+    baselineAveragePrice: parseFiniteNumber(improvement.baselineAveragePrice),
+    routeAveragePrice: parseFiniteNumber(improvement.routeAveragePrice),
+    isImproved: extraShares > 0 && savingsUsd > 0,
+    captureMode,
+  };
+};
 
 type InsufficientExecutableDepthSummary = {
   requestedNotional: number | null;
@@ -5351,7 +5379,19 @@ export const InfraTradingTerminal = ({
   const ticketOrchestratorRouteLegs = routeLegsFromExecutionOrder(ticketOrchestratorOrder);
   const ticketOrchestratorRouteType = executionOrderRouteType(ticketOrchestratorOrder);
   const ticketOrchestratorRouteBadge = ticketOrchestratorRouteLegs.length === 1 ? 'SINGLE_VENUE' : ticketOrchestratorRouteType;
-  const ticketOrchestratorEstimatedSavings = executionOrderEstimatedSavings(ticketOrchestratorOrder);
+  const ticketOrchestratorImprovement = side === 'buy' ? executionImprovementSummary(ticketOrchestratorOrder) : null;
+  const ticketOrchestratorSavingsLine = ticketOrchestratorImprovement
+    ? ticketOrchestratorImprovement.isImproved
+      ? `+${formatUsdc(ticketOrchestratorImprovement.savingsUsd)} | +${formatSignedShares(ticketOrchestratorImprovement.extraShares)}`
+      : '$0 (best single-venue price)'
+    : null;
+  const ticketOrchestratorPriceImprovementLine = ticketOrchestratorImprovement?.priceImprovementBps && ticketOrchestratorImprovement.priceImprovementBps > 0
+    ? `${(ticketOrchestratorImprovement.priceImprovementBps / 100).toFixed(1)}% better price${
+      ticketOrchestratorImprovement.baselineAveragePrice && ticketOrchestratorImprovement.routeAveragePrice
+        ? ` (${formatProbabilityPrice(ticketOrchestratorImprovement.baselineAveragePrice)} -> ${formatProbabilityPrice(ticketOrchestratorImprovement.routeAveragePrice)})`
+        : ''
+    }`
+    : null;
   const ticketOrchestratorDetail = ticketOrchestratorBlocker
     ?? (ticketOrchestratorState === 'WAITING_FOR_VENUE_READY'
       ? 'Lotus is checking venue readiness in the background.'
@@ -7202,7 +7242,7 @@ export const InfraTradingTerminal = ({
                   </div>
 
                   <div className="flex flex-col gap-2">
-                      {executionOrchestratorEnabled && ticketRouteReady && ticketOrchestratorOrder && ticketOrchestratorRouteLegs.length > 0 && (
+                      {executionOrchestratorEnabled && ticketOrchestratorOrder && ticketOrchestratorRouteLegs.length > 0 && (
                         <div className="rounded-lg border border-emerald-500/20 bg-[#0c0c0e] p-2.5 shadow-[0_0_15px_rgba(16,185,129,0.05)]">
                           <div className="flex items-center justify-between gap-3 border-b border-zinc-800/60 pb-1.5">
                             <span className="h-px min-w-0 flex-1 bg-zinc-800/70" aria-hidden />
@@ -7239,11 +7279,16 @@ export const InfraTradingTerminal = ({
                               </React.Fragment>
                             ))}
                           </div>
-                          {ticketOrchestratorEstimatedSavings !== null && (
+                          {ticketOrchestratorSavingsLine && (
                             <div className="mt-1.5 rounded border border-[#ccff00]/20 bg-[#ccff00]/10 p-1.5 text-center">
-                              <span className="text-[10px] font-bold text-[#ccff00]">
-                                Estimated savings: {formatUsdc(ticketOrchestratorEstimatedSavings)}
-                              </span>
+                              <div className="text-[10px] font-bold text-[#ccff00]">
+                                Estimated savings: {ticketOrchestratorSavingsLine}
+                              </div>
+                              {ticketOrchestratorPriceImprovementLine && (
+                                <div className="mt-0.5 text-[9px] font-semibold text-zinc-300">
+                                  {ticketOrchestratorPriceImprovementLine}
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
