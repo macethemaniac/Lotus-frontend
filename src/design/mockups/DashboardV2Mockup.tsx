@@ -93,6 +93,11 @@ type DashboardMarketRow = Pick<TerminalMarketSelection, 'title' | 'category' | '
   fallbackLabel: string;
   fallbackMode: 'best_venue' | 'fallback' | 'blocker' | 'pending';
   volumeLabel: string;
+  volume24h: string | null;
+  liquidity: string | null;
+  openInterest: string | null;
+  resolvesAt: string | null;
+  resolutionDateLabel: string | null;
   closesBy: string;
   closeTimestamp: number | null;
   change24hLabel: string;
@@ -760,6 +765,7 @@ const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardM
   const quoteReadinessLabel = marketQuoteReadinessLabel(quoteStatus, quoteReadyVenueCount, quoteBlockers, diagnosticsEnabled);
   const marketClass = formatTitleCase(market.marketClass || 'Market');
   const category = formatTitleCase(market.category || 'Market');
+  const catalogVolume24h = formatMoneyMetric(market.volume24h);
   const catalogVolume = formatMoneyMetric(market.volume24h ?? market.volume);
   const catalogLiquidity = formatMoneyMetric(market.liquidity);
   const buyCount = parseMetricNumber(market.buyCount);
@@ -854,6 +860,11 @@ const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardM
     spread: diagnosticsEnabled ? quoteStatus === 'stale' ? 'Stale' : quoteStatus === 'unavailable' ? 'Blocked' : '-' : '-',
     fallbackLabel: diagnosticsEnabled ? quoteReadinessLabel : '-',
     fallbackMode: quoteStatus === 'unavailable' && diagnosticsEnabled ? 'blocker' : routeType === 'Single' ? 'fallback' : 'pending',
+    volume24h: catalogVolume24h,
+    liquidity: catalogLiquidity,
+    openInterest: null,
+    resolvesAt: market.resolvesAt,
+    resolutionDateLabel: formatMarketDate(market.resolvesAt),
     closesBy: formatMarketDate(market.expiresAt ?? market.resolvesAt),
     closeTimestamp: dateTimestamp(market.expiresAt ?? market.resolvesAt),
     change24hLabel: 'Quote',
@@ -929,8 +940,14 @@ const mapCatalogMarketsToDashboardRows = (markets: MarketCatalogMarket[]): Dashb
     const sellCount = metricTotal((market) => market.sellCount);
     const buyVolume = metricTotal((market) => market.buyVolume);
     const sellVolume = metricTotal((market) => market.sellVolume);
+    const volume24h = formatMoneyMetric(String(metricTotal((market) => market.volume24h) ?? ''));
     const volume = formatMoneyMetric(String(metricTotal((market) => market.volume24h ?? market.volume) ?? '')) ?? base.volume;
     const liquidity = formatMoneyMetric(String(metricTotal((market) => market.liquidity) ?? ''));
+    const resolutionTimestamp = group
+      .map((market) => dateTimestamp(market.resolvesAt))
+      .filter((value): value is number => value !== null)
+      .sort((left, right) => left - right)[0] ?? null;
+    const resolutionDate = resolutionTimestamp !== null ? new Date(resolutionTimestamp).toISOString() : null;
     return {
       ...base,
       id: `${base.canonicalEventId}:${base.title}`,
@@ -950,6 +967,11 @@ const mapCatalogMarketsToDashboardRows = (markets: MarketCatalogMarket[]): Dashb
       badges: venues,
       volume: volume ?? liquidity ?? base.volume,
       volumeLabel: volume ? 'Vol' : liquidity ? 'Liq' : base.volumeLabel,
+      volume24h,
+      liquidity,
+      openInterest: null,
+      resolvesAt: resolutionDate,
+      resolutionDateLabel: formatMarketDate(resolutionDate),
       txnBuy: buyCount ?? buyVolume ?? 0,
       txnSell: sellCount ?? sellVolume ?? 0,
       txnLabel: buyCount !== null || sellCount !== null ? 'Txns' : buyVolume !== null || sellVolume !== null ? 'Vol' : 'Pending',
@@ -1260,6 +1282,11 @@ export const DashboardV2Mockup = ({
       category: market.category,
       icon: market.icon,
       volume: market.volume,
+      volume24h: market.volume24h,
+      liquidity: market.liquidity,
+      openInterest: market.openInterest,
+      resolvesAt: market.resolvesAt,
+      resolutionDateLabel: market.resolutionDateLabel,
       venueCount: market.venueCount,
       routeType: market.routeType,
       venues: market.venues,
@@ -3368,7 +3395,7 @@ const NavItem = ({
   </div>
 );
 
-const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, venueCount, routeType, savings, spread, fallback, fallbackLabel, fallbackMode = 'pending', icon, imageUrl, iconUrl, priceLabel, priceVenue, changeLabel, prob, change, volume, volumeLabel = 'Vol', txnBuy, txnSell, txnLabel = 'Pending', badges = [], outcomes, marketType, venues, venueMarkets, quoteStatus = 'live', quoteReadyVenueCount = 0, quoteBlockers = [], lastQuoteAt = null, isWatched = false, onToggleWatch, onOpenTerminal }: any) => {
+const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, venueCount, routeType, savings, spread, fallback, fallbackLabel, fallbackMode = 'pending', icon, imageUrl, iconUrl, priceLabel, priceVenue, changeLabel, prob, change, volume, volumeLabel = 'Vol', volume24h = null, liquidity = null, openInterest = null, resolvesAt = null, resolutionDateLabel = null, txnBuy, txnSell, txnLabel = 'Pending', badges = [], outcomes, marketType, venues, venueMarkets, quoteStatus = 'live', quoteReadyVenueCount = 0, quoteBlockers = [], lastQuoteAt = null, isWatched = false, onToggleWatch, onOpenTerminal }: any) => {
   const [outcomesExpanded, setOutcomesExpanded] = useState(false);
   const allVenues = [
     { id: 'polymarket', label: 'Polymarket' },
@@ -3430,7 +3457,7 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
   const liveVenueCaption = quoteReadyVenueCount > 0
     ? `${quoteReadyVenueCount} live venue${quoteReadyVenueCount === 1 ? '' : 's'}`
     : `${venueCount} venue${venueCount === 1 ? '' : 's'} scanned`;
-  const terminalPayload = { id, marketId, eventId, canonicalEventId, title, category, icon, volume, venueCount, routeType, venues, venueMarkets, marketType, outcomes, imageUrl, iconUrl, priceLabel, priceVenue, changeLabel };
+  const terminalPayload = { id, marketId, eventId, canonicalEventId, title, category, icon, volume, volume24h, liquidity, openInterest, resolvesAt, resolutionDateLabel, venueCount, routeType, venues, venueMarkets, marketType, outcomes, imageUrl, iconUrl, priceLabel, priceVenue, changeLabel };
   const outcomeRailOverflowClass = outcomesExpanded ? 'overflow-x-hidden overflow-y-auto custom-scrollbar' : 'overflow-hidden';
 
   return (
