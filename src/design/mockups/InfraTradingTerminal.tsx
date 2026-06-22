@@ -2577,11 +2577,13 @@ const LiveCanonicalChart = ({
   marketId,
   outcomeId,
   marketType,
+  onMarketTypeChange,
   outcomes = EMPTY_TERMINAL_OUTCOMES,
 }: {
   marketId: string | null;
   outcomeId: string | null;
   marketType: 'binary' | 'multi';
+  onMarketTypeChange?: (value: 'binary' | 'multi') => void;
   outcomes?: TerminalOutcomeRow[];
 }) => {
   const [activeTab, setActiveTab] = useState<MarketChartTimeframe>('1D');
@@ -2750,9 +2752,29 @@ const LiveCanonicalChart = ({
 
   return (
     <div className="relative w-full h-full flex flex-col pt-2 pb-2 bg-[#0c0c0c] rounded-xl overflow-hidden">
-      <div className="flex items-center gap-2 px-4 pt-2">
-        <Activity className="w-4 h-4 text-white" />
-        <span className="text-white font-bold text-sm">Probability</span>
+      <div className="flex items-center justify-between gap-3 px-4 pt-2">
+        <div className="flex items-center gap-2">
+          <Activity className="w-4 h-4 text-white" />
+          <span className="text-white font-bold text-sm">Probability</span>
+        </div>
+        {onMarketTypeChange && (
+          <div className="flex shrink-0 rounded-md border border-zinc-800 bg-zinc-900 p-1">
+            <button
+              type="button"
+              onClick={() => onMarketTypeChange('binary')}
+              className={`px-2 py-1 text-[10px] font-bold uppercase rounded ${marketType === 'binary' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
+            >
+              Binary
+            </button>
+            <button
+              type="button"
+              onClick={() => onMarketTypeChange('multi')}
+              className={`px-2 py-1 text-[10px] font-bold uppercase rounded ${marketType === 'multi' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
+            >
+              Multi
+            </button>
+          </div>
+        )}
       </div>
       <div className="w-full bg-zinc-800 h-px mt-2" />
       <div className="w-24 bg-white h-0.5" />
@@ -3390,13 +3412,14 @@ export const InfraTradingTerminal = ({
         const liveQuoteVenues = livePrice?.liveVenues?.length
           ? livePrice.liveVenues
           : livePrice?.venues ?? [];
+        const outcomeVolume = formatMoneyMetric(outcome.volume) ?? outcome.volume ?? '';
         return {
           id: outcome.id,
           marketId: outcomeMarketId,
           canonicalMarketIds,
           quoteOutcomeId,
           name: outcome.label,
-          vol: `${formatMoneyMetric(outcome.volume ?? terminalMarket.volume) ?? outcome.volume ?? terminalMarket.volume} Vol.`,
+          vol: outcomeVolume ? `${outcomeVolume} Vol.` : '',
           platforms: quoteVenues.length || terminalMarket.venueCount,
           prob: parsedPrice !== null ? formatProbabilityPercent(parsedPrice) : '-',
           yesPrice,
@@ -5853,7 +5876,7 @@ export const InfraTradingTerminal = ({
   const terminalResolutionDateLabel = terminalMarket.resolutionDateLabel
     ?? formatTerminalDate(terminalMarket.resolvesAt)
     ?? 'TBD';
-  const terminalLiquidityLabel = terminalMarket.liquidity ?? terminalMarket.volume ?? '-';
+  const terminalLiquidityLabel = terminalMarket.liquidity ?? '-';
   const terminalVolume24hLabel = terminalMarket.volume24h ?? '-';
   const terminalOpenInterestLabel = terminalMarket.openInterest ?? '-';
 
@@ -6145,10 +6168,6 @@ export const InfraTradingTerminal = ({
                 <div className="hidden xl:flex items-center text-[#ccff00] text-[11px] font-bold uppercase tracking-widest">
                     {terminalVenueLabel}
                 </div>
-                <div className="flex w-fit bg-zinc-900 border border-zinc-800 rounded-md p-1">
-                    <button onClick={() => setMarketType('binary')} className={`px-2 py-1 text-[10px] font-bold uppercase rounded ${marketType === 'binary' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}>Binary</button>
-                    <button onClick={() => setMarketType('multi')} className={`px-2 py-1 text-[10px] font-bold uppercase rounded ${marketType === 'multi' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}>Multi</button>
-                </div>
             </div>
 
             <div className="grid w-full shrink-0 grid-cols-2 gap-x-8 gap-y-3 text-xs sm:grid-cols-4 xl:w-[min(48vw,38rem)]">
@@ -6176,6 +6195,7 @@ export const InfraTradingTerminal = ({
                  marketId={selectedOutcomeMarketId}
                  outcomeId={selectedQuoteOutcomeId}
                  marketType={marketType}
+                 onMarketTypeChange={setMarketType}
                  outcomes={terminalOutcomes}
                />
             </div>
@@ -6536,7 +6556,7 @@ export const InfraTradingTerminal = ({
                                      <div className="min-w-0">
                                          <span className="block truncate text-zinc-100 font-bold text-base tracking-wide leading-tight">{m.name}</span>
                                          <span className="block truncate text-zinc-500 text-xs mt-0.5 font-medium">
-                                           {m.vol} <span className="mx-1">-</span> {m.platforms} venues
+                                           {m.vol && <>{m.vol} <span className="mx-1">-</span></>} {m.platforms} venues
                                            {marketDiagnosticsEnabled && m.blocker && <span className="ml-2 text-amber-300">{m.blocker}</span>}
                                          </span>
                                      </div>
