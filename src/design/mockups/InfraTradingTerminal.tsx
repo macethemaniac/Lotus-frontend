@@ -7591,7 +7591,7 @@ export const InfraTradingTerminal = ({
                         className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors hover:bg-zinc-900/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
                         aria-expanded={ticketPriceDetailsExpanded}
                       >
-                        <span className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Price details</span>
+                        <span className="text-[11px] font-bold text-zinc-300">Price details</span>
                         <span className="flex items-center gap-2">
                           {!ticketPriceDetailsExpanded && (
                             <span className={`font-mono text-[10px] font-black ${ticketPriceImpactWarning ? 'text-[#ccff00]' : 'text-zinc-300'}`}>
