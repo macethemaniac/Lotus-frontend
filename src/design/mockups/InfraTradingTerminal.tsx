@@ -616,6 +616,7 @@ const displayPriceLabel = (label: string | null | undefined, diagnosticsEnabled 
 const readableQuoteBlocker = (reason: string | null | undefined): string | null => {
   if (!reason) return null;
   const normalized = reason.toUpperCase();
+  if (normalized.includes('LIVE_ORDERBOOK_REQUIRED')) return 'Live orderbook syncing';
   if (normalized.includes('OPINION_TOKEN_ID_MISSING')) return 'Opinion token mapping missing';
   if (normalized.includes('VENUE_OUTCOME_ID_MISSING')) return 'Outcome token mapping missing';
   if (normalized.includes('QUOTE_PROVIDER_TIMEOUT')) return 'Provider timeout';
@@ -626,6 +627,7 @@ const readableQuoteBlocker = (reason: string | null | undefined): string | null 
   if (http) return `Provider unavailable (${http[1]})`;
   if (normalized.includes('QUOTE_READER_UNSUPPORTED')) return 'Venue quote reader unsupported';
   if (normalized.includes('QUOTE_SNAPSHOT_STALE')) return 'Stale quote';
+  if (normalized.includes('QUOTE_SNAPSHOT')) return 'Quote snapshot syncing';
   if (normalized.includes('QUOTE_READER_FAILED')) return 'Venue quote unavailable';
   return reason.replace(/[_-]+/g, ' ').toLowerCase();
 };
@@ -704,6 +706,12 @@ const orderbookNumberString = (value: string | number | null | undefined): strin
 const orderbookNumericValue = (value: string | number | null | undefined): number | null => {
   const parsed = typeof value === 'number' ? value : typeof value === 'string' ? Number(value.replace(/[$,\s]/g, '')) : NaN;
   return Number.isFinite(parsed) ? parsed : null;
+};
+
+const normalizedOrderbookProbability = (value: string | number | null | undefined): number | null => {
+  const parsed = orderbookNumericValue(value);
+  if (parsed === null || parsed <= 0) return null;
+  return parsed > 1 ? parsed / 100 : parsed;
 };
 
 const normalizeStreamBlocker = (blocker: unknown): string | null => {
@@ -1865,6 +1873,7 @@ const routePathFromExecutionOrder = (order: ExecutionOrderResponse | null): stri
 };
 
 const orderEffectivePrice = (order: ExecutionOrderResponse | null): number | null =>
+  numericField(order?.executionImprovement, ['routeAveragePrice']) ??
   numericField(order?.priceSummary, ['effectivePrice', 'averagePrice', 'avgPrice', 'price', 'expectedPrice']) ??
   numericField(order?.routeSummary, ['effectivePrice', 'averagePrice', 'avgPrice', 'price', 'expectedPrice']);
 
@@ -3209,8 +3218,12 @@ export const InfraTradingTerminal = ({
   const venueBadgeClass = 'h-7 w-7 rounded-full border-[2.5px] border-[#121214] bg-zinc-900 shadow-sm';
   const tinyVenueClass = 'h-3.5 w-3.5 rounded-full border border-zinc-800 bg-zinc-950';
   const orderbookVenueOptions = useMemo(
-    () => [...new Set([...(orderbook?.venues.map((venue) => venue.venue) ?? []), ...marketVenueList.map((venue) => venue.toUpperCase())])].sort(),
-    [marketVenueList, orderbook?.venues]
+    () => [...new Set([
+      ...(orderbook?.venues.map((venue) => venue.venue) ?? []),
+      ...(orderbook?.blockers.map((blocker) => blocker.venue) ?? []),
+      ...marketVenueList.map((venue) => venue.toUpperCase()),
+    ])].sort(),
+    [marketVenueList, orderbook?.blockers, orderbook?.venues]
   );
   const displayOrderbook = useMemo(
     () => filterOrderbookForVenue(orderbook, orderbookVenue),
@@ -3241,6 +3254,23 @@ export const InfraTradingTerminal = ({
     : marketDiagnosticsEnabled
       ? displayOrderbook?.status ?? 'pending'
       : 'updating';
+  const unavailableOrderbookVenueRows = useMemo(() => {
+    const rows = new Map<string, { venue: string; reason: string; status: 'syncing' | 'unavailable' }>();
+    for (const blocker of displayOrderbook?.blockers ?? []) {
+      const rawReason = blocker.detailsCode ?? blocker.reason;
+      const normalizedReason = readableQuoteBlocker(rawReason) ?? readableQuoteBlocker(blocker.reason) ?? blocker.reason;
+      const status = /LIVE_ORDERBOOK_REQUIRED|QUOTE_SNAPSHOT/i.test(rawReason ?? blocker.reason)
+        ? 'syncing'
+        : 'unavailable';
+      const key = `${toBackendVenueId(blocker.venue)}:${normalizedReason}`;
+      rows.set(key, {
+        venue: blocker.venue,
+        reason: normalizedReason,
+        status,
+      });
+    }
+    return [...rows.values()];
+  }, [displayOrderbook?.blockers]);
   const selectedOutcomeBookDisplay = useMemo(() => {
     if (!orderbook) {
       return {
@@ -3249,11 +3279,9 @@ export const InfraTradingTerminal = ({
         probability: null as string | null,
       };
     }
-    const bestAsk = orderbookNumericValue(orderbook.bestAsk);
-    const bestBid = orderbookNumericValue(orderbook.bestBid);
-    const midpoint = orderbookNumericValue(orderbook.midpoint);
-    const normalizedBestBid = bestBid !== null && bestBid > 1 ? bestBid / 100 : bestBid;
-    const normalizedMidpoint = midpoint !== null && midpoint > 1 ? midpoint / 100 : midpoint;
+    const bestAsk = normalizedOrderbookProbability(orderbook.bestAsk);
+    const normalizedBestBid = normalizedOrderbookProbability(orderbook.bestBid);
+    const normalizedMidpoint = normalizedOrderbookProbability(orderbook.midpoint);
     return {
       yesPrice: bestAsk !== null ? formatProbabilityPrice(bestAsk) : null,
       noPrice: normalizedBestBid !== null && marketType === 'binary' ? formatProbabilityPrice(1 - normalizedBestBid) : null,
@@ -3510,6 +3538,9 @@ export const InfraTradingTerminal = ({
     setTicketQuoteAmount(null);
     setTicketExecutionId(null);
     setTicketSignatureBundle(null);
+    setTicketOrchestratorOrder(null);
+    setTicketOrchestratorAmount(null);
+    setTicketOrchestratorAutoRenewFailed(false);
     setTicketStatusMessage(null);
     setTicketError(null);
     if (fallbackOutcomeId) {
@@ -3523,6 +3554,9 @@ export const InfraTradingTerminal = ({
     setTicketQuoteAmount(null);
     setTicketExecutionId(null);
     setTicketSignatureBundle(null);
+    setTicketOrchestratorOrder(null);
+    setTicketOrchestratorAmount(null);
+    setTicketOrchestratorAutoRenewFailed(false);
     setTicketStatusMessage(null);
     setTicketError(null);
   }, []);
@@ -5402,6 +5436,20 @@ export const InfraTradingTerminal = ({
         : ''
     }`
     : null;
+  const ticketSpotMidPrice = normalizedOrderbookProbability(displayOrderbook?.midpoint)
+    ?? parseProbabilityLabel(selectedOutcomeBookDisplay.probability)
+    ?? ticketPriceForSide(selectedTicketOutcome, ticketOutcomeSide);
+  const ticketExecutionPriceForImpact = executionOrchestratorEnabled && ticketOrchestratorOrder
+    ? orderEffectivePrice(ticketOrchestratorOrder)
+    : null;
+  const ticketPriceImpactPercent = ticketExecutionPriceForImpact !== null && ticketSpotMidPrice !== null && ticketSpotMidPrice > 0
+    ? ((ticketExecutionPriceForImpact - ticketSpotMidPrice) / ticketSpotMidPrice) * 100
+    : null;
+  const ticketPriceImpactWarning = ticketPriceImpactPercent !== null && Math.abs(ticketPriceImpactPercent) >= 10;
+  const ticketPriceImpactLabel = ticketPriceImpactPercent !== null
+    ? `${Math.abs(ticketPriceImpactPercent).toFixed(1)}% ${ticketPriceImpactPercent >= 0 ? 'above spot' : 'below spot'}`
+    : 'Unavailable';
+  const showTicketPriceImpactPanel = Boolean(ticketOrchestratorOrder && ticketExecutionPriceForImpact !== null);
   const ticketOrchestratorDetail = ticketOrchestratorBlocker
     ?? (ticketOrchestratorState === 'WAITING_FOR_VENUE_READY'
       ? 'Lotus is checking venue readiness in the background.'
@@ -6186,7 +6234,16 @@ export const InfraTradingTerminal = ({
                        Live quotes reconnecting...
                      </div>
                    )}
-                   {displayOrderbook?.asks.slice().reverse().map((level, i) => (
+                   {unavailableOrderbookVenueRows.map((row, i) => (
+                     <div key={`blocked-book-${row.venue}-${row.reason}-${i}`} className="mx-3 my-1 flex items-center justify-between rounded border border-amber-500/20 bg-amber-500/10 px-3 py-1.5 text-[10px] font-bold text-amber-100">
+                       <span className="flex min-w-0 items-center gap-1.5">
+                         <VenueLogo id={normalizeVenueId(row.venue)} label={formatVenueLabel(row.venue)} className={tinyVenueClass} />
+                         <span className="truncate">{formatVenueLabel(row.venue)}</span>
+                       </span>
+                       <span className="ml-2 shrink-0 text-[9px] uppercase tracking-widest text-amber-100/70">{row.status}: {row.reason}</span>
+                     </div>
+                   ))}
+                   {displayOrderbook?.asks.map((level, i) => (
                      <div key={`ask-${level.venue}-${level.price}-${i}`} className={`flex justify-between px-4 py-0.5 hover:bg-zinc-800/50 ${i === 0 ? 'mb-1' : ''} ${i < 3 ? 'bg-[#E52B50]/5' : ''}`}>
                        <span className="w-12 text-pink-500 font-bold">{formatBookPrice(level.price)}</span>
                        <span className="w-16 flex items-center gap-1.5 text-zinc-500 uppercase text-[9px] font-bold tracking-wider">
@@ -6376,7 +6433,16 @@ export const InfraTradingTerminal = ({
                                    {!marketDiagnosticsEnabled && !orderbookLoading && inlineOrderbookLiveVenueCount === 0 && (!displayOrderbook || (displayOrderbook.asks.length === 0 && displayOrderbook.bids.length === 0)) && (
                                      <div className="px-4 py-8 text-center text-[11px] font-semibold text-zinc-500">Updating live prices.</div>
                                    )}
-                                   {displayOrderbook?.asks.slice().reverse().map((level, i) => (
+                                   {unavailableOrderbookVenueRows.map((row, i) => (
+                                     <div key={`inline-card-blocked-${row.venue}-${row.reason}-${i}`} className="mx-4 my-2 flex items-center justify-between rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-[11px] font-bold text-amber-100">
+                                       <span className="flex min-w-0 items-center gap-2">
+                                         <VenueLogo id={normalizeVenueId(row.venue)} label={formatVenueLabel(row.venue)} className="h-4 w-4 rounded-full" />
+                                         <span className="truncate">{formatVenueLabel(row.venue)}</span>
+                                       </span>
+                                       <span className="ml-2 shrink-0 text-[9px] uppercase tracking-widest text-amber-100/70">{row.status}: {row.reason}</span>
+                                     </div>
+                                   ))}
+                                   {displayOrderbook?.asks.map((level, i) => (
                                      <div key={`inline-card-ask-${level.venue}-${level.price}-${i}`} className="grid grid-cols-[1.1fr_0.9fr_0.9fr_0.9fr] items-stretch text-sm hover:bg-zinc-800/50">
                                        <span className="relative flex min-h-9 items-center overflow-hidden px-4">
                                          <span className="absolute inset-y-0 left-0 bg-red-500/10" style={{ width: `${Math.min(76, 18 + i * 10)}%` }} />
@@ -7261,6 +7327,29 @@ export const InfraTradingTerminal = ({
                             </span>
                             <span className="h-px min-w-0 flex-1 bg-zinc-800/70" aria-hidden />
                           </div>
+                          {showTicketPriceImpactPanel && (
+                            <div className={`mt-2 rounded border p-2 ${ticketPriceImpactWarning ? 'border-amber-500/30 bg-amber-500/10' : 'border-zinc-800 bg-zinc-950/40'}`}>
+                              <div className="grid grid-cols-3 gap-2 text-center">
+                                <div>
+                                  <div className="text-[8px] font-bold uppercase tracking-widest text-zinc-500">Effective price</div>
+                                  <div className="mt-0.5 font-mono text-[11px] font-black text-white">{formatProbabilityPrice(ticketExecutionPriceForImpact)}</div>
+                                </div>
+                                <div>
+                                  <div className="text-[8px] font-bold uppercase tracking-widest text-zinc-500">Spot/mid</div>
+                                  <div className="mt-0.5 font-mono text-[11px] font-black text-zinc-200">{formatProbabilityPrice(ticketSpotMidPrice)}</div>
+                                </div>
+                                <div>
+                                  <div className="text-[8px] font-bold uppercase tracking-widest text-zinc-500">Price impact</div>
+                                  <div className={`mt-0.5 font-mono text-[11px] font-black ${ticketPriceImpactWarning ? 'text-amber-200' : 'text-zinc-200'}`}>{ticketPriceImpactLabel}</div>
+                                </div>
+                              </div>
+                              {ticketPriceImpactWarning && (
+                                <div className="mt-1.5 rounded border border-amber-400/20 bg-black/20 px-2 py-1 text-[9px] font-bold text-amber-100">
+                                  Large price impact - low liquidity at this size.
+                                </div>
+                              )}
+                            </div>
+                          )}
                           <div className="mt-2 flex items-center gap-1 overflow-x-auto pb-1 font-mono text-[9px] custom-scrollbar">
                             {ticketOrchestratorRouteLegs.map((leg, index) => (
                               <React.Fragment key={`${leg.venue}-${index}`}>

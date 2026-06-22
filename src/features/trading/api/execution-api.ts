@@ -153,6 +153,13 @@ export type ExecutionOrderResponse = {
   signingMode?: string | null;
   routeSummary?: Record<string, unknown> | null;
   priceSummary?: Record<string, unknown> | null;
+  notionalFill?: {
+    executableShares?: number | string | null;
+    executableNotional?: number | string | null;
+    requestedNotional?: number | string | null;
+    shortfall?: boolean;
+    [key: string]: unknown;
+  } | null;
   executionImprovement?: ExecutionImprovement | null;
   venuePreference?: ExecutionOrderVenuePreference | string | null;
   readinessSummary?: Record<string, unknown> | null;
