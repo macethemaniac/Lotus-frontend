@@ -2900,6 +2900,7 @@ export const InfraTradingTerminal = ({
   const [ticketOrchestratorSigning, setTicketOrchestratorSigning] = useState(false);
   const [ticketConfirmArmed, setTicketConfirmArmed] = useState(false);
   const [ticketSettingsOpen, setTicketSettingsOpen] = useState(false);
+  const [ticketPriceDetailsOpen, setTicketPriceDetailsOpen] = useState(false);
   const [ticketOrderPolicy, setTicketOrderPolicy] = useState<'FOK' | 'FAK'>('FAK');
   const [ticketSlippageTolerance, setTicketSlippageTolerance] = useState('0.50');
   const [ticketPolymarketClobSyncConfirmed, setTicketPolymarketClobSyncConfirmed] = useState(false);
@@ -5446,6 +5447,7 @@ export const InfraTradingTerminal = ({
     ? ((ticketExecutionPriceForImpact - ticketSpotMidPrice) / ticketSpotMidPrice) * 100
     : null;
   const ticketPriceImpactWarning = ticketPriceImpactPercent !== null && Math.abs(ticketPriceImpactPercent) >= 10;
+  const ticketPriceDetailsExpanded = ticketPriceDetailsOpen || ticketPriceImpactWarning;
   const ticketPriceImpactLabel = ticketPriceImpactPercent !== null
     ? `${Math.abs(ticketPriceImpactPercent).toFixed(1)}% ${ticketPriceImpactPercent >= 0 ? 'above spot' : 'below spot'}`
     : 'Unavailable';
@@ -6235,12 +6237,12 @@ export const InfraTradingTerminal = ({
                      </div>
                    )}
                    {unavailableOrderbookVenueRows.map((row, i) => (
-                     <div key={`blocked-book-${row.venue}-${row.reason}-${i}`} className="mx-3 my-1 flex items-center justify-between rounded border border-amber-500/20 bg-amber-500/10 px-3 py-1.5 text-[10px] font-bold text-amber-100">
+                     <div key={`blocked-book-${row.venue}-${row.reason}-${i}`} className="mx-3 my-1 flex items-center justify-between rounded border border-zinc-800 bg-[#0c0c0e] px-3 py-1.5 text-[10px] font-bold text-zinc-300">
                        <span className="flex min-w-0 items-center gap-1.5">
                          <VenueLogo id={normalizeVenueId(row.venue)} label={formatVenueLabel(row.venue)} className={tinyVenueClass} />
                          <span className="truncate">{formatVenueLabel(row.venue)}</span>
                        </span>
-                       <span className="ml-2 shrink-0 text-[9px] uppercase tracking-widest text-amber-100/70">{row.status}: {row.reason}</span>
+                       <span className="ml-2 shrink-0 text-[9px] uppercase tracking-widest text-zinc-500">{row.status}: <span className="text-[#ccff00]/80">{row.reason}</span></span>
                      </div>
                    ))}
                    {displayOrderbook?.asks.map((level, i) => (
@@ -6434,12 +6436,12 @@ export const InfraTradingTerminal = ({
                                      <div className="px-4 py-8 text-center text-[11px] font-semibold text-zinc-500">Updating live prices.</div>
                                    )}
                                    {unavailableOrderbookVenueRows.map((row, i) => (
-                                     <div key={`inline-card-blocked-${row.venue}-${row.reason}-${i}`} className="mx-4 my-2 flex items-center justify-between rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-[11px] font-bold text-amber-100">
+                                     <div key={`inline-card-blocked-${row.venue}-${row.reason}-${i}`} className="mx-4 my-2 flex items-center justify-between rounded-lg border border-zinc-800 bg-[#0c0c0e] px-3 py-2 text-[11px] font-bold text-zinc-300">
                                        <span className="flex min-w-0 items-center gap-2">
                                          <VenueLogo id={normalizeVenueId(row.venue)} label={formatVenueLabel(row.venue)} className="h-4 w-4 rounded-full" />
                                          <span className="truncate">{formatVenueLabel(row.venue)}</span>
                                        </span>
-                                       <span className="ml-2 shrink-0 text-[9px] uppercase tracking-widest text-amber-100/70">{row.status}: {row.reason}</span>
+                                       <span className="ml-2 shrink-0 text-[9px] uppercase tracking-widest text-zinc-500">{row.status}: <span className="text-[#ccff00]/80">{row.reason}</span></span>
                                      </div>
                                    ))}
                                    {displayOrderbook?.asks.map((level, i) => (
@@ -7327,29 +7329,6 @@ export const InfraTradingTerminal = ({
                             </span>
                             <span className="h-px min-w-0 flex-1 bg-zinc-800/70" aria-hidden />
                           </div>
-                          {showTicketPriceImpactPanel && (
-                            <div className={`mt-2 rounded border p-2 ${ticketPriceImpactWarning ? 'border-amber-500/30 bg-amber-500/10' : 'border-zinc-800 bg-zinc-950/40'}`}>
-                              <div className="grid grid-cols-3 gap-2 text-center">
-                                <div>
-                                  <div className="text-[8px] font-bold uppercase tracking-widest text-zinc-500">Effective price</div>
-                                  <div className="mt-0.5 font-mono text-[11px] font-black text-white">{formatProbabilityPrice(ticketExecutionPriceForImpact)}</div>
-                                </div>
-                                <div>
-                                  <div className="text-[8px] font-bold uppercase tracking-widest text-zinc-500">Spot/mid</div>
-                                  <div className="mt-0.5 font-mono text-[11px] font-black text-zinc-200">{formatProbabilityPrice(ticketSpotMidPrice)}</div>
-                                </div>
-                                <div>
-                                  <div className="text-[8px] font-bold uppercase tracking-widest text-zinc-500">Price impact</div>
-                                  <div className={`mt-0.5 font-mono text-[11px] font-black ${ticketPriceImpactWarning ? 'text-amber-200' : 'text-zinc-200'}`}>{ticketPriceImpactLabel}</div>
-                                </div>
-                              </div>
-                              {ticketPriceImpactWarning && (
-                                <div className="mt-1.5 rounded border border-amber-400/20 bg-black/20 px-2 py-1 text-[9px] font-bold text-amber-100">
-                                  Large price impact - low liquidity at this size.
-                                </div>
-                              )}
-                            </div>
-                          )}
                           <div className="mt-2 flex items-center gap-1 overflow-x-auto pb-1 font-mono text-[9px] custom-scrollbar">
                             {ticketOrchestratorRouteLegs.map((leg, index) => (
                               <React.Fragment key={`${leg.venue}-${index}`}>
@@ -7598,6 +7577,53 @@ export const InfraTradingTerminal = ({
                           {ticketReceiveText}
                       </div>
                   </div>
+                  {showTicketPriceImpactPanel && (
+                    <div className="rounded-lg border border-zinc-800 bg-[#0c0c0e]">
+                      <button
+                        type="button"
+                        onClick={() => setTicketPriceDetailsOpen((open) => !open)}
+                        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
+                        aria-expanded={ticketPriceDetailsExpanded}
+                      >
+                        <span className="flex min-w-0 flex-col">
+                          <span className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Price details</span>
+                          <span className={`mt-0.5 truncate text-[11px] font-bold ${ticketPriceImpactWarning ? 'text-[#ccff00]' : 'text-zinc-300'}`}>
+                            {formatProbabilityPrice(ticketExecutionPriceForImpact)} avg · {ticketPriceImpactLabel}
+                          </span>
+                        </span>
+                        <ChevronDown className={`h-4 w-4 shrink-0 text-zinc-500 transition-transform ${ticketPriceDetailsExpanded ? 'rotate-180' : ''}`} />
+                      </button>
+                      {ticketPriceDetailsExpanded && (
+                        <div className="border-t border-zinc-800 px-3 py-2 text-[11px] font-semibold text-zinc-300">
+                          <div className="space-y-1.5">
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="text-zinc-500">Effective price</span>
+                              <span className="font-mono font-black text-white">{formatProbabilityPrice(ticketExecutionPriceForImpact)}</span>
+                            </div>
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="text-zinc-500">Spot / mid</span>
+                              <span className="font-mono font-black text-zinc-200">{formatProbabilityPrice(ticketSpotMidPrice)}</span>
+                            </div>
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="text-zinc-500">Price impact</span>
+                              <span className={`font-mono font-black ${ticketPriceImpactWarning ? 'text-[#ccff00]' : 'text-zinc-200'}`}>{ticketPriceImpactLabel}</span>
+                            </div>
+                            {side === 'buy' && (
+                              <div className="flex items-center justify-between gap-3">
+                                <span className="text-zinc-500">Expected shares</span>
+                                <span className="font-mono font-black text-zinc-200">{formatSignedShares(ticketEstimatedShares)}</span>
+                              </div>
+                            )}
+                          </div>
+                          {ticketPriceImpactWarning && (
+                            <div className="mt-2 rounded border border-[#ccff00]/20 bg-[#ccff00]/10 px-2 py-1 text-[10px] font-bold text-[#ccff00]">
+                              Large price impact - low liquidity at this size.
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   <button
                     type="button"
