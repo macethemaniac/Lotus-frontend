@@ -1869,11 +1869,11 @@ export const DashboardV2Mockup = ({
           <>
           
           {/* Left Column: Filters & Intelligence */}
-          <div className={`shrink-0 flex flex-col gap-5 hidden xl:flex transition-all duration-300 ${isFilterCollapsed ? 'w-11 border-transparent' : 'w-56 pr-4 border-zinc-200 dark:border-zinc-800'} border-r`}>
+          <div className={`relative shrink-0 flex flex-col gap-5 hidden xl:flex transition-all duration-300 ${isFilterCollapsed ? 'w-0 border-transparent' : 'w-56 pr-4 border-zinc-200 dark:border-zinc-800'} border-r`}>
             {isFilterCollapsed ? (
               <button 
                 onClick={() => setIsFilterCollapsed(false)}
-                className="w-10 h-10 flex items-center justify-center rounded-xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 shadow-sm transition-colors"
+                className="absolute z-20 -ml-1 mt-0 flex h-10 w-10 items-center justify-center rounded-xl border border-zinc-200 bg-white text-zinc-500 shadow-sm transition-colors hover:text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900 dark:hover:text-zinc-100"
                 title="Expand Filters"
               >
                 <Filter className="w-4 h-4" />
@@ -3445,18 +3445,14 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
   const fallbackText = !diagnosticsEnabled && normalizedQuoteStatus === 'unavailable'
     ? '-'
     : fallbackLabel ?? (fallback ? 'Yes' : 'No');
-  const routeVenueCaption = !diagnosticsEnabled && fallbackMode === 'blocker'
-    ? 'Route'
-    : fallbackMode === 'best_venue'
-    ? 'Best venue'
-    : fallbackMode === 'blocker'
-      ? 'Blocked'
-      : fallbackMode === 'pending'
-      ? 'Route'
-      : 'Fallback';
   const liveVenueCaption = quoteReadyVenueCount > 0
     ? `${quoteReadyVenueCount} live venue${quoteReadyVenueCount === 1 ? '' : 's'}`
     : `${venueCount} venue${venueCount === 1 ? '' : 's'} scanned`;
+  const routeVenueLogoLabel = diagnosticsEnabled && fallbackMode === 'best_venue' && fallbackText && fallbackText !== '-'
+    ? fallbackText
+    : priceVenue;
+  const showRouteVenueLogo = diagnosticsEnabled && typeof routeVenueLogoLabel === 'string' && routeVenueLogoLabel.trim().length > 0;
+  const shouldShowVolumeMetric = volume != null && String(volume).trim().length > 0 && String(volume).trim().toLowerCase() !== 'backend catalog';
   const terminalPayload = { id, marketId, eventId, canonicalEventId, title, category, icon, volume, volume24h, liquidity, openInterest, resolvesAt, resolutionDateLabel, venueCount, routeType, venues, venueMarkets, marketType, outcomes, imageUrl, iconUrl, priceLabel, priceVenue, changeLabel };
   const outcomeRailOverflowClass = outcomesExpanded ? 'overflow-x-hidden overflow-y-auto custom-scrollbar' : 'overflow-hidden';
 
@@ -3533,22 +3529,27 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
       {/* Lotus Route Strip */}
       <div className="mt-2 h-[31px] shrink-0">
         {routeType ? (
-          <div className="grid h-full grid-cols-[minmax(0,1fr)_auto] items-center gap-2 overflow-hidden rounded-lg border border-[#ccff00]/20 bg-[#ccff00]/5 px-3 py-1.5 text-[10px] font-medium">
-            <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+          <div className="flex h-full items-center justify-between gap-3 overflow-hidden rounded-lg border border-[#ccff00]/20 bg-[#ccff00]/5 px-3 py-1.5 text-[10px] font-medium">
+            <div className="flex min-w-0 items-center gap-3 overflow-hidden">
               <span className="text-zinc-700 dark:text-zinc-300"><span className="text-zinc-500 dark:text-zinc-400">Route:</span> {routeType}</span>
               {diagnosticsEnabled ? (
                 <>
-                  <span className="text-zinc-700 dark:text-zinc-300"><span className="text-zinc-500 dark:text-zinc-400">Savings:</span> <span className="text-[#99cc00] font-bold">{savings}</span></span>
                   {spread && <span className="text-zinc-700 dark:text-zinc-300"><span className="text-zinc-500 dark:text-zinc-400">Spread:</span> {spread}</span>}
                 </>
               ) : (
                 <span className="text-zinc-700 dark:text-zinc-300"><span className="text-zinc-500 dark:text-zinc-400">Venues:</span> {liveVenueCaption}</span>
               )}
             </div>
-            {diagnosticsEnabled ? (
-              <span className="whitespace-nowrap text-zinc-700 dark:text-zinc-300"><span className="text-zinc-500 dark:text-zinc-400">{routeVenueCaption}:</span> {fallbackText}</span>
+            {showRouteVenueLogo ? (
+              <span
+                className="flex h-5 w-5 shrink-0 items-center justify-center rounded border border-zinc-700/70 bg-zinc-900/80 p-0.5 shadow-sm"
+                title={routeVenueLogoLabel}
+                aria-label={`Best venue ${routeVenueLogoLabel}`}
+              >
+                <VenueLogo id={dashboardVenueIconId(routeVenueLogoLabel)} label={routeVenueLogoLabel} className="h-full w-full rounded-[inherit] object-cover" />
+              </span>
             ) : (
-              <span className="whitespace-nowrap text-zinc-700 dark:text-zinc-300">Live</span>
+              <span className="whitespace-nowrap text-zinc-700 dark:text-zinc-300">{diagnosticsEnabled ? fallbackText : 'Live'}</span>
             )}
           </div>
         ) : null}
@@ -3608,8 +3609,10 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
 
       {/* Footer / Buy Sell Txns */}
       <div className="mt-auto flex flex-col gap-2 pt-2">
-        <div className="flex items-center gap-3 text-[11px] font-medium text-zinc-500 dark:text-zinc-400 pb-1">
-          <span>{volumeLabel} <span className="text-zinc-700 dark:text-zinc-300 font-mono">{volume}</span></span>
+        <div className="flex h-4 items-center gap-3 text-[11px] font-medium text-zinc-500 dark:text-zinc-400 pb-1">
+          {shouldShowVolumeMetric ? (
+            <span>{volumeLabel} <span className="font-mono text-zinc-700 dark:text-zinc-300">{volume}</span></span>
+          ) : null}
         </div>
         <div className="flex items-center justify-between text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
           {totalCount > 0 ? (
