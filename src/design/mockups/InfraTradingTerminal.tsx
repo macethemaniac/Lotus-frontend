@@ -5447,9 +5447,9 @@ export const InfraTradingTerminal = ({
     ? ((ticketExecutionPriceForImpact - ticketSpotMidPrice) / ticketSpotMidPrice) * 100
     : null;
   const ticketPriceImpactWarning = ticketPriceImpactPercent !== null && Math.abs(ticketPriceImpactPercent) >= 10;
-  const ticketPriceDetailsExpanded = ticketPriceDetailsOpen || ticketPriceImpactWarning;
+  const ticketPriceDetailsExpanded = ticketPriceDetailsOpen;
   const ticketPriceImpactLabel = ticketPriceImpactPercent !== null
-    ? `${Math.abs(ticketPriceImpactPercent).toFixed(1)}% ${ticketPriceImpactPercent >= 0 ? 'above spot' : 'below spot'}`
+    ? `${ticketPriceImpactPercent >= 0 ? '+' : '-'}${Math.abs(ticketPriceImpactPercent).toFixed(1)}%`
     : 'Unavailable';
   const showTicketPriceImpactPanel = Boolean(ticketOrchestratorOrder && ticketExecutionPriceForImpact !== null);
   const ticketOrchestratorDetail = ticketOrchestratorBlocker
@@ -7559,17 +7559,22 @@ export const InfraTradingTerminal = ({
 
                   <div className="flex justify-between items-center px-1">
                       <div className="flex flex-col gap-0.5">
-                          <div className="relative flex items-center gap-1 text-[11px] font-bold text-zinc-300 group/info">
-                              {ticketReceiveLabel}: <Info className="w-3.5 h-3.5 text-zinc-500" />
-                              <div className="pointer-events-none absolute left-0 top-5 z-30 hidden w-64 rounded-lg border border-zinc-700 bg-[#0c0c0e] p-3 text-[10px] font-semibold text-zinc-300 shadow-2xl group-hover/info:block">
-                                <div>Amount: {side === 'buy' ? formatUsdc(ticketAmountValue) : formatSignedShares(ticketAmountValue)}</div>
-                                <div>Trading Fee: {summarizeExpectedFees(ticketQuote)}</div>
-                                <div>Expected Avg. Price: {formatProbabilityPrice(ticketEffectivePrice)}</div>
-                                <div>Price Cap: {formatProbabilityPrice(ticketQuote?.expectedPrice ?? ticketEffectivePrice)}</div>
-                                {side === 'buy' && <div>Expected Shares: {formatSignedShares(ticketEstimatedShares)}</div>}
-                                <div>Min. Receive: {side === 'buy' ? formatSignedShares(ticketEstimatedShares) : formatUsdc(ticketReceiveEstimate)}</div>
-                                {ticketShareImprovement && <div>Share improvement: +{formatSignedShares(ticketShareImprovement)}</div>}
-                              </div>
+                          <div className="flex items-center gap-1.5 text-[11px] font-bold text-zinc-300">
+                              {ticketReceiveLabel}:
+                              {showTicketPriceImpactPanel && (
+                                <button
+                                  type="button"
+                                  onClick={() => setTicketPriceDetailsOpen((open) => !open)}
+                                  className={`flex h-4 w-4 items-center justify-center rounded border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${ticketPriceDetailsOpen ? 'border-[#ccff00]/40 bg-[#ccff00]/10 text-[#ccff00]' : 'border-zinc-800 bg-zinc-950/40 text-zinc-500 hover:text-zinc-300'}`}
+                                  aria-label="Toggle price details"
+                                  aria-expanded={ticketPriceDetailsExpanded}
+                                >
+                                  <svg viewBox="0 0 16 16" aria-hidden="true" className="h-3 w-3">
+                                    <path d="M3 4h10M3 8h10M3 12h6" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                                    <path d="M11.5 10.5 13 12l-1.5 1.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                                  </svg>
+                                </button>
+                              )}
                           </div>
                           <div className="text-[10px] font-medium text-zinc-500">Avg. Price: {formatProbabilityPrice(ticketEffectivePrice)}</div>
                       </div>
@@ -7582,16 +7587,18 @@ export const InfraTradingTerminal = ({
                       <button
                         type="button"
                         onClick={() => setTicketPriceDetailsOpen((open) => !open)}
-                        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
+                        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors hover:bg-zinc-900/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
                         aria-expanded={ticketPriceDetailsExpanded}
                       >
-                        <span className="flex min-w-0 flex-col">
-                          <span className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Price details</span>
-                          <span className={`mt-0.5 truncate text-[11px] font-bold ${ticketPriceImpactWarning ? 'text-[#ccff00]' : 'text-zinc-300'}`}>
-                            {formatProbabilityPrice(ticketExecutionPriceForImpact)} avg · {ticketPriceImpactLabel}
-                          </span>
+                        <span className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Price details</span>
+                        <span className="flex items-center gap-2">
+                          {!ticketPriceDetailsExpanded && (
+                            <span className={`font-mono text-[10px] font-black ${ticketPriceImpactWarning ? 'text-[#ccff00]' : 'text-zinc-300'}`}>
+                              {ticketPriceImpactLabel}
+                            </span>
+                          )}
+                          <ChevronDown className={`h-4 w-4 shrink-0 text-zinc-500 transition-transform ${ticketPriceDetailsExpanded ? 'rotate-180' : ''}`} />
                         </span>
-                        <ChevronDown className={`h-4 w-4 shrink-0 text-zinc-500 transition-transform ${ticketPriceDetailsExpanded ? 'rotate-180' : ''}`} />
                       </button>
                       {ticketPriceDetailsExpanded && (
                         <div className="border-t border-zinc-800 px-3 py-2 text-[11px] font-semibold text-zinc-300">
