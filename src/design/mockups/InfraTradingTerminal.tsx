@@ -5902,21 +5902,22 @@ export const InfraTradingTerminal = ({
       {/* Middle Panel Container: Chart & Tabs */}
       <div className="w-full flex-1 flex flex-col gap-3 min-w-0">
          {/* Top Header Row */}
-         <div className="bg-[#121214] border border-zinc-800 rounded-xl p-3 2xl:p-4 flex flex-col xl:flex-row xl:items-center xl:justify-between gap-3 shrink-0">
-            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 2xl:gap-4">
+         <div className="bg-[#121214] border border-zinc-800 rounded-xl p-3 2xl:p-4 flex flex-col gap-4 shrink-0">
+            <div className="flex min-w-0 flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+            <div className="flex min-w-0 flex-1 flex-col gap-3">
                 <div className="relative z-30 w-full sm:w-auto">
                     <button
                       type="button"
                       onClick={() => setShowMarketSelector((open) => !open)}
                       aria-expanded={showMarketSelector}
-                      className="group flex h-11 2xl:h-12 w-full sm:w-[min(32rem,calc(100vw-9rem))] xl:w-[clamp(280px,30vw,520px)] items-center gap-3 rounded-xl border border-zinc-800 bg-[#0c0c0e] px-3 text-left transition-colors hover:border-zinc-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 focus-visible:ring-offset-2 focus-visible:ring-offset-[#09090b]"
+                      className="group flex w-full max-w-[38rem] items-center gap-3 rounded-lg px-1 py-1 text-left transition-colors hover:bg-zinc-900/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 focus-visible:ring-offset-2 focus-visible:ring-offset-[#09090b]"
                     >
                       <TerminalMarketThumb
                         title={terminalMarket.title}
                         icon={terminalMarket.icon}
                         imageUrl={terminalMarket.imageUrl}
                         iconUrl={terminalMarket.iconUrl}
-                        className="h-9 w-9"
+                        className="h-9 w-9 shrink-0"
                       />
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-sm 2xl:text-base font-semibold tracking-tight text-zinc-100">
@@ -6141,27 +6142,28 @@ export const InfraTradingTerminal = ({
                   </div>
                )}
                 </div>
-                <div className="hidden xl:flex items-center px-2.5 py-1 rounded-md bg-[#ccff00]/10 border border-[#ccff00]/20 text-[#99cc00] text-[10px] font-bold uppercase tracking-widest ml-1 2xl:ml-2">
+                <div className="hidden xl:flex items-center text-[#ccff00] text-[11px] font-bold uppercase tracking-widest">
                     {terminalVenueLabel}
                 </div>
-                <div className="flex bg-zinc-900 border border-zinc-800 rounded-md p-1 ml-1 2xl:ml-2">
+                <div className="flex w-fit bg-zinc-900 border border-zinc-800 rounded-md p-1">
                     <button onClick={() => setMarketType('binary')} className={`px-2 py-1 text-[10px] font-bold uppercase rounded ${marketType === 'binary' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}>Binary</button>
                     <button onClick={() => setMarketType('multi')} className={`px-2 py-1 text-[10px] font-bold uppercase rounded ${marketType === 'multi' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}>Multi</button>
                 </div>
             </div>
 
-            <div className="grid shrink-0 grid-cols-2 gap-2 text-xs sm:grid-cols-4 xl:min-w-[30rem] 2xl:min-w-[34rem]">
+            <div className="grid w-full shrink-0 grid-cols-2 gap-x-8 gap-y-3 text-xs sm:grid-cols-4 xl:w-[min(48vw,38rem)]">
                 {[
                   ['Resolution', terminalResolutionDateLabel],
                   ['Liquidity', terminalLiquidityLabel],
                   ['24h Volume', terminalVolume24hLabel],
                   ['Open Interest', terminalOpenInterestLabel],
                 ].map(([label, value]) => (
-                  <div key={label} className="rounded-lg border border-zinc-800 bg-[#0c0c0e] px-3 py-2">
-                    <div className="text-[9px] font-bold uppercase tracking-widest text-zinc-500">{label}</div>
-                    <div className="mt-1 truncate font-mono text-[12px] font-black text-zinc-100">{value}</div>
+                  <div key={label} className="min-w-0">
+                    <div className={`text-[12px] font-medium text-zinc-500 ${label === 'Open Interest' ? 'underline decoration-dashed underline-offset-4' : ''}`}>{label}</div>
+                    <div className="mt-1 truncate font-mono text-[13px] font-bold text-zinc-100">{value}</div>
                   </div>
                 ))}
+            </div>
             </div>
          </div>
          
