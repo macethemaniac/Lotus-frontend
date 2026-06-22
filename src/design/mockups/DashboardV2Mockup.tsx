@@ -1871,13 +1871,7 @@ export const DashboardV2Mockup = ({
           {/* Left Column: Filters & Intelligence */}
           <div className={`relative shrink-0 flex flex-col gap-5 hidden xl:flex transition-all duration-300 ${isFilterCollapsed ? 'w-0 border-transparent' : 'w-56 pr-4 border-zinc-200 dark:border-zinc-800'} border-r`}>
             {isFilterCollapsed ? (
-              <button 
-                onClick={() => setIsFilterCollapsed(false)}
-                className="absolute z-20 -ml-1 mt-0 flex h-10 w-10 items-center justify-center rounded-xl border border-zinc-200 bg-white text-zinc-500 shadow-sm transition-colors hover:text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900 dark:hover:text-zinc-100"
-                title="Expand Filters"
-              >
-                <Filter className="w-4 h-4" />
-              </button>
+              null
             ) : (
               <div className="w-52">
                 <div className="flex items-center justify-between mb-4">
@@ -1975,6 +1969,15 @@ export const DashboardV2Mockup = ({
             
             {/* Quick Filters */}
             <div className="flex items-center flex-wrap gap-3 pb-2">
+              <button
+                type="button"
+                aria-label={isFilterCollapsed ? 'Show filters' : 'Hide filters'}
+                onClick={() => setIsFilterCollapsed((current) => !current)}
+                className={`flex h-10 w-10 items-center justify-center rounded-lg border shadow-sm transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00] ${!isFilterCollapsed ? 'border-[#ccff00]/45 bg-[#ccff00]/10 text-[#ccff00]' : 'border-zinc-200 bg-white text-zinc-500 hover:border-zinc-300 hover:text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:border-zinc-700 dark:hover:text-zinc-100'}`}
+                title={isFilterCollapsed ? 'Show filters' : 'Hide filters'}
+              >
+                <Filter className="h-4 w-4" />
+              </button>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
