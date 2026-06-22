@@ -199,7 +199,13 @@ export type MarketChartResponse = {
   timeframe: MarketChartTimeframe;
   generatedAt: string;
   historyStatus: "live" | "accumulating" | "unavailable";
-  series: Array<{ id: string; label: string; color: string }>;
+  series: Array<{
+    id: string;
+    label: string;
+    color: string;
+    kind?: "unified" | "venue" | string;
+    hasData?: boolean;
+  }>;
   points: Array<{
     timestamp: string;
     label: string;

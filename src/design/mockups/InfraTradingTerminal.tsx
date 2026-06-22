@@ -2468,23 +2468,33 @@ const buildChartYAxis = (
   return { domain: [0, upper], ticks: buildChartTicks(upper) };
 };
 
+type VenueChartMode = "aggregate" | "venues";
+
 const toVenueChartModel = (
   chart: MarketChartResponse | null,
-  timeframe: MarketChartTimeframe
+  timeframe: MarketChartTimeframe,
+  mode: VenueChartMode = "venues"
 ): { rows: TerminalChartRow[]; series: TerminalChartSeries[]; historyStatus: MarketChartResponse["historyStatus"] | null } => {
   if (!chart) return { rows: [], series: [], historyStatus: null };
-  const series = chart.series.map((item) => ({
+  const chartSeriesKind = (item: MarketChartResponse["series"][number]) =>
+    item.kind ?? (item.id === "unified" ? "unified" : "venue");
+  const lines = mode === "venues"
+    ? chart.series.filter((item) => chartSeriesKind(item) === "venue" && item.hasData !== false)
+    : chart.series.filter((item) => item.id === "unified" || chartSeriesKind(item) === "unified").slice(0, 1);
+  const series = lines.map((item) => ({
     id: item.id,
     label: chartSeriesLabel(item),
     color: item.color,
     emphasis: item.id === "unified",
-    dashed: item.id !== "unified"
+    dashed: false
   }));
   const rows = chart.points.map((point) => ({
     label: formatChartTimeLabel(point.timestamp, timeframe),
     timestamp: bucketChartTimestamp(point.timestamp),
-    unified: chartPointValue(point.unified),
-    ...Object.fromEntries(Object.entries(point.venues).map(([venue, value]) => [venue, chartPointValue(value)]))
+    ...Object.fromEntries(lines.map((item) => [
+      item.id,
+      chartPointValue(chartSeriesKind(item) === "unified" ? point.unified : point.venues[item.id])
+    ]))
   }));
   return { rows, series, historyStatus: chart.historyStatus };
 };
@@ -2610,7 +2620,7 @@ const LiveCanonicalChart = ({
   const chartModel = useMemo(
     () => marketType === 'binary'
       ? toOutcomeChartModel(outcomeCharts, liveOutcomeValuesByKey, activeTab)
-      : toVenueChartModel(venueChart, activeTab),
+      : toVenueChartModel(venueChart, activeTab, "venues"),
     [activeTab, liveOutcomeValuesByKey, marketType, outcomeCharts, venueChart]
   );
   const { rows, series, historyStatus } = chartModel;
