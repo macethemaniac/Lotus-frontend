@@ -233,6 +233,15 @@ const venueReadyBalanceAmount = (balance: VenueBalance): number => {
   return parseMoney(balance.readyAmount ?? balance.availableAmount) ?? 0;
 };
 
+const venuePendingBalanceAmount = (balance: VenueBalance): number => {
+  const asset = String(balance.asset ?? balance.token ?? 'USDC')
+    .toUpperCase()
+    .replace(/[^A-Z0-9.]/g, '');
+  const stableAsset = asset === 'USDC' || asset === 'USDCE' || asset === 'USDC.E' || asset === 'USDT' || asset === 'PUSD' || asset === 'USD';
+  if (!stableAsset) return 0;
+  return parseMoney(balance.pendingBalance) ?? 0;
+};
+
 const polymarketBalanceConfirmsTradeReadiness = (balance: VenueBalance): boolean => {
   if (venueKey(balance.venue) !== 'POLYMARKET') return false;
   if (venueReadyBalanceAmount(balance) <= 0) return false;
@@ -791,6 +800,7 @@ type VenueCashRow = {
   backend: string;
   label: string;
   balance: number;
+  pendingBalance: number;
   status: string;
   activation: 'ready' | 'required' | 'blocked' | 'pending';
   blockers: string[];
@@ -1014,6 +1024,7 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
     return trackedVenues.map((venue) => {
       const balances = data.balances.filter((balance) => venueKey(balance.venue) === venue.backend);
       const balance = balances.reduce((sum, item) => sum + venueReadyBalanceAmount(item), 0);
+      const pendingBalance = balances.reduce((sum, item) => sum + venuePendingBalanceAmount(item), 0);
       const balanceConfirmsReady = venue.backend === 'POLYMARKET' && balances.some(polymarketBalanceConfirmsTradeReadiness);
       const activation = data.activations.find((item) => venueKey(item.venue) === venue.backend);
       const account = data.venueAccounts.find((item) => venueKey(item.venue) === venue.backend);
@@ -1040,6 +1051,7 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
       return {
         ...venue,
         balance,
+        pendingBalance,
         status: balance > 0 ? 'Ready to trade' : inactiveStatus,
         activation: blockers.length > 0 ? 'blocked' : clobSyncPending ? 'pending' : activationRequired ? 'required' : 'ready',
         blockers,
@@ -1660,6 +1672,11 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
                         <div className={`text-[10px] font-semibold ${venue.balance > 0 ? 'text-emerald-400' : venue.activation === 'blocked' || venue.activation === 'pending' ? 'text-amber-300' : 'text-zinc-500'}`}>
                           {venue.status}
                         </div>
+                        {venue.pendingBalance > 0 && (
+                          <div className="mt-0.5 text-[10px] font-semibold text-zinc-500">
+                            Syncing ~{formatCurrency(venue.pendingBalance)}
+                          </div>
+                        )}
                         {venue.venueAddress && (
                           <div className="mt-0.5 font-mono text-[10px] text-zinc-600">{shortAddress(venue.venueAddress)}</div>
                         )}

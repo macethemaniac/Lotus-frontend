@@ -9,6 +9,7 @@ export type VenueBalance = {
   token?: string;
   readyAmount?: string;
   availableAmount?: string;
+  pendingBalance?: string;
   activeWithdrawalAmount?: string;
   updatedAt?: string;
   balanceSource?: string | null;
