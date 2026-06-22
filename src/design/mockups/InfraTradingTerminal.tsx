@@ -6918,9 +6918,9 @@ export const InfraTradingTerminal = ({
       </div>
 
       {/* Right Panel: Trade Ticket & Account */}
-      <div className="w-full flex flex-col gap-2 2xl:gap-3 shrink-0 overflow-visible xl:max-h-[calc(100dvh-8rem)] xl:w-[360px] xl:overflow-hidden 2xl:w-[clamp(380px,21vw,460px)]">
+      <div className="w-full flex flex-col gap-2 2xl:gap-3 shrink-0 overflow-visible xl:max-h-[calc(100dvh-7.5rem)] xl:w-[360px] xl:overflow-y-auto xl:overflow-x-hidden xl:pb-20 xl:pr-1 custom-scrollbar 2xl:w-[clamp(380px,21vw,460px)]">
          {/* Trade Block */}
-         <div className="bg-[#121214] border border-zinc-800 rounded-xl flex flex-col shrink-0 min-h-0 transition-all duration-300 xl:flex-1 xl:overflow-hidden">
+         <div className="bg-[#121214] border border-zinc-800 rounded-xl flex flex-col shrink-0 min-h-0 transition-all duration-300 xl:flex-none xl:overflow-visible">
              <div className="flex justify-between items-center p-3 border-b border-zinc-800/80">
                  <div className="flex gap-4 items-center pl-2">
                      <button type="button" onClick={() => switchTicketSide('buy')} className={`pb-1 text-sm font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${side === 'buy' ? 'text-white border-b-2 border-white' : 'text-zinc-500 hover:text-zinc-300'}`}>Buy</button>
@@ -7025,7 +7025,7 @@ export const InfraTradingTerminal = ({
                  </div>
              </div>
 
-              <div className="flex flex-col gap-3 p-3 animate-in fade-in duration-300 2xl:p-4 xl:min-h-0 xl:flex-1 xl:overflow-y-auto xl:pr-3 custom-scrollbar">
+              <div className="flex flex-col gap-3 p-3 animate-in fade-in duration-300 2xl:p-4 xl:min-h-0 xl:flex-none xl:overflow-visible">
                   <div className="grid grid-cols-2 gap-3">
                       <button type="button" onClick={() => selectTicketOutcome('yes')} className={`font-bold py-3 rounded-lg flex items-center justify-center gap-2 shadow-sm transition-colors text-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${ticketOutcomeSide === 'yes' ? 'bg-emerald-500 text-white hover:bg-emerald-400' : 'bg-transparent border border-emerald-500/30 text-emerald-500 hover:bg-emerald-500/10'}`}>
                           YES {displayPriceLabel(selectedTicketOutcome?.yesPrice, marketDiagnosticsEnabled)}
@@ -7614,7 +7614,7 @@ export const InfraTradingTerminal = ({
              ))}
          </div>
 
-         <div className="bg-[#121214] border border-zinc-800 rounded-xl p-2.5 2xl:p-3 flex flex-col gap-2 shrink-0 xl:max-h-[240px] xl:overflow-y-auto custom-scrollbar">
+         <div className="bg-[#121214] border border-zinc-800 rounded-xl p-2.5 2xl:p-3 flex flex-col gap-2 shrink-0 overflow-visible">
              <div className="flex items-start justify-between gap-3">
                  <div>
                      <div className="flex items-center gap-2">
