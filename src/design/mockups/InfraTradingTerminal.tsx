@@ -7565,13 +7565,14 @@ export const InfraTradingTerminal = ({
                                 <button
                                   type="button"
                                   onClick={() => setTicketPriceDetailsOpen((open) => !open)}
-                                  className={`flex h-4 w-4 items-center justify-center rounded border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${ticketPriceDetailsOpen ? 'border-[#ccff00]/40 bg-[#ccff00]/10 text-[#ccff00]' : 'border-zinc-800 bg-zinc-950/40 text-zinc-500 hover:text-zinc-300'}`}
+                                  className={`flex h-4 w-4 items-center justify-center rounded border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-700 ${ticketPriceDetailsOpen ? 'border-zinc-700 bg-zinc-900/70 text-zinc-300' : 'border-zinc-800 bg-zinc-950/40 text-zinc-500 hover:text-zinc-300'}`}
                                   aria-label="Toggle price details"
                                   aria-expanded={ticketPriceDetailsExpanded}
                                 >
                                   <svg viewBox="0 0 16 16" aria-hidden="true" className="h-3 w-3">
-                                    <path d="M3 4h10M3 8h10M3 12h6" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                                    <path d="M11.5 10.5 13 12l-1.5 1.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                                    <path d="M4 2.5h5.5a1 1 0 0 1 1 1v9.75H3V3.5a1 1 0 0 1 1-1Z" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinejoin="round" />
+                                    <path d="M5 4.25h3.5v3H5zM10.5 5.25h1.1c.5 0 .9.4.9.9v4.35c0 .65.35 1 .85 1s.85-.35.85-1V7.2l-1.35-1.35" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
+                                    <path d="M2.5 13.25h8.5" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
                                   </svg>
                                 </button>
                               )}
@@ -7805,9 +7806,14 @@ export const InfraTradingTerminal = ({
 
                      <div className="flex justify-between items-center px-1">
                          <div className="flex flex-col gap-0.5">
-                             <div className="flex items-center gap-1 text-[11px] font-bold text-zinc-300">
-                                 To Win: <Info className="w-3.5 h-3.5 text-zinc-500" />
-                             </div>
+                            <div className="flex items-center gap-1.5 text-[11px] font-bold text-zinc-300">
+                                To Win:
+                                <svg viewBox="0 0 16 16" aria-hidden="true" className="h-3.5 w-3.5 text-zinc-500">
+                                  <path d="M4 2.5h5.5a1 1 0 0 1 1 1v9.75H3V3.5a1 1 0 0 1 1-1Z" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinejoin="round" />
+                                  <path d="M5 4.25h3.5v3H5zM10.5 5.25h1.1c.5 0 .9.4.9.9v4.35c0 .65.35 1 .85 1s.85-.35.85-1V7.2l-1.35-1.35" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
+                                  <path d="M2.5 13.25h8.5" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
+                                </svg>
+                            </div>
                              <div className="text-[10px] font-medium text-zinc-500">Avg. Price: 26.2¢</div>
                          </div>
                          <div className="font-mono text-xl font-black text-emerald-500 flex items-baseline gap-1">
