@@ -5947,7 +5947,7 @@ export const InfraTradingTerminal = ({
                           {terminalMarket.title}
                         </span>
                         <span className="mt-0.5 block truncate text-[11px] font-medium text-zinc-500">
-                          Canonical event / {terminalVenueLabel}
+                          {terminalVenueLabel}
                         </span>
                       </span>
                       <ChevronDown className={`h-4 w-4 shrink-0 text-zinc-500 transition-transform group-hover:text-zinc-300 ${showMarketSelector ? 'rotate-180' : ''}`} />
@@ -6164,9 +6164,6 @@ export const InfraTradingTerminal = ({
                       </div>
                   </div>
                )}
-                </div>
-                <div className="hidden xl:flex items-center text-[#ccff00] text-[11px] font-bold uppercase tracking-widest">
-                    {terminalVenueLabel}
                 </div>
             </div>
 
