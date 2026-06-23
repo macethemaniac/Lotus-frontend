@@ -1,0 +1,95 @@
+import { useEffect, useRef } from "react";
+import { AuthState, useTurnkey, type Wallet as TurnkeyWallet } from "@turnkey/react-wallet-kit";
+import type { AuthSession } from "@/features/auth/types";
+import { registerTurnkeyDefaultWallets, type TurnkeyWalletAccountRegistration } from "@/features/wallets/api/wallet-api";
+
+// Each user gets one Solana + one EVM account, created inside THEIR Turnkey sub-organization using
+// their own authenticated session (the user is the root member of their sub-org). The backend's
+// parent-org API key cannot create wallets in a user's sub-org (Turnkey ORGANIZATION_MISMATCH), so
+// provisioning must happen client-side and then be registered with Lotus. This restores the flow
+// that commit 301194e removed.
+const turnkeyDefaultAccountParams = [
+  {
+    curve: "CURVE_ED25519",
+    pathFormat: "PATH_FORMAT_BIP32",
+    path: "m/44'/501'/0'/0'",
+    addressFormat: "ADDRESS_FORMAT_SOLANA",
+  },
+  {
+    curve: "CURVE_SECP256K1",
+    pathFormat: "PATH_FORMAT_BIP32",
+    path: "m/44'/60'/0'/0/0",
+    addressFormat: "ADDRESS_FORMAT_ETHEREUM",
+  },
+] as const;
+
+const turnkeyWalletRegistrations = (wallets: TurnkeyWallet[]): TurnkeyWalletAccountRegistration[] =>
+  wallets
+    .flatMap((wallet) =>
+      (wallet.accounts ?? [])
+        .filter(
+          (account) =>
+            account.addressFormat === "ADDRESS_FORMAT_SOLANA" ||
+            account.addressFormat === "ADDRESS_FORMAT_ETHEREUM",
+        )
+        .map((account) => ({
+          providerWalletId: account.walletId ?? wallet.walletId,
+          providerWalletAccountId: account.walletAccountId,
+          address: account.address,
+          addressFormat: account.addressFormat as TurnkeyWalletAccountRegistration["addressFormat"],
+        })),
+    )
+    .filter((account) => Boolean(account.providerWalletId && account.providerWalletAccountId && account.address));
+
+/**
+ * Ensures the signed-in user has their default SOL + EVM wallets exactly once, then records them with
+ * the Lotus backend. Idempotent: if the wallets already exist (in Turnkey and/or already registered)
+ * nothing new is created. Runs once per session; a failed run is allowed to retry on the next login.
+ */
+export function WalletProvisioner({ session }: { session: AuthSession }) {
+  const { authState, wallets: turnkeyWallets, refreshWallets, createWallet, session: turnkeySession } = useTurnkey();
+  const ranForRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!session.userJwt || authState !== AuthState.Authenticated) {
+      return;
+    }
+    if (ranForRef.current === session.userId) {
+      return;
+    }
+    ranForRef.current = session.userId;
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        let activeWallets = turnkeyWallets;
+        if (turnkeyWalletRegistrations(activeWallets).length === 0) {
+          activeWallets = await refreshWallets();
+        }
+        if (turnkeyWalletRegistrations(activeWallets).length === 0) {
+          await createWallet({
+            walletName: "Lotus Wallet",
+            accounts: [...turnkeyDefaultAccountParams],
+            ...(turnkeySession?.organizationId ? { organizationId: turnkeySession.organizationId } : {}),
+          });
+          activeWallets = await refreshWallets();
+        }
+        const registrations = turnkeyWalletRegistrations(activeWallets);
+        if (!cancelled && registrations.length > 0) {
+          await registerTurnkeyDefaultWallets(session.userJwt, registrations);
+        }
+      } catch {
+        // Non-fatal: clear the guard so the next login retries provisioning.
+        if (!cancelled) {
+          ranForRef.current = null;
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authState, createWallet, refreshWallets, session.userId, session.userJwt, turnkeySession?.organizationId, turnkeyWallets]);
+
+  return null;
+}
