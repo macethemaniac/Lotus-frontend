@@ -408,6 +408,27 @@ const formatCurrencyValue = (value: string | number | null | undefined): string 
   return parsed.toLocaleString(undefined, { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
+const parseCurrencyNumber = (value: string | number | null | undefined): number => {
+  const parsed = typeof value === 'number'
+    ? value
+    : typeof value === 'string'
+      ? Number(value.replace(/[$,\s]/g, ''))
+      : NaN;
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const formatSignedPercentValue = (value: number): string => {
+  if (!Number.isFinite(value)) return '+0.00%';
+  const prefix = value >= 0 ? '+' : '';
+  return `${prefix}${value.toFixed(2)}%`;
+};
+
+type HeaderPortfolioVenueRow = {
+  venue: string;
+  cash: number;
+  positions: number;
+};
+
 const loadWatchlistIds = (): string[] => {
   try {
     const raw = window.localStorage.getItem(watchlistStorageKey);
@@ -473,6 +494,98 @@ const formatChange24h = (market: Pick<MarketCatalogMarket['venueMarkets'][number
   }
   const value = absolute ?? Math.abs(numeric);
   return { label: `${numeric > 0 ? '+' : numeric < 0 ? '-' : ''}${formatProbabilityPrice(value)}`, direction };
+};
+
+const formatHeaderVenueLabel = (venue: string): string => {
+  const normalized = venue.toUpperCase();
+  if (normalized === 'PREDICT_FUN' || normalized === 'PREDICT') return 'Predict.fun';
+  if (normalized === 'POLYMARKET') return 'Polymarket';
+  if (normalized === 'LIMITLESS') return 'Limitless';
+  if (normalized === 'OPINION') return 'Opinion';
+  if (normalized === 'MYRIAD') return 'Myriad';
+  return venue
+    .replace(/[_-]+/g, ' ')
+    .toLowerCase()
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+};
+
+const HeaderPortfolioSummary = ({
+  cashTotal,
+  positionsTotal,
+  pnlPercent,
+  rows,
+  loading,
+}: {
+  cashTotal: number;
+  positionsTotal: number;
+  pnlPercent: number;
+  rows: HeaderPortfolioVenueRow[];
+  loading: boolean;
+}) => {
+  const pnlPositive = !Number.isFinite(pnlPercent) || pnlPercent >= 0;
+  const hasRows = rows.length > 0;
+
+  return (
+    <div className="group relative hidden xl:block">
+      <button
+        type="button"
+        aria-label="Portfolio cash and positions summary"
+        className="flex h-10 min-w-[18.5rem] items-center justify-center gap-3 rounded-full border border-zinc-200 bg-white/85 px-4 text-sm shadow-sm backdrop-blur transition-colors hover:border-zinc-300 hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 dark:border-zinc-800 dark:bg-[#101114]/90 dark:hover:border-zinc-700 dark:hover:bg-[#141518]"
+      >
+        <span className="text-zinc-500 dark:text-zinc-400">Cash</span>
+        <span className="font-bold tabular-nums text-zinc-950 dark:text-zinc-50">
+          {loading ? 'Syncing' : formatCurrencyValue(cashTotal)}
+        </span>
+        <span className="h-5 w-px bg-zinc-200 dark:bg-zinc-700" aria-hidden />
+        <span className="text-zinc-500 dark:text-zinc-400">Positions</span>
+        <span className="font-bold tabular-nums text-zinc-950 dark:text-zinc-50">
+          {loading ? 'Syncing' : formatCurrencyValue(positionsTotal)}
+        </span>
+        <span className={`text-xs font-bold tabular-nums ${pnlPositive ? 'text-[#49e63d]' : 'text-rose-400'}`}>
+          {formatSignedPercentValue(pnlPercent)}
+        </span>
+      </button>
+
+      <div className="pointer-events-none absolute right-0 top-full z-50 mt-3 w-[min(28rem,calc(100vw-2rem))] translate-y-1 rounded-2xl border border-zinc-200 bg-white/95 p-3 opacity-0 shadow-2xl backdrop-blur-xl transition duration-150 group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:translate-y-0 group-focus-within:opacity-100 dark:border-zinc-800 dark:bg-[#101114]/95">
+        <div className="grid grid-cols-[minmax(7rem,1fr)_7rem_7rem] items-center gap-4 px-3 pb-3 text-[11px] font-bold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
+          <span>Venue</span>
+          <span className="text-right">Cash</span>
+          <span className="text-right">Positions</span>
+        </div>
+        <div className="overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800">
+          {hasRows ? rows.map((row, index) => (
+            <div
+              key={row.venue}
+              className={`grid grid-cols-[minmax(7rem,1fr)_7rem_7rem] items-center gap-4 bg-white px-3 py-3 dark:bg-[#101114] ${index > 0 ? 'border-t border-zinc-200 dark:border-zinc-800' : ''}`}
+            >
+              <div className="flex min-w-0 items-center gap-3">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-zinc-100 dark:bg-zinc-900">
+                  <VenueLogo
+                    id={dashboardVenueIconId(row.venue)}
+                    label={formatHeaderVenueLabel(row.venue)}
+                    className="h-full w-full rounded-[inherit] object-cover"
+                  />
+                </span>
+                <span className="truncate text-sm font-bold text-zinc-900 dark:text-zinc-100">
+                  {formatHeaderVenueLabel(row.venue)}
+                </span>
+              </div>
+              <span className="text-right text-sm font-bold tabular-nums text-zinc-900 dark:text-zinc-100">
+                {formatCurrencyValue(row.cash)}
+              </span>
+              <span className="text-right text-sm font-bold tabular-nums text-zinc-900 dark:text-zinc-100">
+                {formatCurrencyValue(row.positions)}
+              </span>
+            </div>
+          )) : (
+            <div className="bg-white px-4 py-5 text-sm text-zinc-500 dark:bg-[#101114] dark:text-zinc-400">
+              Portfolio data is syncing.
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 };
 
 const formatSpreadBps = (candidate: TradeRouteCandidate | null): string => {
@@ -1332,6 +1445,54 @@ export const DashboardV2Mockup = ({
     const parsed = Number(balance.availableAmount ?? balance.readyAmount ?? 0);
     return Number.isFinite(parsed) ? sum + parsed : sum;
   }, 0);
+  const portfolioPositionsTotal = parseCurrencyNumber(portfolioSummary?.totalMarkValue ?? portfolioSummary?.totalCostBasis);
+  const portfolioPnlPercent = (() => {
+    const costBasis = parseCurrencyNumber(portfolioSummary?.totalCostBasis);
+    if (costBasis <= 0) return 0;
+    return (parseCurrencyNumber(portfolioSummary?.totalUnrealizedPnl) / costBasis) * 100;
+  })();
+  const headerPortfolioRows = useMemo<HeaderPortfolioVenueRow[]>(() => {
+    const preferredVenueOrder = ['POLYMARKET', 'LIMITLESS', 'PREDICT_FUN', 'OPINION', 'MYRIAD'];
+    const rowsByVenue = new Map<string, HeaderPortfolioVenueRow>();
+    const ensureRow = (venue: string) => {
+      const key = venue.toUpperCase();
+      const existing = rowsByVenue.get(key);
+      if (existing) return existing;
+      const row = { venue: key, cash: 0, positions: 0 };
+      rowsByVenue.set(key, row);
+      return row;
+    };
+
+    preferredVenueOrder.forEach(ensureRow);
+
+    portfolioBalances.forEach((balance) => {
+      const row = ensureRow(balance.venue);
+      row.cash += parseCurrencyNumber(balance.availableAmount ?? balance.readyAmount);
+    });
+
+    portfolioSummary?.positions?.forEach((position) => {
+      const row = ensureRow(position.venue);
+      const markedValue = parseCurrencyNumber(position.markValue);
+      if (markedValue > 0) {
+        row.positions += markedValue;
+        return;
+      }
+      const size = Number(position.verifiedSize ?? 0);
+      const entryPrice = Number(position.averageEntryPrice ?? 0);
+      if (Number.isFinite(size) && Number.isFinite(entryPrice) && size > 0 && entryPrice > 0) {
+        row.positions += size * entryPrice;
+      }
+    });
+
+    return Array.from(rowsByVenue.values()).sort((left, right) => {
+      const leftIndex = preferredVenueOrder.indexOf(left.venue);
+      const rightIndex = preferredVenueOrder.indexOf(right.venue);
+      if (leftIndex !== -1 || rightIndex !== -1) {
+        return (leftIndex === -1 ? Number.MAX_SAFE_INTEGER : leftIndex) - (rightIndex === -1 ? Number.MAX_SAFE_INTEGER : rightIndex);
+      }
+      return left.venue.localeCompare(right.venue);
+    });
+  }, [portfolioBalances, portfolioSummary]);
   const portfolioValueLabel = portfolioLoading
     ? 'Syncing'
     : portfolioSummary?.totalMarkValue !== null && portfolioSummary?.totalMarkValue !== undefined
@@ -1853,6 +2014,13 @@ export const DashboardV2Mockup = ({
                   </div>
                 )}
               </div>
+              <HeaderPortfolioSummary
+                cashTotal={portfolioCashTotal}
+                positionsTotal={portfolioPositionsTotal}
+                pnlPercent={portfolioPnlPercent}
+                rows={headerPortfolioRows}
+                loading={portfolioLoading}
+              />
               <button 
                 onClick={() => setIsDarkMode(!isDarkMode)}
                 className="p-1.5 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors rounded-full hover:bg-zinc-100 dark:hover:bg-zinc-800"
