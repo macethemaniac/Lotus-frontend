@@ -31,6 +31,7 @@ import { DenseStripFooter } from "@/design/mockups/GlobalFooterVariations";
 import { getPortfolioSummary, type PortfolioSummary } from "@/features/trading/api/execution-api";
 import { getVenueBalances, mergeVenueBalanceSnapshots, type VenueBalance } from "@/features/funding/api/funding-api";
 import { listWallets, mergeUserWalletBalanceSnapshots, type UserWallet } from "@/features/wallets/api/wallet-api";
+import { WalletProvisioner } from "@/features/wallets/components/wallet-provisioner";
 
 const lotusPageRouteByPage: Record<LotusAppPage, string> = {
   home: "/dashboard",
@@ -757,6 +758,7 @@ export function App() {
         />
       ) : (
         <div className="relative h-[100dvh] min-h-[100dvh] overflow-hidden bg-black">
+          <WalletProvisioner session={session} />
           <AccountDropdown session={session} onLogout={handleLogout} onNavigate={navigateToPage} />
           <DashboardV2Mockup activePage={activePage} onNavigate={navigateToPage} session={session} />
           <DenseStripFooter fixed />
