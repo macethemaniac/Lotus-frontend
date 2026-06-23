@@ -33,7 +33,11 @@ export function LotusTurnkeyProvider({
           openOauthInPage: true,
         },
       },
-      autoRefreshManagedState: true,
+      // Don't auto-load Turnkey managed state (user + wallets) after OAuth. That batch
+      // (get_user + list_wallets + list_wallet_accounts) ran before onAuthenticationSuccess fired,
+      // adding ~2s to login->dashboard. The dashboard doesn't need Turnkey wallets to render, and
+      // every flow that does (trading, funding, export) already calls refreshWallets() on demand.
+      autoRefreshManagedState: false,
       autoFetchWalletKitConfig: true,
       ui: {
         darkMode: true,
