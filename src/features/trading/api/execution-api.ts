@@ -104,15 +104,45 @@ export type ExecutionOrderVenuePreference =
 
 export type ExecutionOrderSignatureRequest = SignatureBundle["signatureRequests"][number];
 
+export type ExecutionImprovement = {
+  routeType?: "SINGLE_VENUE" | "PAIR" | "TRI" | string;
+  isCrossVenue?: boolean;
+  baselineVenue?: string | null;
+  baselineShares?: number | string | null;
+  baselineAveragePrice?: number | string | null;
+  routeShares?: number | string | null;
+  routeAveragePrice?: number | string | null;
+  pricePerShareImprovement?: number | string | null;
+  priceImprovementBps?: number | string | null;
+  extraShares?: number | string | null;
+  amountSavedUsd?: number | string | null;
+  extraSharesValue?: number | string | null;
+  projectedUserBenefit?: number | string | null;
+  traderRetainedValue?: number | string | null;
+  floorBps?: number | string | null;
+  shareImprovementUncapped?: boolean;
+  floorOnly?: boolean;
+  captureMode?: string | null;
+};
+
 export type ExecutionOrderPreviewRequest = {
   marketId: string;
   outcomeId: string;
-  side: TradeSide;
-  amount: string;
   venuePreference: ExecutionOrderVenuePreference;
   orderPolicy?: "FOK" | "FAK";
   slippageToleranceBps?: number;
-};
+} & (
+  | {
+      side: "buy";
+      amountType: "NOTIONAL_USDC";
+      notionalAmount: string;
+    }
+  | {
+      side: "sell";
+      amountType: "SHARES";
+      shareAmount: string;
+    }
+);
 
 export type ExecutionOrderResponse = {
   orderId: string;
@@ -123,11 +153,19 @@ export type ExecutionOrderResponse = {
   signingMode?: string | null;
   routeSummary?: Record<string, unknown> | null;
   priceSummary?: Record<string, unknown> | null;
+  notionalFill?: {
+    executableShares?: number | string | null;
+    executableNotional?: number | string | null;
+    requestedNotional?: number | string | null;
+    shortfall?: boolean;
+    [key: string]: unknown;
+  } | null;
+  executionImprovement?: ExecutionImprovement | null;
   venuePreference?: ExecutionOrderVenuePreference | string | null;
   readinessSummary?: Record<string, unknown> | null;
   venueCapabilitySummary?: Record<string, unknown> | null;
-  blockers?: Array<string | { message?: string; reason?: string; code?: string; venue?: string }>;
-  lastError?: string | { message?: string; code?: string } | null;
+  blockers?: Array<string | { message?: string; reason?: string; code?: string; venue?: string; details?: Record<string, unknown>; [key: string]: unknown }>;
+  lastError?: string | { message?: string; code?: string; details?: Record<string, unknown>; [key: string]: unknown } | null;
   signatureRequests?: ExecutionOrderSignatureRequest[];
   nextPollAt?: string | null;
   canAutoRenew?: boolean;

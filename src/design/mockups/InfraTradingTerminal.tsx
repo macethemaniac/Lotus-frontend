@@ -276,6 +276,11 @@ export type TerminalMarketSelection = {
   category: string;
   icon: string;
   volume: string;
+  volume24h?: string | null;
+  liquidity?: string | null;
+  openInterest?: string | null;
+  resolvesAt?: string | null;
+  resolutionDateLabel?: string | null;
   venueCount: number;
   routeType: string;
   venues?: string[];
@@ -520,6 +525,13 @@ const formatMoneyMetric = (value: string | number | null | undefined): string | 
   return metric ? `$${metric}` : null;
 };
 
+const formatTerminalDate = (value: string | null | undefined): string | null => {
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+};
+
 const routeRank = (routeType: string | null | undefined): number => {
   const normalized = (routeType ?? '').toLowerCase();
   if (normalized.includes('tri')) return 3;
@@ -616,6 +628,7 @@ const displayPriceLabel = (label: string | null | undefined, diagnosticsEnabled 
 const readableQuoteBlocker = (reason: string | null | undefined): string | null => {
   if (!reason) return null;
   const normalized = reason.toUpperCase();
+  if (normalized.includes('LIVE_ORDERBOOK_REQUIRED')) return 'Live orderbook syncing';
   if (normalized.includes('OPINION_TOKEN_ID_MISSING')) return 'Opinion token mapping missing';
   if (normalized.includes('VENUE_OUTCOME_ID_MISSING')) return 'Outcome token mapping missing';
   if (normalized.includes('QUOTE_PROVIDER_TIMEOUT')) return 'Provider timeout';
@@ -626,6 +639,7 @@ const readableQuoteBlocker = (reason: string | null | undefined): string | null 
   if (http) return `Provider unavailable (${http[1]})`;
   if (normalized.includes('QUOTE_READER_UNSUPPORTED')) return 'Venue quote reader unsupported';
   if (normalized.includes('QUOTE_SNAPSHOT_STALE')) return 'Stale quote';
+  if (normalized.includes('QUOTE_SNAPSHOT')) return 'Quote snapshot syncing';
   if (normalized.includes('QUOTE_READER_FAILED')) return 'Venue quote unavailable';
   return reason.replace(/[_-]+/g, ' ').toLowerCase();
 };
@@ -704,6 +718,12 @@ const orderbookNumberString = (value: string | number | null | undefined): strin
 const orderbookNumericValue = (value: string | number | null | undefined): number | null => {
   const parsed = typeof value === 'number' ? value : typeof value === 'string' ? Number(value.replace(/[$,\s]/g, '')) : NaN;
   return Number.isFinite(parsed) ? parsed : null;
+};
+
+const normalizedOrderbookProbability = (value: string | number | null | undefined): number | null => {
+  const parsed = orderbookNumericValue(value);
+  if (parsed === null || parsed <= 0) return null;
+  return parsed > 1 ? parsed / 100 : parsed;
 };
 
 const normalizeStreamBlocker = (blocker: unknown): string | null => {
@@ -1865,6 +1885,7 @@ const routePathFromExecutionOrder = (order: ExecutionOrderResponse | null): stri
 };
 
 const orderEffectivePrice = (order: ExecutionOrderResponse | null): number | null =>
+  numericField(order?.executionImprovement, ['routeAveragePrice']) ??
   numericField(order?.priceSummary, ['effectivePrice', 'averagePrice', 'avgPrice', 'price', 'expectedPrice']) ??
   numericField(order?.routeSummary, ['effectivePrice', 'averagePrice', 'avgPrice', 'price', 'expectedPrice']);
 
@@ -1874,11 +1895,141 @@ const orderReceiveAmount = (order: ExecutionOrderResponse | null): string | null
 
 const executionOrderRouteType = (order: ExecutionOrderResponse | null): string =>
   textField(order?.routeSummary, ['routeType', 'type', 'strategy']) ??
+  textField(order?.executionImprovement, ['routeType']) ??
   (order?.venuePreference === 'BEST_ROUTE' ? 'BEST_ROUTE' : 'SINGLE_VENUE');
 
-const executionOrderEstimatedSavings = (order: ExecutionOrderResponse | null): number | null =>
-  numericField(order?.priceSummary, ['estimatedSavings', 'savings', 'totalSavings']) ??
-  numericField(order?.routeSummary, ['estimatedSavings', 'savings', 'totalSavings']);
+type ExecutionImprovementSummary = {
+  savingsUsd: number;
+  extraShares: number;
+  priceImprovementBps: number | null;
+  baselineAveragePrice: number | null;
+  routeAveragePrice: number | null;
+  isImproved: boolean;
+  captureMode: string | null;
+};
+
+const executionImprovementSummary = (order: ExecutionOrderResponse | null): ExecutionImprovementSummary | null => {
+  const improvement = order?.executionImprovement;
+  if (!improvement) return null;
+  const captureMode = typeof improvement.captureMode === 'string' ? improvement.captureMode.toUpperCase() : null;
+  const grossSaved = parseFiniteNumber(improvement.amountSavedUsd ?? improvement.extraSharesValue ?? improvement.projectedUserBenefit);
+  const retainedSaved = parseFiniteNumber(improvement.traderRetainedValue);
+  const savingsUsd = captureMode && captureMode !== 'SHADOW'
+    ? retainedSaved ?? grossSaved ?? 0
+    : grossSaved ?? 0;
+  const extraShares = parseFiniteNumber(improvement.extraShares) ?? 0;
+  return {
+    savingsUsd: Math.max(0, savingsUsd),
+    extraShares: Math.max(0, extraShares),
+    priceImprovementBps: parseFiniteNumber(improvement.priceImprovementBps),
+    baselineAveragePrice: parseFiniteNumber(improvement.baselineAveragePrice),
+    routeAveragePrice: parseFiniteNumber(improvement.routeAveragePrice),
+    isImproved: extraShares > 0 && savingsUsd > 0,
+    captureMode,
+  };
+};
+
+type InsufficientExecutableDepthSummary = {
+  requestedNotional: number | null;
+  executableNotional: number | null;
+  executableShares: number | null;
+  averageExecutablePrice: number | null;
+  residualNotional: number | null;
+  venuesConsidered: string[];
+};
+
+const INSUFFICIENT_EXECUTABLE_DEPTH_CODE = 'INSUFFICIENT_EXECUTABLE_DEPTH';
+
+const nestedRecord = (value: unknown, fields: string[]): Record<string, unknown> | null => {
+  const source = recordValue(value);
+  for (const field of fields) {
+    const candidate = source[field];
+    if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) return recordValue(candidate);
+  }
+  return null;
+};
+
+const executionOrderDetailSources = (order: ExecutionOrderResponse | null): Record<string, unknown>[] => {
+  const sources: Record<string, unknown>[] = [];
+  for (const blocker of order?.blockers ?? []) {
+    if (blocker && typeof blocker === 'object') {
+      const source = recordValue(blocker);
+      sources.push(source);
+      const details = nestedRecord(source, ['details', 'metadata', 'data']);
+      if (details) sources.push(details);
+    }
+  }
+  const lastError = order?.lastError;
+  if (lastError && typeof lastError === 'object') {
+    const source = recordValue(lastError);
+    sources.push(source);
+    const details = nestedRecord(source, ['details', 'metadata', 'data']);
+    if (details) sources.push(details);
+  }
+  for (const source of [order?.priceSummary, order?.routeSummary]) {
+    if (source && typeof source === 'object') {
+      const record = recordValue(source);
+      sources.push(record);
+      const details = nestedRecord(record, ['insufficientDepth', 'insufficientExecutableDepth', 'depth', 'details', 'metadata']);
+      if (details) sources.push(details);
+    }
+  }
+  return sources;
+};
+
+const textCodeField = (value: unknown): string | null => {
+  const source = recordValue(value);
+  const direct = source.code ?? source.reasonCode ?? source.detailsCode;
+  if (typeof direct === 'string' && direct.trim()) return direct.trim().toUpperCase();
+  const details = nestedRecord(source, ['details', 'metadata', 'data']);
+  const nested = details?.code ?? details?.reasonCode ?? details?.detailsCode;
+  return typeof nested === 'string' && nested.trim() ? nested.trim().toUpperCase() : null;
+};
+
+const executionOrderHasInsufficientDepth = (order: ExecutionOrderResponse | null): boolean => {
+  if (!order) return false;
+  const codedSources = executionOrderDetailSources(order);
+  if (codedSources.some((source) => textCodeField(source) === INSUFFICIENT_EXECUTABLE_DEPTH_CODE)) return true;
+  const text = [
+    executionOrderBlockerMessage(order),
+    typeof order.lastError === 'string' ? order.lastError : null,
+  ].filter(Boolean).join(' ').toUpperCase();
+  return text.includes(INSUFFICIENT_EXECUTABLE_DEPTH_CODE);
+};
+
+const numericFromSources = (sources: readonly Record<string, unknown>[], fields: string[]): number | null => {
+  for (const source of sources) {
+    const value = numericField(source, fields);
+    if (value !== null) return value;
+  }
+  return null;
+};
+
+const venuesFromSources = (sources: readonly Record<string, unknown>[]): string[] => {
+  for (const source of sources) {
+    const candidate = source.venuesConsidered ?? source.venues ?? source.venuePath;
+    if (Array.isArray(candidate)) {
+      const venues = candidate
+        .map((item) => typeof item === 'string' ? item : textField(item, ['venue', 'venueId', 'name']))
+        .filter((item): item is string => Boolean(item));
+      if (venues.length > 0) return [...new Set(venues)];
+    }
+  }
+  return [];
+};
+
+const insufficientDepthFromExecutionOrder = (order: ExecutionOrderResponse | null): InsufficientExecutableDepthSummary | null => {
+  if (!executionOrderHasInsufficientDepth(order)) return null;
+  const sources = executionOrderDetailSources(order);
+  return {
+    requestedNotional: numericFromSources(sources, ['requestedNotional', 'requestedNotionalUsd', 'requestedNotionalUSDC', 'notionalAmount', 'requestedAmount']),
+    executableNotional: numericFromSources(sources, ['executableNotional', 'executableNotionalUsd', 'executableNotionalUSDC', 'maxExecutableNotional', 'availableNotional']),
+    executableShares: numericFromSources(sources, ['executableShares', 'maxExecutableShares', 'availableShares', 'executableAmount']),
+    averageExecutablePrice: numericFromSources(sources, ['averageExecutablePrice', 'avgExecutablePrice', 'averagePrice', 'avgPrice', 'effectivePrice']),
+    residualNotional: numericFromSources(sources, ['residualNotional', 'residualNotionalUsd', 'residualNotionalUSDC', 'unfilledNotional', 'remainingNotional']),
+    venuesConsidered: venuesFromSources(sources),
+  };
+};
 
 const describeOutcomeSchema = (schema: Record<string, unknown> | null | undefined): string => {
   if (!schema) return 'Outcome schema not specified';
@@ -2338,23 +2489,33 @@ const buildChartYAxis = (
   return { domain: [0, upper], ticks: buildChartTicks(upper) };
 };
 
+type VenueChartMode = "aggregate" | "venues";
+
 const toVenueChartModel = (
   chart: MarketChartResponse | null,
-  timeframe: MarketChartTimeframe
+  timeframe: MarketChartTimeframe,
+  mode: VenueChartMode = "venues"
 ): { rows: TerminalChartRow[]; series: TerminalChartSeries[]; historyStatus: MarketChartResponse["historyStatus"] | null } => {
   if (!chart) return { rows: [], series: [], historyStatus: null };
-  const series = chart.series.map((item) => ({
+  const chartSeriesKind = (item: MarketChartResponse["series"][number]) =>
+    item.kind ?? (item.id === "unified" ? "unified" : "venue");
+  const lines = mode === "venues"
+    ? chart.series.filter((item) => chartSeriesKind(item) === "venue" && item.hasData !== false)
+    : chart.series.filter((item) => item.id === "unified" || chartSeriesKind(item) === "unified").slice(0, 1);
+  const series = lines.map((item) => ({
     id: item.id,
     label: chartSeriesLabel(item),
     color: item.color,
     emphasis: item.id === "unified",
-    dashed: item.id !== "unified"
+    dashed: false
   }));
   const rows = chart.points.map((point) => ({
     label: formatChartTimeLabel(point.timestamp, timeframe),
     timestamp: bucketChartTimestamp(point.timestamp),
-    unified: chartPointValue(point.unified),
-    ...Object.fromEntries(Object.entries(point.venues).map(([venue, value]) => [venue, chartPointValue(value)]))
+    ...Object.fromEntries(lines.map((item) => [
+      item.id,
+      chartPointValue(chartSeriesKind(item) === "unified" ? point.unified : point.venues[item.id])
+    ]))
   }));
   return { rows, series, historyStatus: chart.historyStatus };
 };
@@ -2416,11 +2577,13 @@ const LiveCanonicalChart = ({
   marketId,
   outcomeId,
   marketType,
+  onMarketTypeChange,
   outcomes = EMPTY_TERMINAL_OUTCOMES,
 }: {
   marketId: string | null;
   outcomeId: string | null;
   marketType: 'binary' | 'multi';
+  onMarketTypeChange?: (value: 'binary' | 'multi') => void;
   outcomes?: TerminalOutcomeRow[];
 }) => {
   const [activeTab, setActiveTab] = useState<MarketChartTimeframe>('1D');
@@ -2480,7 +2643,7 @@ const LiveCanonicalChart = ({
   const chartModel = useMemo(
     () => marketType === 'binary'
       ? toOutcomeChartModel(outcomeCharts, liveOutcomeValuesByKey, activeTab)
-      : toVenueChartModel(venueChart, activeTab),
+      : toVenueChartModel(venueChart, activeTab, "venues"),
     [activeTab, liveOutcomeValuesByKey, marketType, outcomeCharts, venueChart]
   );
   const { rows, series, historyStatus } = chartModel;
@@ -2589,9 +2752,29 @@ const LiveCanonicalChart = ({
 
   return (
     <div className="relative w-full h-full flex flex-col pt-2 pb-2 bg-[#0c0c0c] rounded-xl overflow-hidden">
-      <div className="flex items-center gap-2 px-4 pt-2">
-        <Activity className="w-4 h-4 text-white" />
-        <span className="text-white font-bold text-sm">Probability</span>
+      <div className="flex items-center justify-between gap-3 px-4 pt-2">
+        <div className="flex items-center gap-2">
+          <Activity className="w-4 h-4 text-white" />
+          <span className="text-white font-bold text-sm">Probability</span>
+        </div>
+        {onMarketTypeChange && (
+          <div className="flex shrink-0 rounded-md border border-zinc-800 bg-zinc-900 p-1">
+            <button
+              type="button"
+              onClick={() => onMarketTypeChange('binary')}
+              className={`px-2 py-1 text-[10px] font-bold uppercase rounded ${marketType === 'binary' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
+            >
+              Binary
+            </button>
+            <button
+              type="button"
+              onClick={() => onMarketTypeChange('multi')}
+              className={`px-2 py-1 text-[10px] font-bold uppercase rounded ${marketType === 'multi' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
+            >
+              Multi
+            </button>
+          </div>
+        )}
       </div>
       <div className="w-full bg-zinc-800 h-px mt-2" />
       <div className="w-24 bg-white h-0.5" />
@@ -2751,6 +2934,7 @@ export const InfraTradingTerminal = ({
   const [ticketOrchestratorSigning, setTicketOrchestratorSigning] = useState(false);
   const [ticketConfirmArmed, setTicketConfirmArmed] = useState(false);
   const [ticketSettingsOpen, setTicketSettingsOpen] = useState(false);
+  const [ticketPriceDetailsOpen, setTicketPriceDetailsOpen] = useState(false);
   const [ticketOrderPolicy, setTicketOrderPolicy] = useState<'FOK' | 'FAK'>('FAK');
   const [ticketSlippageTolerance, setTicketSlippageTolerance] = useState('0.50');
   const [ticketPolymarketClobSyncConfirmed, setTicketPolymarketClobSyncConfirmed] = useState(false);
@@ -3069,8 +3253,12 @@ export const InfraTradingTerminal = ({
   const venueBadgeClass = 'h-7 w-7 rounded-full border-[2.5px] border-[#121214] bg-zinc-900 shadow-sm';
   const tinyVenueClass = 'h-3.5 w-3.5 rounded-full border border-zinc-800 bg-zinc-950';
   const orderbookVenueOptions = useMemo(
-    () => [...new Set([...(orderbook?.venues.map((venue) => venue.venue) ?? []), ...marketVenueList.map((venue) => venue.toUpperCase())])].sort(),
-    [marketVenueList, orderbook?.venues]
+    () => [...new Set([
+      ...(orderbook?.venues.map((venue) => venue.venue) ?? []),
+      ...(orderbook?.blockers.map((blocker) => blocker.venue) ?? []),
+      ...marketVenueList.map((venue) => venue.toUpperCase()),
+    ])].sort(),
+    [marketVenueList, orderbook?.blockers, orderbook?.venues]
   );
   const displayOrderbook = useMemo(
     () => filterOrderbookForVenue(orderbook, orderbookVenue),
@@ -3101,27 +3289,38 @@ export const InfraTradingTerminal = ({
     : marketDiagnosticsEnabled
       ? displayOrderbook?.status ?? 'pending'
       : 'updating';
+  const unavailableOrderbookVenueRows = useMemo(() => {
+    const rows = new Map<string, { venue: string; reason: string; status: 'syncing' | 'unavailable' }>();
+    for (const blocker of displayOrderbook?.blockers ?? []) {
+      const rawReason = blocker.detailsCode ?? blocker.reason;
+      const normalizedReason = readableQuoteBlocker(rawReason) ?? readableQuoteBlocker(blocker.reason) ?? blocker.reason;
+      const status = /LIVE_ORDERBOOK_REQUIRED|QUOTE_SNAPSHOT/i.test(rawReason ?? blocker.reason)
+        ? 'syncing'
+        : 'unavailable';
+      const key = `${toBackendVenueId(blocker.venue)}:${normalizedReason}`;
+      rows.set(key, {
+        venue: blocker.venue,
+        reason: normalizedReason,
+        status,
+      });
+    }
+    return [...rows.values()];
+  }, [displayOrderbook?.blockers]);
   const selectedOutcomeBookDisplay = useMemo(() => {
     if (!orderbook) {
       return {
         yesPrice: null as string | null,
         noPrice: null as string | null,
         probability: null as string | null,
-        yesVenue: null as string | null,
-        noVenue: null as string | null,
       };
     }
-    const bestAsk = orderbookNumericValue(orderbook.bestAsk);
-    const bestBid = orderbookNumericValue(orderbook.bestBid);
-    const midpoint = orderbookNumericValue(orderbook.midpoint);
-    const normalizedBestBid = bestBid !== null && bestBid > 1 ? bestBid / 100 : bestBid;
-    const normalizedMidpoint = midpoint !== null && midpoint > 1 ? midpoint / 100 : midpoint;
+    const bestAsk = normalizedOrderbookProbability(orderbook.bestAsk);
+    const normalizedBestBid = normalizedOrderbookProbability(orderbook.bestBid);
+    const normalizedMidpoint = normalizedOrderbookProbability(orderbook.midpoint);
     return {
       yesPrice: bestAsk !== null ? formatProbabilityPrice(bestAsk) : null,
       noPrice: normalizedBestBid !== null && marketType === 'binary' ? formatProbabilityPrice(1 - normalizedBestBid) : null,
       probability: normalizedMidpoint !== null ? formatProbabilityPercent(normalizedMidpoint) : null,
-      yesVenue: orderbook.asks[0]?.venue ?? null,
-      noVenue: orderbook.bids[0]?.venue ?? null,
     };
   }, [marketType, orderbook]);
 
@@ -3213,13 +3412,14 @@ export const InfraTradingTerminal = ({
         const liveQuoteVenues = livePrice?.liveVenues?.length
           ? livePrice.liveVenues
           : livePrice?.venues ?? [];
+        const outcomeVolume = formatMoneyMetric(outcome.volume) ?? outcome.volume ?? '';
         return {
           id: outcome.id,
           marketId: outcomeMarketId,
           canonicalMarketIds,
           quoteOutcomeId,
           name: outcome.label,
-          vol: `${formatMoneyMetric(outcome.volume ?? terminalMarket.volume) ?? outcome.volume ?? terminalMarket.volume} Vol.`,
+          vol: outcomeVolume ? `${outcomeVolume} Vol.` : '',
           platforms: quoteVenues.length || terminalMarket.venueCount,
           prob: parsedPrice !== null ? formatProbabilityPercent(parsedPrice) : '-',
           yesPrice,
@@ -3374,6 +3574,9 @@ export const InfraTradingTerminal = ({
     setTicketQuoteAmount(null);
     setTicketExecutionId(null);
     setTicketSignatureBundle(null);
+    setTicketOrchestratorOrder(null);
+    setTicketOrchestratorAmount(null);
+    setTicketOrchestratorAutoRenewFailed(false);
     setTicketStatusMessage(null);
     setTicketError(null);
     if (fallbackOutcomeId) {
@@ -3387,6 +3590,9 @@ export const InfraTradingTerminal = ({
     setTicketQuoteAmount(null);
     setTicketExecutionId(null);
     setTicketSignatureBundle(null);
+    setTicketOrchestratorOrder(null);
+    setTicketOrchestratorAmount(null);
+    setTicketOrchestratorAutoRenewFailed(false);
     setTicketStatusMessage(null);
     setTicketError(null);
   }, []);
@@ -4509,6 +4715,7 @@ export const InfraTradingTerminal = ({
         const response = await getMarketOrderbook(orderbookMarketId, {
           outcomeId: orderbookQuoteOutcomeId,
           depth: 20,
+          canonicalMarketIds: orderbookStreamMarketIds,
           ...(options.snapshotOnly ? { snapshotOnly: true } : {}),
         });
         if (!cancelled) {
@@ -4615,6 +4822,7 @@ export const InfraTradingTerminal = ({
         const response = await getMarketOrderbook(expectedMarketId, {
           outcomeId: expectedOutcomeId,
           depth: 20,
+          canonicalMarketIds: orderbookStreamMarketIds,
         });
         if (!active) return;
         orderbookRef.current = response;
@@ -4950,27 +5158,31 @@ export const InfraTradingTerminal = ({
       if (!options.quiet) setTicketError(side === 'buy' ? 'Enter a USDC amount.' : 'Enter shares to sell.');
       return null;
     }
-    const backendAmountValue = side === 'buy'
-      ? estimateShares(trimmedAmount, ticketPriceForSide(selectedTicketOutcome, ticketOutcomeSide))
-      : amountValue;
-    if (!backendAmountValue) {
-      if (!options.quiet) setTicketError(side === 'buy' ? 'Enter a USDC amount after a live outcome price is available.' : 'Enter shares to sell.');
-      return null;
-    }
-    const backendAmount = formatRouteAmount(backendAmountValue);
+    const backendAmount = formatRouteAmount(amountValue);
     const previewSeq = ++orchestratorPreviewSeqRef.current;
     if (!options.quiet) setTicketLoading(true);
     setTicketOrchestratorAutoRenewFailed(false);
     try {
-      const order = await previewExecutionOrder(token, {
+      const commonPreviewFields = {
         marketId: selectedTicketMarketId,
         outcomeId: selectedTicketQuoteOutcomeId,
-        side,
-        amount: backendAmount,
         venuePreference: ticketVenuePreference,
         orderPolicy: ticketOrderPolicy,
         slippageToleranceBps: slippageTolerancePercentToBps(ticketSlippageTolerance),
-      });
+      };
+      const order = await previewExecutionOrder(token, side === 'buy'
+        ? {
+          ...commonPreviewFields,
+          side: 'buy',
+          amountType: 'NOTIONAL_USDC',
+          notionalAmount: backendAmount,
+        }
+        : {
+          ...commonPreviewFields,
+          side: 'sell',
+          amountType: 'SHARES',
+          shareAmount: backendAmount,
+        });
       if (previewSeq !== orchestratorPreviewSeqRef.current) return null;
       if (order.state === 'EXPIRED' && order.canAutoRenew && options.allowAutoRenew !== false) {
         return previewOrchestratorOrder({ ...options, allowAutoRenew: false });
@@ -5000,12 +5212,10 @@ export const InfraTradingTerminal = ({
     executionOrchestratorEnabled,
     selectedTicketMarketId,
     selectedTicketQuoteOutcomeId,
-    selectedTicketOutcome,
     side,
     ticketAmount,
     ticketOrderPolicy,
     ticketSlippageTolerance,
-    ticketOutcomeSide,
     ticketVenuePreference,
     token,
   ]);
@@ -5245,10 +5455,38 @@ export const InfraTradingTerminal = ({
   const ticketAmountValue = ticketAmountNumber(ticketAmount);
   const ticketOrchestratorBlocker = executionOrderBlockerMessage(ticketOrchestratorOrder);
   const ticketOrchestratorState = ticketOrchestratorOrder?.state ?? null;
+  const ticketInsufficientDepth = insufficientDepthFromExecutionOrder(ticketOrchestratorOrder);
   const ticketOrchestratorRouteLegs = routeLegsFromExecutionOrder(ticketOrchestratorOrder);
   const ticketOrchestratorRouteType = executionOrderRouteType(ticketOrchestratorOrder);
   const ticketOrchestratorRouteBadge = ticketOrchestratorRouteLegs.length === 1 ? 'SINGLE_VENUE' : ticketOrchestratorRouteType;
-  const ticketOrchestratorEstimatedSavings = executionOrderEstimatedSavings(ticketOrchestratorOrder);
+  const ticketOrchestratorImprovement = side === 'buy' ? executionImprovementSummary(ticketOrchestratorOrder) : null;
+  const ticketOrchestratorSavingsLine = ticketOrchestratorImprovement
+    ? ticketOrchestratorImprovement.isImproved
+      ? `+${formatUsdc(ticketOrchestratorImprovement.savingsUsd)} | +${formatSignedShares(ticketOrchestratorImprovement.extraShares)}`
+      : '$0 (best single-venue price)'
+    : null;
+  const ticketOrchestratorPriceImprovementLine = ticketOrchestratorImprovement?.priceImprovementBps && ticketOrchestratorImprovement.priceImprovementBps > 0
+    ? `${(ticketOrchestratorImprovement.priceImprovementBps / 100).toFixed(1)}% better price${
+      ticketOrchestratorImprovement.baselineAveragePrice && ticketOrchestratorImprovement.routeAveragePrice
+        ? ` (${formatProbabilityPrice(ticketOrchestratorImprovement.baselineAveragePrice)} -> ${formatProbabilityPrice(ticketOrchestratorImprovement.routeAveragePrice)})`
+        : ''
+    }`
+    : null;
+  const ticketSpotMidPrice = normalizedOrderbookProbability(displayOrderbook?.midpoint)
+    ?? parseProbabilityLabel(selectedOutcomeBookDisplay.probability)
+    ?? ticketPriceForSide(selectedTicketOutcome, ticketOutcomeSide);
+  const ticketExecutionPriceForImpact = executionOrchestratorEnabled && ticketOrchestratorOrder
+    ? orderEffectivePrice(ticketOrchestratorOrder)
+    : null;
+  const ticketPriceImpactPercent = ticketExecutionPriceForImpact !== null && ticketSpotMidPrice !== null && ticketSpotMidPrice > 0
+    ? ((ticketExecutionPriceForImpact - ticketSpotMidPrice) / ticketSpotMidPrice) * 100
+    : null;
+  const ticketPriceImpactWarning = ticketPriceImpactPercent !== null && Math.abs(ticketPriceImpactPercent) >= 10;
+  const ticketPriceDetailsExpanded = ticketPriceDetailsOpen;
+  const ticketPriceImpactLabel = ticketPriceImpactPercent !== null
+    ? `${ticketPriceImpactPercent >= 0 ? '+' : '-'}${Math.abs(ticketPriceImpactPercent).toFixed(1)}%`
+    : 'Unavailable';
+  const showTicketPriceImpactPanel = Boolean(ticketOrchestratorOrder && ticketExecutionPriceForImpact !== null);
   const ticketOrchestratorDetail = ticketOrchestratorBlocker
     ?? (ticketOrchestratorState === 'WAITING_FOR_VENUE_READY'
       ? 'Lotus is checking venue readiness in the background.'
@@ -5378,6 +5616,7 @@ export const InfraTradingTerminal = ({
       ticketOrchestratorPlacing ||
       ticketOrchestratorSigning ||
       ticketSellUnavailable ||
+      Boolean(ticketInsufficientDepth) ||
       ticketOrchestratorWaiting ||
       ticketOrchestratorState === 'NEEDS_SIGNATURE' ||
       ticketOrchestratorState === 'BLOCKED_ACTION_REQUIRED' ||
@@ -5409,6 +5648,8 @@ export const InfraTradingTerminal = ({
         ? 'Waiting for venue readiness...'
       : ticketOrchestratorState === 'NEEDS_SIGNATURE'
         ? 'Waiting for signature...'
+      : ticketInsufficientDepth
+        ? 'Insufficient depth'
       : ticketOrchestratorState === 'BLOCKED_ACTION_REQUIRED'
         ? 'Execution blocked'
       : ticketOrchestratorState === 'SUBMITTING'
@@ -5613,6 +5854,12 @@ export const InfraTradingTerminal = ({
       ? 'bg-[#ccff00] hover:bg-[#b0dc00] text-black shadow-[0_0_15px_rgba(204,255,0,0.15)]'
       : 'bg-[#E52B50] hover:bg-[#ff3366] text-white shadow-[0_0_15px_rgba(229,43,80,0.15)]';
   const ticketPrimaryDisabledClass = ticketActionDisabled ? 'opacity-50 cursor-not-allowed hover:bg-zinc-700' : '';
+  const terminalVenueLabel = `${terminalMarket.venueCount} venue${terminalMarket.venueCount === 1 ? '' : 's'}`;
+  const terminalResolutionDateLabel = terminalMarket.resolutionDateLabel
+    ?? formatTerminalDate(terminalMarket.resolvesAt)
+    ?? 'TBD';
+  const terminalLiquidityLabel = terminalMarket.liquidity ?? '-';
+  const terminalVolume24hLabel = terminalMarket.volume24h ?? '-';
 
   return (
     <>
@@ -5659,28 +5906,29 @@ export const InfraTradingTerminal = ({
       {/* Middle Panel Container: Chart & Tabs */}
       <div className="w-full flex-1 flex flex-col gap-3 min-w-0">
          {/* Top Header Row */}
-         <div className="bg-[#121214] border border-zinc-800 rounded-xl p-3 2xl:p-4 flex flex-col xl:flex-row xl:items-center xl:justify-between gap-3 shrink-0">
-            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 2xl:gap-4">
+         <div className="bg-[#121214] border border-zinc-800 rounded-xl p-3 2xl:p-4 flex flex-col gap-4 shrink-0">
+            <div className="flex min-w-0 flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+            <div className="flex min-w-0 flex-1 flex-col gap-3">
                 <div className="relative z-30 w-full sm:w-auto">
                     <button
                       type="button"
                       onClick={() => setShowMarketSelector((open) => !open)}
                       aria-expanded={showMarketSelector}
-                      className="group flex h-11 2xl:h-12 w-full sm:w-[min(32rem,calc(100vw-9rem))] xl:w-[clamp(280px,30vw,520px)] items-center gap-3 rounded-xl border border-zinc-800 bg-[#0c0c0e] px-3 text-left transition-colors hover:border-zinc-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 focus-visible:ring-offset-2 focus-visible:ring-offset-[#09090b]"
+                      className="group flex w-full max-w-[38rem] items-center gap-3 rounded-lg px-1 py-1 text-left transition-colors hover:bg-zinc-900/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 focus-visible:ring-offset-2 focus-visible:ring-offset-[#09090b]"
                     >
                       <TerminalMarketThumb
                         title={terminalMarket.title}
                         icon={terminalMarket.icon}
                         imageUrl={terminalMarket.imageUrl}
                         iconUrl={terminalMarket.iconUrl}
-                        className="h-9 w-9"
+                        className="h-9 w-9 shrink-0"
                       />
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-sm 2xl:text-base font-semibold tracking-tight text-zinc-100">
                           {terminalMarket.title}
                         </span>
                         <span className="mt-0.5 block truncate text-[11px] font-medium text-zinc-500">
-                          Canonical event / {terminalMarket.venueCount} linked markets / {terminalMarket.volume} volume
+                          {terminalVenueLabel}
                         </span>
                       </span>
                       <ChevronDown className={`h-4 w-4 shrink-0 text-zinc-500 transition-transform group-hover:text-zinc-300 ${showMarketSelector ? 'rotate-180' : ''}`} />
@@ -5898,21 +6146,20 @@ export const InfraTradingTerminal = ({
                   </div>
                )}
                 </div>
-                <div className="hidden xl:flex items-center px-2.5 py-1 rounded-md bg-[#ccff00]/10 border border-[#ccff00]/20 text-[#99cc00] text-[10px] font-bold uppercase tracking-widest ml-1 2xl:ml-2">
-                    {terminalMarket.routeType} ROUTE / {Math.max(1, Math.min(terminalMarket.venueCount, 3))} VENUES
-                </div>
-                <div className="flex bg-zinc-900 border border-zinc-800 rounded-md p-1 ml-1 2xl:ml-2">
-                    <button onClick={() => setMarketType('binary')} className={`px-2 py-1 text-[10px] font-bold uppercase rounded ${marketType === 'binary' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}>Binary</button>
-                    <button onClick={() => setMarketType('multi')} className={`px-2 py-1 text-[10px] font-bold uppercase rounded ${marketType === 'multi' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}>Multi</button>
-                </div>
             </div>
 
-            <div className="flex shrink-0 flex-wrap items-center gap-3 2xl:gap-6 text-sm">
-                <div className="flex items-center gap-2 text-emerald-400 font-mono font-medium bg-emerald-500/10 px-2.5 2xl:px-3 py-1.5 rounded-md border border-emerald-500/20">
-                    <Clock className="w-3.5 h-3.5" /> 50d 1h 50m
-                </div>
-                <div className="hidden 2xl:block text-zinc-300 font-medium">Jun 13, 2026</div>
-                <div className="text-white font-mono font-bold text-base">$1.5M</div>
+            <div className="grid w-full shrink-0 grid-cols-2 gap-x-8 gap-y-3 text-xs sm:grid-cols-3 xl:w-[min(42vw,32rem)]">
+                {[
+                  ['Resolution', terminalResolutionDateLabel],
+                  ['Liquidity', terminalLiquidityLabel],
+                  ['24h Volume', terminalVolume24hLabel],
+                ].map(([label, value]) => (
+                  <div key={label} className="min-w-0">
+                    <div className="text-[12px] font-medium text-zinc-500">{label}</div>
+                    <div className="mt-1 truncate font-mono text-[13px] font-bold text-zinc-100">{value}</div>
+                  </div>
+                ))}
+            </div>
             </div>
          </div>
          
@@ -5925,6 +6172,7 @@ export const InfraTradingTerminal = ({
                  marketId={selectedOutcomeMarketId}
                  outcomeId={selectedQuoteOutcomeId}
                  marketType={marketType}
+                 onMarketTypeChange={setMarketType}
                  outcomes={terminalOutcomes}
                />
             </div>
@@ -6012,7 +6260,16 @@ export const InfraTradingTerminal = ({
                        Live quotes reconnecting...
                      </div>
                    )}
-                   {displayOrderbook?.asks.slice().reverse().map((level, i) => (
+                   {unavailableOrderbookVenueRows.map((row, i) => (
+                     <div key={`blocked-book-${row.venue}-${row.reason}-${i}`} className="mx-3 my-1 flex items-center justify-between rounded border border-zinc-800 bg-[#0c0c0e] px-3 py-1.5 text-[10px] font-bold text-zinc-300">
+                       <span className="flex min-w-0 items-center gap-1.5">
+                         <VenueLogo id={normalizeVenueId(row.venue)} label={formatVenueLabel(row.venue)} className={tinyVenueClass} />
+                         <span className="truncate">{formatVenueLabel(row.venue)}</span>
+                       </span>
+                       <span className="ml-2 shrink-0 text-[9px] uppercase tracking-widest text-zinc-500">{row.status}: <span className="text-[#ccff00]/80">{row.reason}</span></span>
+                     </div>
+                   ))}
+                   {displayOrderbook?.asks.map((level, i) => (
                      <div key={`ask-${level.venue}-${level.price}-${i}`} className={`flex justify-between px-4 py-0.5 hover:bg-zinc-800/50 ${i === 0 ? 'mb-1' : ''} ${i < 3 ? 'bg-[#E52B50]/5' : ''}`}>
                        <span className="w-12 text-pink-500 font-bold">{formatBookPrice(level.price)}</span>
                        <span className="w-16 flex items-center gap-1.5 text-zinc-500 uppercase text-[9px] font-bold tracking-wider">
@@ -6112,8 +6369,8 @@ export const InfraTradingTerminal = ({
                            const rowYesPrice = isSelectedOutcome ? selectedOutcomeBookDisplay.yesPrice ?? m.yesPrice : m.yesPrice;
                            const rowNoPrice = isSelectedOutcome ? selectedOutcomeBookDisplay.noPrice ?? m.noPrice : m.noPrice;
                            const rowProbability = isSelectedOutcome ? selectedOutcomeBookDisplay.probability ?? m.prob : m.prob;
-                           const rowYesVenue = isSelectedOutcome ? selectedOutcomeBookDisplay.yesVenue ?? primaryVenue : primaryVenue;
-                           const rowNoVenue = isSelectedOutcome ? selectedOutcomeBookDisplay.noVenue ?? primaryVenue : primaryVenue;
+                           const rowYesVenue = primaryVenue;
+                           const rowNoVenue = primaryVenue;
                            const rowYesSelected = isSelectedOutcome && ticketOutcomeSide === 'yes';
                            const rowNoSelected = isSelectedOutcome && ticketOutcomeSide === 'no';
                            if (expandedOutcomeId === m.id) {
@@ -6202,7 +6459,16 @@ export const InfraTradingTerminal = ({
                                    {!marketDiagnosticsEnabled && !orderbookLoading && inlineOrderbookLiveVenueCount === 0 && (!displayOrderbook || (displayOrderbook.asks.length === 0 && displayOrderbook.bids.length === 0)) && (
                                      <div className="px-4 py-8 text-center text-[11px] font-semibold text-zinc-500">Updating live prices.</div>
                                    )}
-                                   {displayOrderbook?.asks.slice().reverse().map((level, i) => (
+                                   {unavailableOrderbookVenueRows.map((row, i) => (
+                                     <div key={`inline-card-blocked-${row.venue}-${row.reason}-${i}`} className="mx-4 my-2 flex items-center justify-between rounded-lg border border-zinc-800 bg-[#0c0c0e] px-3 py-2 text-[11px] font-bold text-zinc-300">
+                                       <span className="flex min-w-0 items-center gap-2">
+                                         <VenueLogo id={normalizeVenueId(row.venue)} label={formatVenueLabel(row.venue)} className="h-4 w-4 rounded-full" />
+                                         <span className="truncate">{formatVenueLabel(row.venue)}</span>
+                                       </span>
+                                       <span className="ml-2 shrink-0 text-[9px] uppercase tracking-widest text-zinc-500">{row.status}: <span className="text-[#ccff00]/80">{row.reason}</span></span>
+                                     </div>
+                                   ))}
+                                   {displayOrderbook?.asks.map((level, i) => (
                                      <div key={`inline-card-ask-${level.venue}-${level.price}-${i}`} className="grid grid-cols-[1.1fr_0.9fr_0.9fr_0.9fr] items-stretch text-sm hover:bg-zinc-800/50">
                                        <span className="relative flex min-h-9 items-center overflow-hidden px-4">
                                          <span className="absolute inset-y-0 left-0 bg-red-500/10" style={{ width: `${Math.min(76, 18 + i * 10)}%` }} />
@@ -6267,7 +6533,7 @@ export const InfraTradingTerminal = ({
                                      <div className="min-w-0">
                                          <span className="block truncate text-zinc-100 font-bold text-base tracking-wide leading-tight">{m.name}</span>
                                          <span className="block truncate text-zinc-500 text-xs mt-0.5 font-medium">
-                                           {m.vol} <span className="mx-1">-</span> {m.platforms} venues
+                                           {m.vol && <>{m.vol} <span className="mx-1">-</span></>} {m.platforms} venues
                                            {marketDiagnosticsEnabled && m.blocker && <span className="ml-2 text-amber-300">{m.blocker}</span>}
                                          </span>
                                      </div>
@@ -7078,7 +7344,7 @@ export const InfraTradingTerminal = ({
                   </div>
 
                   <div className="flex flex-col gap-2">
-                      {executionOrchestratorEnabled && ticketRouteReady && ticketOrchestratorOrder && ticketOrchestratorRouteLegs.length > 0 && (
+                      {executionOrchestratorEnabled && ticketOrchestratorOrder && ticketOrchestratorRouteLegs.length > 0 && (
                         <div className="rounded-lg border border-emerald-500/20 bg-[#0c0c0e] p-2.5 shadow-[0_0_15px_rgba(16,185,129,0.05)]">
                           <div className="flex items-center justify-between gap-3 border-b border-zinc-800/60 pb-1.5">
                             <span className="h-px min-w-0 flex-1 bg-zinc-800/70" aria-hidden />
@@ -7115,11 +7381,16 @@ export const InfraTradingTerminal = ({
                               </React.Fragment>
                             ))}
                           </div>
-                          {ticketOrchestratorEstimatedSavings !== null && (
+                          {ticketOrchestratorSavingsLine && (
                             <div className="mt-1.5 rounded border border-[#ccff00]/20 bg-[#ccff00]/10 p-1.5 text-center">
-                              <span className="text-[10px] font-bold text-[#ccff00]">
-                                Estimated savings: {formatUsdc(ticketOrchestratorEstimatedSavings)}
-                              </span>
+                              <div className="text-[10px] font-bold text-[#ccff00]">
+                                Estimated savings: {ticketOrchestratorSavingsLine}
+                              </div>
+                              {ticketOrchestratorPriceImprovementLine && (
+                                <div className="mt-0.5 text-[9px] font-semibold text-zinc-300">
+                                  {ticketOrchestratorPriceImprovementLine}
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
@@ -7255,17 +7526,23 @@ export const InfraTradingTerminal = ({
 
                   <div className="flex justify-between items-center px-1">
                       <div className="flex flex-col gap-0.5">
-                          <div className="relative flex items-center gap-1 text-[11px] font-bold text-zinc-300 group/info">
-                              {ticketReceiveLabel}: <Info className="w-3.5 h-3.5 text-zinc-500" />
-                              <div className="pointer-events-none absolute left-0 top-5 z-30 hidden w-64 rounded-lg border border-zinc-700 bg-[#0c0c0e] p-3 text-[10px] font-semibold text-zinc-300 shadow-2xl group-hover/info:block">
-                                <div>Amount: {side === 'buy' ? formatUsdc(ticketAmountValue) : formatSignedShares(ticketAmountValue)}</div>
-                                <div>Trading Fee: {summarizeExpectedFees(ticketQuote)}</div>
-                                <div>Expected Avg. Price: {formatProbabilityPrice(ticketEffectivePrice)}</div>
-                                <div>Price Cap: {formatProbabilityPrice(ticketQuote?.expectedPrice ?? ticketEffectivePrice)}</div>
-                                {side === 'buy' && <div>Expected Shares: {formatSignedShares(ticketEstimatedShares)}</div>}
-                                <div>Min. Receive: {side === 'buy' ? formatSignedShares(ticketEstimatedShares) : formatUsdc(ticketReceiveEstimate)}</div>
-                                {ticketShareImprovement && <div>Share improvement: +{formatSignedShares(ticketShareImprovement)}</div>}
-                              </div>
+                          <div className="flex items-center gap-1.5 text-[11px] font-bold text-zinc-300">
+                              {ticketReceiveLabel}:
+                              {showTicketPriceImpactPanel && (
+                                <button
+                                  type="button"
+                                  onClick={() => setTicketPriceDetailsOpen((open) => !open)}
+                                  className={`flex h-4 w-4 items-center justify-center rounded border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-700 ${ticketPriceDetailsOpen ? 'border-zinc-700 bg-zinc-900/70 text-zinc-300' : 'border-zinc-800 bg-zinc-950/40 text-zinc-500 hover:text-zinc-300'}`}
+                                  aria-label="Toggle price details"
+                                  aria-expanded={ticketPriceDetailsExpanded}
+                                >
+                                  <svg viewBox="0 0 16 16" aria-hidden="true" className="h-3 w-3">
+                                    <path d="M4 2.5h5.5a1 1 0 0 1 1 1v9.75H3V3.5a1 1 0 0 1 1-1Z" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinejoin="round" />
+                                    <path d="M5 4.25h3.5v3H5zM10.5 5.25h1.1c.5 0 .9.4.9.9v4.35c0 .65.35 1 .85 1s.85-.35.85-1V7.2l-1.35-1.35" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
+                                    <path d="M2.5 13.25h8.5" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
+                                  </svg>
+                                </button>
+                              )}
                           </div>
                           <div className="text-[10px] font-medium text-zinc-500">Avg. Price: {formatProbabilityPrice(ticketEffectivePrice)}</div>
                       </div>
@@ -7273,6 +7550,55 @@ export const InfraTradingTerminal = ({
                           {ticketReceiveText}
                       </div>
                   </div>
+                  {showTicketPriceImpactPanel && (
+                    <div className="rounded-lg border border-zinc-800 bg-[#0c0c0e]">
+                      <button
+                        type="button"
+                        onClick={() => setTicketPriceDetailsOpen((open) => !open)}
+                        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors hover:bg-zinc-900/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
+                        aria-expanded={ticketPriceDetailsExpanded}
+                      >
+                        <span className="text-[11px] font-bold text-zinc-300">Price details</span>
+                        <span className="flex items-center gap-2">
+                          {!ticketPriceDetailsExpanded && (
+                            <span className={`font-mono text-[10px] font-black ${ticketPriceImpactWarning ? 'text-[#ccff00]' : 'text-zinc-300'}`}>
+                              {ticketPriceImpactLabel}
+                            </span>
+                          )}
+                          <ChevronDown className={`h-4 w-4 shrink-0 text-zinc-500 transition-transform ${ticketPriceDetailsExpanded ? 'rotate-180' : ''}`} />
+                        </span>
+                      </button>
+                      {ticketPriceDetailsExpanded && (
+                        <div className="border-t border-zinc-800 px-3 py-2 text-[11px] font-semibold text-zinc-300">
+                          <div className="space-y-1.5">
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="text-zinc-500">Effective price</span>
+                              <span className="font-mono font-black text-white">{formatProbabilityPrice(ticketExecutionPriceForImpact)}</span>
+                            </div>
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="text-zinc-500">Spot / mid</span>
+                              <span className="font-mono font-black text-zinc-200">{formatProbabilityPrice(ticketSpotMidPrice)}</span>
+                            </div>
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="text-zinc-500">Price impact</span>
+                              <span className={`font-mono font-black ${ticketPriceImpactWarning ? 'text-[#ccff00]' : 'text-zinc-200'}`}>{ticketPriceImpactLabel}</span>
+                            </div>
+                            {side === 'buy' && (
+                              <div className="flex items-center justify-between gap-3">
+                                <span className="text-zinc-500">Expected shares</span>
+                                <span className="font-mono font-black text-zinc-200">{formatSignedShares(ticketEstimatedShares)}</span>
+                              </div>
+                            )}
+                          </div>
+                          {ticketPriceImpactWarning && (
+                            <div className="mt-2 rounded border border-[#ccff00]/20 bg-[#ccff00]/10 px-2 py-1 text-[10px] font-bold text-[#ccff00]">
+                              Large price impact - low liquidity at this size.
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   <button
                     type="button"
@@ -7447,9 +7773,14 @@ export const InfraTradingTerminal = ({
 
                      <div className="flex justify-between items-center px-1">
                          <div className="flex flex-col gap-0.5">
-                             <div className="flex items-center gap-1 text-[11px] font-bold text-zinc-300">
-                                 To Win: <Info className="w-3.5 h-3.5 text-zinc-500" />
-                             </div>
+                            <div className="flex items-center gap-1.5 text-[11px] font-bold text-zinc-300">
+                                To Win:
+                                <svg viewBox="0 0 16 16" aria-hidden="true" className="h-3.5 w-3.5 text-zinc-500">
+                                  <path d="M4 2.5h5.5a1 1 0 0 1 1 1v9.75H3V3.5a1 1 0 0 1 1-1Z" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinejoin="round" />
+                                  <path d="M5 4.25h3.5v3H5zM10.5 5.25h1.1c.5 0 .9.4.9.9v4.35c0 .65.35 1 .85 1s.85-.35.85-1V7.2l-1.35-1.35" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
+                                  <path d="M2.5 13.25h8.5" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
+                                </svg>
+                            </div>
                              <div className="text-[10px] font-medium text-zinc-500">Avg. Price: 26.2¢</div>
                          </div>
                          <div className="font-mono text-xl font-black text-emerald-500 flex items-baseline gap-1">

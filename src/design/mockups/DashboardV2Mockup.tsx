@@ -93,6 +93,11 @@ type DashboardMarketRow = Pick<TerminalMarketSelection, 'title' | 'category' | '
   fallbackLabel: string;
   fallbackMode: 'best_venue' | 'fallback' | 'blocker' | 'pending';
   volumeLabel: string;
+  volume24h: string | null;
+  liquidity: string | null;
+  openInterest: string | null;
+  resolvesAt: string | null;
+  resolutionDateLabel: string | null;
   closesBy: string;
   closeTimestamp: number | null;
   change24hLabel: string;
@@ -760,6 +765,7 @@ const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardM
   const quoteReadinessLabel = marketQuoteReadinessLabel(quoteStatus, quoteReadyVenueCount, quoteBlockers, diagnosticsEnabled);
   const marketClass = formatTitleCase(market.marketClass || 'Market');
   const category = formatTitleCase(market.category || 'Market');
+  const catalogVolume24h = formatMoneyMetric(market.volume24h);
   const catalogVolume = formatMoneyMetric(market.volume24h ?? market.volume);
   const catalogLiquidity = formatMoneyMetric(market.liquidity);
   const buyCount = parseMetricNumber(market.buyCount);
@@ -854,6 +860,11 @@ const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardM
     spread: diagnosticsEnabled ? quoteStatus === 'stale' ? 'Stale' : quoteStatus === 'unavailable' ? 'Blocked' : '-' : '-',
     fallbackLabel: diagnosticsEnabled ? quoteReadinessLabel : '-',
     fallbackMode: quoteStatus === 'unavailable' && diagnosticsEnabled ? 'blocker' : routeType === 'Single' ? 'fallback' : 'pending',
+    volume24h: catalogVolume24h,
+    liquidity: catalogLiquidity,
+    openInterest: null,
+    resolvesAt: market.resolvesAt,
+    resolutionDateLabel: formatMarketDate(market.resolvesAt),
     closesBy: formatMarketDate(market.expiresAt ?? market.resolvesAt),
     closeTimestamp: dateTimestamp(market.expiresAt ?? market.resolvesAt),
     change24hLabel: 'Quote',
@@ -929,8 +940,14 @@ const mapCatalogMarketsToDashboardRows = (markets: MarketCatalogMarket[]): Dashb
     const sellCount = metricTotal((market) => market.sellCount);
     const buyVolume = metricTotal((market) => market.buyVolume);
     const sellVolume = metricTotal((market) => market.sellVolume);
+    const volume24h = formatMoneyMetric(String(metricTotal((market) => market.volume24h) ?? ''));
     const volume = formatMoneyMetric(String(metricTotal((market) => market.volume24h ?? market.volume) ?? '')) ?? base.volume;
     const liquidity = formatMoneyMetric(String(metricTotal((market) => market.liquidity) ?? ''));
+    const resolutionTimestamp = group
+      .map((market) => dateTimestamp(market.resolvesAt))
+      .filter((value): value is number => value !== null)
+      .sort((left, right) => left - right)[0] ?? null;
+    const resolutionDate = resolutionTimestamp !== null ? new Date(resolutionTimestamp).toISOString() : null;
     return {
       ...base,
       id: `${base.canonicalEventId}:${base.title}`,
@@ -950,6 +967,11 @@ const mapCatalogMarketsToDashboardRows = (markets: MarketCatalogMarket[]): Dashb
       badges: venues,
       volume: volume ?? liquidity ?? base.volume,
       volumeLabel: volume ? 'Vol' : liquidity ? 'Liq' : base.volumeLabel,
+      volume24h,
+      liquidity,
+      openInterest: null,
+      resolvesAt: resolutionDate,
+      resolutionDateLabel: formatMarketDate(resolutionDate),
       txnBuy: buyCount ?? buyVolume ?? 0,
       txnSell: sellCount ?? sellVolume ?? 0,
       txnLabel: buyCount !== null || sellCount !== null ? 'Txns' : buyVolume !== null || sellVolume !== null ? 'Vol' : 'Pending',
@@ -1260,6 +1282,11 @@ export const DashboardV2Mockup = ({
       category: market.category,
       icon: market.icon,
       volume: market.volume,
+      volume24h: market.volume24h,
+      liquidity: market.liquidity,
+      openInterest: market.openInterest,
+      resolvesAt: market.resolvesAt,
+      resolutionDateLabel: market.resolutionDateLabel,
       venueCount: market.venueCount,
       routeType: market.routeType,
       venues: market.venues,
@@ -1565,63 +1592,53 @@ export const DashboardV2Mockup = ({
       const chunks = chunkArray(requestItems, MARKET_LIVE_PRICE_CHUNK_SIZE);
       await Promise.all(chunks.map(async (chunk) => {
         try {
-          if (!diagnosticsEnabled) {
-            const response = await getMarketLivePrices({
-              items: chunk.map((item) => ({
-                marketId: item.marketId,
-                canonicalMarketIds: item.canonicalMarketIds,
-                outcomeId: item.quoteOutcomeId,
-              })),
-            });
-            if (cancelled) return;
-            const priceByKey = new Map(response.prices.map((price) => [`${price.marketId}:${price.outcomeId ?? ''}`, price]));
-            const nextByMarket = new Map<string, Record<string, DashboardOutcomeQuote>>();
-            for (const item of chunk) {
-              const price =
-                priceByKey.get(`${item.marketId}:${item.quoteOutcomeId}`) ??
-                priceByKey.get(`${item.marketId}:${normalizeOutcomeId(item.quoteOutcomeId)}`) ??
-                (item.quoteOutcomeId === 'YES' ? priceByKey.get(`${item.marketId}:`) : undefined);
-              const bucket = nextByMarket.get(item.parentMarketId) ?? {};
-              bucket[item.outcomeId] = toOutcomeQuoteFromLivePrice(item.outcomeId, price);
-              nextByMarket.set(item.parentMarketId, bucket);
-            }
-            setMarketQuotes((current) => {
-              const next = { ...current };
-              for (const [marketId, outcomes] of nextByMarket.entries()) {
-                next[marketId] = {
-                  marketId,
-                  outcomes: {
-                    ...(next[marketId]?.outcomes ?? {}),
-                    ...outcomes,
-                  },
-                  sellOutcomes: next[marketId]?.sellOutcomes,
-                };
-              }
-              return next;
-            });
-            return;
-          }
-
-          const response = await getMarketBatchQuotes({
+          const response = await getMarketLivePrices({
             items: chunk.map((item) => ({
               marketId: item.marketId,
+              canonicalMarketIds: item.canonicalMarketIds,
               outcomeId: item.quoteOutcomeId,
-              side: 'buy' as const,
-              amount: '1',
             })),
-            displayMode,
           });
           if (cancelled) return;
-          const quoteByKey = new Map(response.quotes.map((quote) => [`${quote.marketId}:${quote.outcomeId}:buy`, quote]));
+          const priceByKey = new Map(response.prices.map((price) => [`${price.marketId}:${price.outcomeId ?? ''}`, price]));
           const nextByMarket = new Map<string, Record<string, DashboardOutcomeQuote>>();
+          const missingForDiagnostics: typeof chunk = [];
           for (const item of chunk) {
-            const quote = quoteByKey.get(`${item.marketId}:${item.quoteOutcomeId}:buy`);
+            const price =
+              priceByKey.get(`${item.marketId}:${item.quoteOutcomeId}`) ??
+              priceByKey.get(`${item.marketId}:${normalizeOutcomeId(item.quoteOutcomeId)}`) ??
+              (item.quoteOutcomeId === 'YES' ? priceByKey.get(`${item.marketId}:`) : undefined);
+            const displayQuote = toOutcomeQuoteFromLivePrice(item.outcomeId, price);
             const bucket = nextByMarket.get(item.parentMarketId) ?? {};
-            bucket[item.outcomeId] = quote
-              ? toOutcomeQuoteFromBatch(quote)
-              : toOutcomeQuote(item.outcomeId, null, new Error('QUOTE_UNAVAILABLE'));
+            bucket[item.outcomeId] = displayQuote;
             nextByMarket.set(item.parentMarketId, bucket);
+            if (diagnosticsEnabled && displayQuote.status !== 'live') {
+              missingForDiagnostics.push(item);
+            }
           }
+
+          if (diagnosticsEnabled && missingForDiagnostics.length > 0) {
+            const batchResponse = await getMarketBatchQuotes({
+              items: missingForDiagnostics.map((item) => ({
+                marketId: item.marketId,
+                outcomeId: item.quoteOutcomeId,
+                side: 'buy' as const,
+                amount: '1',
+              })),
+              displayMode,
+            });
+            if (cancelled) return;
+            const quoteByKey = new Map(batchResponse.quotes.map((quote) => [`${quote.marketId}:${quote.outcomeId}:buy`, quote]));
+            for (const item of missingForDiagnostics) {
+              const quote = quoteByKey.get(`${item.marketId}:${item.quoteOutcomeId}:buy`);
+              const bucket = nextByMarket.get(item.parentMarketId) ?? {};
+              bucket[item.outcomeId] = quote
+                ? toOutcomeQuoteFromBatch(quote)
+                : toOutcomeQuote(item.outcomeId, null, new Error('QUOTE_UNAVAILABLE'));
+              nextByMarket.set(item.parentMarketId, bucket);
+            }
+          }
+
           setMarketQuotes((current) => {
             const next = { ...current };
             for (const [marketId, outcomes] of nextByMarket.entries()) {
@@ -1852,15 +1869,9 @@ export const DashboardV2Mockup = ({
           <>
           
           {/* Left Column: Filters & Intelligence */}
-          <div className={`shrink-0 flex flex-col gap-5 hidden xl:flex transition-all duration-300 ${isFilterCollapsed ? 'w-11 border-transparent' : 'w-56 pr-4 border-zinc-200 dark:border-zinc-800'} border-r`}>
+          <div className={`relative shrink-0 flex flex-col gap-5 hidden xl:flex transition-all duration-300 ${isFilterCollapsed ? 'w-0 border-transparent' : 'w-56 pr-4 border-zinc-200 dark:border-zinc-800'} border-r`}>
             {isFilterCollapsed ? (
-              <button 
-                onClick={() => setIsFilterCollapsed(false)}
-                className="w-10 h-10 flex items-center justify-center rounded-xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 shadow-sm transition-colors"
-                title="Expand Filters"
-              >
-                <Filter className="w-4 h-4" />
-              </button>
+              null
             ) : (
               <div className="w-52">
                 <div className="flex items-center justify-between mb-4">
@@ -1958,6 +1969,15 @@ export const DashboardV2Mockup = ({
             
             {/* Quick Filters */}
             <div className="flex items-center flex-wrap gap-3 pb-2">
+              <button
+                type="button"
+                aria-label={isFilterCollapsed ? 'Show filters' : 'Hide filters'}
+                onClick={() => setIsFilterCollapsed((current) => !current)}
+                className={`flex h-10 w-10 items-center justify-center rounded-lg border shadow-sm transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00] ${!isFilterCollapsed ? 'border-[#ccff00]/45 bg-[#ccff00]/10 text-[#ccff00]' : 'border-zinc-200 bg-white text-zinc-500 hover:border-zinc-300 hover:text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:border-zinc-700 dark:hover:text-zinc-100'}`}
+                title={isFilterCollapsed ? 'Show filters' : 'Hide filters'}
+              >
+                <Filter className="h-4 w-4" />
+              </button>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
@@ -3378,7 +3398,7 @@ const NavItem = ({
   </div>
 );
 
-const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, venueCount, routeType, savings, spread, fallback, fallbackLabel, fallbackMode = 'pending', icon, imageUrl, iconUrl, priceLabel, priceVenue, changeLabel, prob, change, volume, volumeLabel = 'Vol', txnBuy, txnSell, txnLabel = 'Pending', badges = [], outcomes, marketType, venues, venueMarkets, quoteStatus = 'live', quoteReadyVenueCount = 0, quoteBlockers = [], lastQuoteAt = null, isWatched = false, onToggleWatch, onOpenTerminal }: any) => {
+const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, venueCount, routeType, savings, spread, fallback, fallbackLabel, fallbackMode = 'pending', icon, imageUrl, iconUrl, priceLabel, priceVenue, changeLabel, prob, change, volume, volumeLabel = 'Vol', volume24h = null, liquidity = null, openInterest = null, resolvesAt = null, resolutionDateLabel = null, txnBuy, txnSell, txnLabel = 'Pending', badges = [], outcomes, marketType, venues, venueMarkets, quoteStatus = 'live', quoteReadyVenueCount = 0, quoteBlockers = [], lastQuoteAt = null, isWatched = false, onToggleWatch, onOpenTerminal }: any) => {
   const [outcomesExpanded, setOutcomesExpanded] = useState(false);
   const allVenues = [
     { id: 'polymarket', label: 'Polymarket' },
@@ -3428,19 +3448,15 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
   const fallbackText = !diagnosticsEnabled && normalizedQuoteStatus === 'unavailable'
     ? '-'
     : fallbackLabel ?? (fallback ? 'Yes' : 'No');
-  const routeVenueCaption = !diagnosticsEnabled && fallbackMode === 'blocker'
-    ? 'Route'
-    : fallbackMode === 'best_venue'
-    ? 'Best venue'
-    : fallbackMode === 'blocker'
-      ? 'Blocked'
-      : fallbackMode === 'pending'
-      ? 'Route'
-      : 'Fallback';
   const liveVenueCaption = quoteReadyVenueCount > 0
     ? `${quoteReadyVenueCount} live venue${quoteReadyVenueCount === 1 ? '' : 's'}`
     : `${venueCount} venue${venueCount === 1 ? '' : 's'} scanned`;
-  const terminalPayload = { id, marketId, eventId, canonicalEventId, title, category, icon, volume, venueCount, routeType, venues, venueMarkets, marketType, outcomes, imageUrl, iconUrl, priceLabel, priceVenue, changeLabel };
+  const routeVenueLogoLabel = diagnosticsEnabled && fallbackMode === 'best_venue' && fallbackText && fallbackText !== '-'
+    ? fallbackText
+    : priceVenue;
+  const showRouteVenueLogo = diagnosticsEnabled && typeof routeVenueLogoLabel === 'string' && routeVenueLogoLabel.trim().length > 0;
+  const shouldShowVolumeMetric = volume != null && String(volume).trim().length > 0 && String(volume).trim().toLowerCase() !== 'backend catalog';
+  const terminalPayload = { id, marketId, eventId, canonicalEventId, title, category, icon, volume, volume24h, liquidity, openInterest, resolvesAt, resolutionDateLabel, venueCount, routeType, venues, venueMarkets, marketType, outcomes, imageUrl, iconUrl, priceLabel, priceVenue, changeLabel };
   const outcomeRailOverflowClass = outcomesExpanded ? 'overflow-x-hidden overflow-y-auto custom-scrollbar' : 'overflow-hidden';
 
   return (
@@ -3516,22 +3532,27 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
       {/* Lotus Route Strip */}
       <div className="mt-2 h-[31px] shrink-0">
         {routeType ? (
-          <div className="grid h-full grid-cols-[minmax(0,1fr)_auto] items-center gap-2 overflow-hidden rounded-lg border border-[#ccff00]/20 bg-[#ccff00]/5 px-3 py-1.5 text-[10px] font-medium">
-            <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+          <div className="flex h-full items-center justify-between gap-3 overflow-hidden rounded-lg border border-[#ccff00]/20 bg-[#ccff00]/5 px-3 py-1.5 text-[10px] font-medium">
+            <div className="flex min-w-0 items-center gap-3 overflow-hidden">
               <span className="text-zinc-700 dark:text-zinc-300"><span className="text-zinc-500 dark:text-zinc-400">Route:</span> {routeType}</span>
               {diagnosticsEnabled ? (
                 <>
-                  <span className="text-zinc-700 dark:text-zinc-300"><span className="text-zinc-500 dark:text-zinc-400">Savings:</span> <span className="text-[#99cc00] font-bold">{savings}</span></span>
                   {spread && <span className="text-zinc-700 dark:text-zinc-300"><span className="text-zinc-500 dark:text-zinc-400">Spread:</span> {spread}</span>}
                 </>
               ) : (
                 <span className="text-zinc-700 dark:text-zinc-300"><span className="text-zinc-500 dark:text-zinc-400">Venues:</span> {liveVenueCaption}</span>
               )}
             </div>
-            {diagnosticsEnabled ? (
-              <span className="whitespace-nowrap text-zinc-700 dark:text-zinc-300"><span className="text-zinc-500 dark:text-zinc-400">{routeVenueCaption}:</span> {fallbackText}</span>
+            {showRouteVenueLogo ? (
+              <span
+                className="flex h-5 w-5 shrink-0 items-center justify-center rounded border border-zinc-700/70 bg-zinc-900/80 p-0.5 shadow-sm"
+                title={routeVenueLogoLabel}
+                aria-label={`Best venue ${routeVenueLogoLabel}`}
+              >
+                <VenueLogo id={dashboardVenueIconId(routeVenueLogoLabel)} label={routeVenueLogoLabel} className="h-full w-full rounded-[inherit] object-cover" />
+              </span>
             ) : (
-              <span className="whitespace-nowrap text-zinc-700 dark:text-zinc-300">Live</span>
+              <span className="whitespace-nowrap text-zinc-700 dark:text-zinc-300">{diagnosticsEnabled ? fallbackText : 'Live'}</span>
             )}
           </div>
         ) : null}
@@ -3591,8 +3612,10 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
 
       {/* Footer / Buy Sell Txns */}
       <div className="mt-auto flex flex-col gap-2 pt-2">
-        <div className="flex items-center gap-3 text-[11px] font-medium text-zinc-500 dark:text-zinc-400 pb-1">
-          <span>{volumeLabel} <span className="text-zinc-700 dark:text-zinc-300 font-mono">{volume}</span></span>
+        <div className="flex h-4 items-center gap-3 text-[11px] font-medium text-zinc-500 dark:text-zinc-400 pb-1">
+          {shouldShowVolumeMetric ? (
+            <span>{volumeLabel} <span className="font-mono text-zinc-700 dark:text-zinc-300">{volume}</span></span>
+          ) : null}
         </div>
         <div className="flex items-center justify-between text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
           {totalCount > 0 ? (
