@@ -47,7 +47,7 @@ const turnkeyWalletRegistrations = (wallets: TurnkeyWallet[]): TurnkeyWalletAcco
  * nothing new is created. Runs once per session; a failed run is allowed to retry on the next login.
  */
 export function WalletProvisioner({ session }: { session: AuthSession }) {
-  const { authState, wallets: turnkeyWallets, refreshWallets, createWallet, session: turnkeySession } = useTurnkey();
+  const { authState, refreshWallets, createWallet, session: turnkeySession } = useTurnkey();
   const ranForRef = useRef<string | null>(null);
   const log = (...args: unknown[]) => console.info("[walletProvisioner]", ...args);
 
@@ -57,20 +57,20 @@ export function WalletProvisioner({ session }: { session: AuthSession }) {
       log("waiting", { hasJwt: Boolean(session.userJwt), authState, turnkeyOrg: turnkeySession?.organizationId ?? null });
       return;
     }
+    // Run-once guard is the ONLY re-entry protection. We deliberately don't cancel the in-flight
+    // run on cleanup: refreshWallets() mutates the SDK wallet state, which re-triggers this effect,
+    // and a cancel-on-cleanup aborted provisioning right before registration. Registration is
+    // idempotent, so always completing an in-flight run is safe.
     if (ranForRef.current === session.userId) {
       return;
     }
     ranForRef.current = session.userId;
-    let cancelled = false;
 
     void (async () => {
       try {
-        let activeWallets = turnkeyWallets;
-        log("start", { authState, turnkeyOrg: turnkeySession?.organizationId ?? null, initialWallets: activeWallets.length });
-        if (turnkeyWalletRegistrations(activeWallets).length === 0) {
-          activeWallets = await refreshWallets();
-          log("refreshed", { wallets: activeWallets.length, registrations: turnkeyWalletRegistrations(activeWallets).length });
-        }
+        log("start", { authState, turnkeyOrg: turnkeySession?.organizationId ?? null });
+        let activeWallets = await refreshWallets();
+        log("refreshed", { wallets: activeWallets.length, registrations: turnkeyWalletRegistrations(activeWallets).length });
         if (turnkeyWalletRegistrations(activeWallets).length === 0) {
           log("creating default SOL+EVM wallet");
           await createWallet({
@@ -82,7 +82,7 @@ export function WalletProvisioner({ session }: { session: AuthSession }) {
           log("created", { wallets: activeWallets.length, registrations: turnkeyWalletRegistrations(activeWallets).length });
         }
         const registrations = turnkeyWalletRegistrations(activeWallets);
-        if (!cancelled && registrations.length > 0) {
+        if (registrations.length > 0) {
           log("registering with backend", { count: registrations.length });
           await registerTurnkeyDefaultWallets(session.userJwt, registrations);
           log("registered OK");
@@ -92,16 +92,11 @@ export function WalletProvisioner({ session }: { session: AuthSession }) {
       } catch (error) {
         // Non-fatal: clear the guard so the next login retries provisioning.
         log("FAILED", error);
-        if (!cancelled) {
-          ranForRef.current = null;
-        }
+        ranForRef.current = null;
       }
     })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [authState, createWallet, refreshWallets, session.userId, session.userJwt, turnkeySession?.organizationId, turnkeyWallets]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authState, session.userId, session.userJwt, turnkeySession?.organizationId]);
 
   return null;
 }
