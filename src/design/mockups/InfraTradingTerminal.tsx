@@ -5596,24 +5596,6 @@ export const InfraTradingTerminal = ({
     ? formatSignedShares(ticketSellableShares)
     : ticketFundingLabel;
   const ticketAvailabilityCopy = side === 'sell' ? 'Sellable shares' : 'Venue-ready balance';
-  const depthMoneyLabel = (value: number | null | undefined): string =>
-    typeof value === 'number' && Number.isFinite(value) ? formatUsdc(value) : 'Unavailable';
-  const depthSharesLabel = (value: number | null | undefined): string =>
-    typeof value === 'number' && Number.isFinite(value) ? formatSignedShares(value) : 'Unavailable';
-  const ticketDepthExecutableLabel = depthMoneyLabel(ticketInsufficientDepth?.executableNotional);
-  const ticketDepthRequestedLabel = depthMoneyLabel(ticketInsufficientDepth?.requestedNotional);
-  const ticketDepthResidualLabel = depthMoneyLabel(ticketInsufficientDepth?.residualNotional);
-  const ticketDepthSharesLabel = depthSharesLabel(ticketInsufficientDepth?.executableShares);
-  const ticketDepthPriceLabel = typeof ticketInsufficientDepth?.averageExecutablePrice === 'number'
-    ? formatProbabilityPrice(ticketInsufficientDepth.averageExecutablePrice)
-    : 'Unavailable';
-  const ticketDepthVenuesLabel = ticketInsufficientDepth?.venuesConsidered.length
-    ? ticketInsufficientDepth.venuesConsidered.map(formatVenueLabel).join(', ')
-    : 'Unavailable';
-  const ticketDepthUseMaxAvailable = side === 'buy' &&
-    typeof ticketInsufficientDepth?.executableNotional === 'number' &&
-    Number.isFinite(ticketInsufficientDepth.executableNotional) &&
-    ticketInsufficientDepth.executableNotional > 0;
   const ticketReceiveEstimate = side === 'buy'
     ? parsePositiveNumber(ticketQuote?.executableAmount) ?? ticketEstimatedShares
     : ticketAmountValue && ticketEffectivePrice
@@ -5878,7 +5860,6 @@ export const InfraTradingTerminal = ({
     ?? 'TBD';
   const terminalLiquidityLabel = terminalMarket.liquidity ?? '-';
   const terminalVolume24hLabel = terminalMarket.volume24h ?? '-';
-  const terminalOpenInterestLabel = terminalMarket.openInterest ?? '-';
 
   return (
     <>
@@ -6167,15 +6148,14 @@ export const InfraTradingTerminal = ({
                 </div>
             </div>
 
-            <div className="grid w-full shrink-0 grid-cols-2 gap-x-8 gap-y-3 text-xs sm:grid-cols-4 xl:w-[min(48vw,38rem)]">
+            <div className="grid w-full shrink-0 grid-cols-2 gap-x-8 gap-y-3 text-xs sm:grid-cols-3 xl:w-[min(42vw,32rem)]">
                 {[
                   ['Resolution', terminalResolutionDateLabel],
                   ['Liquidity', terminalLiquidityLabel],
                   ['24h Volume', terminalVolume24hLabel],
-                  ['Open Interest', terminalOpenInterestLabel],
                 ].map(([label, value]) => (
                   <div key={label} className="min-w-0">
-                    <div className={`text-[12px] font-medium text-zinc-500 ${label === 'Open Interest' ? 'underline decoration-dashed underline-offset-4' : ''}`}>{label}</div>
+                    <div className="text-[12px] font-medium text-zinc-500">{label}</div>
                     <div className="mt-1 truncate font-mono text-[13px] font-bold text-zinc-100">{value}</div>
                   </div>
                 ))}
@@ -7413,63 +7393,6 @@ export const InfraTradingTerminal = ({
                               )}
                             </div>
                           )}
-                        </div>
-                      )}
-                      {executionOrchestratorEnabled && ticketInsufficientDepth && (
-                        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-[10px] font-semibold text-amber-100">
-                          <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <div className="text-[12px] font-black text-amber-50">
-                                Only {ticketDepthExecutableLabel} is executable right now across venues.
-                              </div>
-                              <div className="mt-1 text-amber-100/75">
-                                Reduce the notional or use the executable max. Lotus will preview again before any submit.
-                              </div>
-                            </div>
-                            <span className="shrink-0 rounded border border-amber-400/30 bg-amber-400/10 px-1.5 py-0.5 font-mono text-[8px] uppercase tracking-widest text-amber-100">
-                              depth
-                            </span>
-                          </div>
-                          <div className="mt-3 grid grid-cols-2 gap-2 text-amber-100/90">
-                            <div className="rounded border border-amber-500/20 bg-black/20 p-2">
-                              <div className="text-[8px] uppercase tracking-widest text-amber-100/50">Requested</div>
-                              <div className="mt-0.5 font-mono text-amber-50">{ticketDepthRequestedLabel}</div>
-                            </div>
-                            <div className="rounded border border-amber-500/20 bg-black/20 p-2">
-                              <div className="text-[8px] uppercase tracking-widest text-amber-100/50">Executable</div>
-                              <div className="mt-0.5 font-mono text-amber-50">{ticketDepthExecutableLabel}</div>
-                            </div>
-                            <div className="rounded border border-amber-500/20 bg-black/20 p-2">
-                              <div className="text-[8px] uppercase tracking-widest text-amber-100/50">Shares</div>
-                              <div className="mt-0.5 font-mono text-amber-50">{ticketDepthSharesLabel}</div>
-                            </div>
-                            <div className="rounded border border-amber-500/20 bg-black/20 p-2">
-                              <div className="text-[8px] uppercase tracking-widest text-amber-100/50">Avg. price</div>
-                              <div className="mt-0.5 font-mono text-amber-50">{ticketDepthPriceLabel}</div>
-                            </div>
-                            <div className="rounded border border-amber-500/20 bg-black/20 p-2">
-                              <div className="text-[8px] uppercase tracking-widest text-amber-100/50">Residual</div>
-                              <div className="mt-0.5 font-mono text-amber-50">{ticketDepthResidualLabel}</div>
-                            </div>
-                            <div className="rounded border border-amber-500/20 bg-black/20 p-2">
-                              <div className="text-[8px] uppercase tracking-widest text-amber-100/50">Venues</div>
-                              <div className="mt-0.5 truncate font-mono text-amber-50">{ticketDepthVenuesLabel}</div>
-                            </div>
-                          </div>
-                          <button
-                            type="button"
-                            disabled={!ticketDepthUseMaxAvailable}
-                            onClick={() => {
-                              if (!ticketDepthUseMaxAvailable || typeof ticketInsufficientDepth.executableNotional !== 'number') return;
-                              setTicketAmount(formatRouteAmount(ticketInsufficientDepth.executableNotional));
-                              setTicketConfirmArmed(false);
-                              setTicketError(null);
-                              setTicketStatusMessage('Previewing executable max notional.');
-                            }}
-                            className="mt-3 flex h-9 w-full items-center justify-center rounded-lg border border-[#ccff00]/30 bg-[#ccff00]/15 px-3 text-[10px] font-black uppercase tracking-wide text-[#ccff00] transition-colors hover:bg-[#ccff00]/25 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
-                          >
-                            Use max
-                          </button>
                         </div>
                       )}
                       {!executionOrchestratorEnabled && ticketQuote && (
