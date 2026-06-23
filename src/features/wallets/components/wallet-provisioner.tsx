@@ -49,12 +49,12 @@ const turnkeyWalletRegistrations = (wallets: TurnkeyWallet[]): TurnkeyWalletAcco
 export function WalletProvisioner({ session }: { session: AuthSession }) {
   const { authState, refreshWallets, createWallet, session: turnkeySession } = useTurnkey();
   const ranForRef = useRef<string | null>(null);
-  const log = (...args: unknown[]) => console.info("[walletProvisioner]", ...args);
 
   useEffect(() => {
+    // The SDK can report authState "unauthenticated" while a valid session (organizationId) exists,
+    // so accept either signal as "Turnkey ready".
     const turnkeyReady = authState === AuthState.Authenticated || Boolean(turnkeySession?.organizationId);
     if (!session.userJwt || !turnkeyReady) {
-      log("waiting", { hasJwt: Boolean(session.userJwt), authState, turnkeyOrg: turnkeySession?.organizationId ?? null });
       return;
     }
     // Run-once guard is the ONLY re-entry protection. We deliberately don't cancel the in-flight
@@ -68,30 +68,22 @@ export function WalletProvisioner({ session }: { session: AuthSession }) {
 
     void (async () => {
       try {
-        log("start", { authState, turnkeyOrg: turnkeySession?.organizationId ?? null });
         let activeWallets = await refreshWallets();
-        log("refreshed", { wallets: activeWallets.length, registrations: turnkeyWalletRegistrations(activeWallets).length });
         if (turnkeyWalletRegistrations(activeWallets).length === 0) {
-          log("creating default SOL+EVM wallet");
           await createWallet({
             walletName: "Lotus Wallet",
             accounts: [...turnkeyDefaultAccountParams],
             ...(turnkeySession?.organizationId ? { organizationId: turnkeySession.organizationId } : {}),
           });
           activeWallets = await refreshWallets();
-          log("created", { wallets: activeWallets.length, registrations: turnkeyWalletRegistrations(activeWallets).length });
         }
         const registrations = turnkeyWalletRegistrations(activeWallets);
         if (registrations.length > 0) {
-          log("registering with backend", { count: registrations.length });
           await registerTurnkeyDefaultWallets(session.userJwt, registrations);
-          log("registered OK");
-        } else {
-          log("nothing to register", { registrations: registrations.length });
         }
       } catch (error) {
         // Non-fatal: clear the guard so the next login retries provisioning.
-        log("FAILED", error);
+        console.warn("[lotus] wallet provisioning failed; will retry next login.", error);
         ranForRef.current = null;
       }
     })();
