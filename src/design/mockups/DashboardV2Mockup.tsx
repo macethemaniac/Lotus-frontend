@@ -1,10 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useTurnkey } from '@turnkey/react-wallet-kit';
 import { OAuthProviders } from '@turnkey/sdk-types';
 import { LotusLogo } from '@/components/icons/lotus-icons';
 import { CryptoLogo, VenueLogo, resolveTopicAssetLogoId } from '@/components/icons/asset-logo';
 import { InfraTradingTerminal, type TerminalMarketSelection } from '@/design/mockups/InfraTradingTerminal';
 import { PortfolioMockupV2 } from '@/design/mockups/PortfolioMockupV2';
+import { FundingDeposit } from '@/design/mockups/FundingDeposit';
 import type { AuthSession } from '@/features/auth/types';
 import {
   getMarket,
@@ -26,7 +28,7 @@ import {
   Zap, PieChart, Activity, Settings, ChevronDown, ChevronUp,
   ShieldCheck, AlertTriangle, Clock, ChevronRight,
   Flame, Globe, Cpu, MessageSquare, ChevronsLeft, ChevronsRight,
-  Square, CheckSquare, Star, Sparkles, Trophy, Database, Filter, Sun, Moon, Vault, Volleyball, Landmark, Terminal,
+  Square, CheckSquare, Star, Sparkles, Trophy, Database, Filter, Vault, Volleyball, Landmark, Terminal,
   LayoutGrid, List, Bookmark, Radio, CheckCircle2, Wallet, X
 } from 'lucide-react';
 
@@ -1319,7 +1321,8 @@ export const DashboardV2Mockup = ({
   onNavigate?: (page: LotusAppPage) => void;
   session?: AuthSession | null;
 }) => {
-  const [isDarkMode, setIsDarkMode] = useState(true);
+  const [isDarkMode] = useState(true);
+  const [fundingModal, setFundingModal] = useState<'deposit' | null>(null);
   const [isFilterCollapsed, setIsFilterCollapsed] = useState(true);
   const [showNotifications, setShowNotifications] = useState(false);
   const [marketViewMode, setMarketViewMode] = useState<'grid' | 'list'>('grid');
@@ -1639,6 +1642,17 @@ export const DashboardV2Mockup = ({
     { id: 'sells', label: 'Sells' },
     { id: 'best_route', label: 'Best route' },
   ];
+
+  useEffect(() => {
+    if (!fundingModal) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setFundingModal(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [fundingModal]);
 
   useEffect(() => {
     if (!isMarketSurface) return;
@@ -2021,11 +2035,12 @@ export const DashboardV2Mockup = ({
                 rows={headerPortfolioRows}
                 loading={portfolioLoading}
               />
-              <button 
-                onClick={() => setIsDarkMode(!isDarkMode)}
-                className="p-1.5 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors rounded-full hover:bg-zinc-100 dark:hover:bg-zinc-800"
+              <button
+                type="button"
+                onClick={() => setFundingModal('deposit')}
+                className="relative inline-flex h-10 min-w-24 items-center justify-center overflow-hidden rounded-full border border-[#e5ff73]/70 bg-[#ccff00] px-4 text-sm font-black text-black shadow-[inset_0_1px_0_rgba(255,255,255,0.55),0_12px_30px_rgba(204,255,0,0.18)] transition-colors before:absolute before:inset-x-2 before:top-0 before:h-1/2 before:rounded-full before:bg-white/25 hover:bg-[#d8ff2f] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/80 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-900"
               >
-                {isDarkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+                <span className="relative z-10">Deposit</span>
               </button>
             </div>
           </div>
@@ -2662,6 +2677,25 @@ export const DashboardV2Mockup = ({
         </div>
       </main>
       </div>
+      {fundingModal && createPortal(
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Deposit funds"
+          className="fixed left-0 top-0 z-[2147483647] flex h-[100dvh] w-[100dvw] items-center justify-center overflow-hidden bg-black/60 px-4 py-6 backdrop-blur-md"
+        >
+          <button
+            type="button"
+            aria-label="Close funding modal"
+            onClick={() => setFundingModal(null)}
+            className="absolute inset-0 cursor-default"
+          />
+          <div className="relative z-10 w-full max-w-[400px]">
+            <FundingDeposit initialMode="deposit" modal onClose={() => setFundingModal(null)} session={session} />
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   );
 };
