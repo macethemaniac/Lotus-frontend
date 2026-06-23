@@ -49,9 +49,12 @@ const turnkeyWalletRegistrations = (wallets: TurnkeyWallet[]): TurnkeyWalletAcco
 export function WalletProvisioner({ session }: { session: AuthSession }) {
   const { authState, wallets: turnkeyWallets, refreshWallets, createWallet, session: turnkeySession } = useTurnkey();
   const ranForRef = useRef<string | null>(null);
+  const log = (...args: unknown[]) => console.info("[walletProvisioner]", ...args);
 
   useEffect(() => {
-    if (!session.userJwt || authState !== AuthState.Authenticated) {
+    const turnkeyReady = authState === AuthState.Authenticated || Boolean(turnkeySession?.organizationId);
+    if (!session.userJwt || !turnkeyReady) {
+      log("waiting", { hasJwt: Boolean(session.userJwt), authState, turnkeyOrg: turnkeySession?.organizationId ?? null });
       return;
     }
     if (ranForRef.current === session.userId) {
@@ -63,23 +66,32 @@ export function WalletProvisioner({ session }: { session: AuthSession }) {
     void (async () => {
       try {
         let activeWallets = turnkeyWallets;
+        log("start", { authState, turnkeyOrg: turnkeySession?.organizationId ?? null, initialWallets: activeWallets.length });
         if (turnkeyWalletRegistrations(activeWallets).length === 0) {
           activeWallets = await refreshWallets();
+          log("refreshed", { wallets: activeWallets.length, registrations: turnkeyWalletRegistrations(activeWallets).length });
         }
         if (turnkeyWalletRegistrations(activeWallets).length === 0) {
+          log("creating default SOL+EVM wallet");
           await createWallet({
             walletName: "Lotus Wallet",
             accounts: [...turnkeyDefaultAccountParams],
             ...(turnkeySession?.organizationId ? { organizationId: turnkeySession.organizationId } : {}),
           });
           activeWallets = await refreshWallets();
+          log("created", { wallets: activeWallets.length, registrations: turnkeyWalletRegistrations(activeWallets).length });
         }
         const registrations = turnkeyWalletRegistrations(activeWallets);
         if (!cancelled && registrations.length > 0) {
+          log("registering with backend", { count: registrations.length });
           await registerTurnkeyDefaultWallets(session.userJwt, registrations);
+          log("registered OK");
+        } else {
+          log("nothing to register", { registrations: registrations.length });
         }
-      } catch {
+      } catch (error) {
         // Non-fatal: clear the guard so the next login retries provisioning.
+        log("FAILED", error);
         if (!cancelled) {
           ranForRef.current = null;
         }
