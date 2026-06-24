@@ -3695,7 +3695,7 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
   const sellCount = typeof txnSell === 'number' ? txnSell : 0;
   const totalCount = buyCount + sellCount;
   const activeBadgeIds = new Set((badges as string[]).map(dashboardVenueIconId));
-  const visibleOutcomes = outcomesExpanded ? outcomes : outcomes?.slice(0, 5);
+  const visibleOutcomes = outcomesExpanded ? outcomes : outcomes?.slice(0, 2);
   const hiddenOutcomeCount = Math.max(0, (outcomes?.length ?? 0) - (visibleOutcomes?.length ?? 0));
   const fallbackText = !diagnosticsEnabled && normalizedQuoteStatus === 'unavailable'
     ? '-'
@@ -3711,8 +3711,8 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
   const terminalPayload = { id, marketId, eventId, canonicalEventId, title, category, icon, volume, volume24h, liquidity, openInterest, resolvesAt, resolutionDateLabel, venueCount, routeType, venues, venueMarkets, marketType, outcomes, imageUrl, iconUrl, priceLabel, priceVenue, changeLabel };
   const outcomeRailOverflowClass = outcomesExpanded ? 'overflow-x-hidden overflow-y-auto custom-scrollbar' : 'overflow-hidden';
   const outcomeCount = outcomes?.length ?? 0;
-  const multiCardMinHeightClass = outcomesExpanded ? 'min-h-[452px]' : outcomeCount <= 3 ? 'min-h-[356px]' : 'min-h-[416px]';
-  const outcomeRailHeightClass = outcomesExpanded ? 'h-[176px]' : outcomeCount <= 3 ? 'h-[86px]' : 'h-[146px]';
+  const multiCardMinHeightClass = outcomesExpanded ? 'min-h-[452px]' : 'min-h-[332px]';
+  const outcomeRailHeightClass = outcomesExpanded ? 'h-[176px]' : outcomeCount > 2 ? 'h-[82px]' : 'h-[54px]';
   const singleOutcome = (outcomes?.length ?? 0) === 1 ? outcomes[0] : null;
   const singleOutcomeProbability = singleOutcome?.prob
     ? (/^\d+(\.\d+)?$/.test(String(singleOutcome.prob)) ? `${singleOutcome.prob}%` : String(singleOutcome.prob))
@@ -3957,7 +3957,7 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
             );
           })}
 
-          {(outcomes?.length ?? 0) > 5 && (
+          {(outcomes?.length ?? 0) > 2 && (
             <button
               type="button"
               onClick={() => setOutcomesExpanded((current) => !current)}
