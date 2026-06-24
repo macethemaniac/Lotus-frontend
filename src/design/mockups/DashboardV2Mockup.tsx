@@ -2449,9 +2449,11 @@ export const DashboardV2Mockup = ({
               </div>
               
               {effectiveMarketViewMode === 'grid' ? (
-              <div className="grid grid-cols-1 items-start gap-3 lg:grid-cols-2 2xl:grid-cols-3">
+              <div className="columns-1 gap-3 lg:columns-2 2xl:columns-3">
                 {marketsLoading && displayedMarkets.length === 0 && [0, 1, 2, 3, 4, 5].map((item) => (
-                  <MarketCardSkeleton key={item} />
+                  <div key={item} className="mb-3 break-inside-avoid">
+                    <MarketCardSkeleton />
+                  </div>
                 ))}
                 {!marketsLoading && marketsError && (
                   <MarketGridMessage title="Markets unavailable" body={marketsError} />
@@ -2460,13 +2462,14 @@ export const DashboardV2Mockup = ({
                   <MarketGridMessage title="No markets found" body={emptyMarketCopy} />
                 )}
                 {displayedMarkets.map((market) => (
-                  <MarketCard
-                    key={market.id}
-                    {...market}
-                    isWatched={watchlistIds.includes(market.id)}
-                    onToggleWatch={toggleMarketWatch}
-                    onOpenTerminal={openMarketInTerminal}
-                  />
+                  <div key={market.id} className="mb-3 break-inside-avoid">
+                    <MarketCard
+                      {...market}
+                      isWatched={watchlistIds.includes(market.id)}
+                      onToggleWatch={toggleMarketWatch}
+                      onOpenTerminal={openMarketInTerminal}
+                    />
+                  </div>
                 ))}
                 {false && <>
                 <MarketCard
