@@ -432,7 +432,7 @@ type HeaderPortfolioVenueRow = {
 };
 
 type DashboardRailActivityItem = {
-  type: 'buy' | 'sell' | 'route' | 'deposit' | 'withdraw';
+  type: 'buy' | 'sell' | 'route';
   title: string;
   market: string;
   time: string;
@@ -1372,7 +1372,7 @@ const mapFundingActivity = (item: FundingHistoryRow): DashboardRailActivityItem 
   const timeValue = activityTimestamp(item.updatedAt, item.checkedAt, item.createdAt);
 
   return {
-    type: isWithdrawal ? 'withdraw' : 'deposit',
+    type: isWithdrawal ? 'sell' : 'buy',
     title: isWithdrawal ? 'Withdrawal' : 'Deposit',
     market: [amount || null, venue, chain].filter(Boolean).join(' - ') || item.intentId,
     time: formatRelativeTime(timeValue ? new Date(timeValue).toISOString() : item.updatedAt ?? item.createdAt ?? '') || 'Recent',
@@ -2112,7 +2112,7 @@ export const DashboardV2Mockup = ({
               <button
                 type="button"
                 onClick={() => setFundingModal('deposit')}
-                className="relative inline-flex h-10 min-w-24 items-center justify-center overflow-hidden rounded-full border border-[#e5ff73]/70 bg-[#ccff00] px-4 text-sm font-black text-black shadow-[inset_0_1px_0_rgba(255,255,255,0.55),0_12px_30px_rgba(204,255,0,0.18)] transition-colors before:absolute before:inset-x-2 before:top-0 before:h-1/2 before:rounded-full before:bg-white/25 hover:bg-[#d8ff2f] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/80 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-900"
+                className="relative inline-flex h-9 items-center justify-center overflow-hidden rounded-full border border-[#e5ff73]/60 bg-[#ccff00] px-4 text-xs font-black text-black shadow-[inset_0_1px_0_rgba(255,255,255,0.45),0_8px_18px_rgba(204,255,0,0.12)] transition-colors before:absolute before:inset-x-2 before:top-0 before:h-1/2 before:rounded-full before:bg-white/20 hover:bg-[#d8ff2f] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/80 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-900"
               >
                 <span className="relative z-10">Deposit</span>
               </button>
@@ -2777,8 +2777,6 @@ const ActivityItem = ({ type, title, market, time, price }: any) => {
     switch (type) {
       case 'buy': return <div className="w-6 h-6 rounded-full bg-emerald-100 dark:bg-emerald-900/30 border-2 border-white dark:border-zinc-900 flex items-center justify-center relative z-10"><ChevronRight className="w-3 h-3 text-emerald-600 dark:text-emerald-400" /></div>;
       case 'sell': return <div className="w-6 h-6 rounded-full bg-red-100 dark:bg-red-900/30 border-2 border-white dark:border-zinc-900 flex items-center justify-center relative z-10"><ChevronRight className="w-3 h-3 text-red-600 dark:text-red-400 rotate-180" /></div>;
-      case 'deposit': return <div className="w-6 h-6 rounded-full bg-[#ccff00]/20 dark:bg-[#ccff00]/15 border-2 border-white dark:border-zinc-900 flex items-center justify-center relative z-10"><Vault className="w-3 h-3 text-[#8fb300] dark:text-[#ccff00]" /></div>;
-      case 'withdraw': return <div className="w-6 h-6 rounded-full bg-violet-100 dark:bg-violet-900/30 border-2 border-white dark:border-zinc-900 flex items-center justify-center relative z-10"><ArrowRightLeft className="w-3 h-3 text-violet-600 dark:text-violet-400" /></div>;
       case 'route': return <div className="w-6 h-6 rounded-full bg-blue-100 dark:bg-blue-900/30 border-2 border-white dark:border-zinc-900 flex items-center justify-center relative z-10"><ArrowRightLeft className="w-3 h-3 text-blue-600 dark:text-blue-400" /></div>;
       default: return <div className="w-6 h-6 rounded-full bg-zinc-100 dark:bg-zinc-800 border-2 border-white dark:border-zinc-900 flex items-center justify-center relative z-10"><Activity className="w-3 h-3 text-zinc-600 dark:text-zinc-400" /></div>;
     }
@@ -3712,6 +3710,112 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
   const shouldShowVolumeMetric = volume != null && String(volume).trim().length > 0 && String(volume).trim().toLowerCase() !== 'backend catalog';
   const terminalPayload = { id, marketId, eventId, canonicalEventId, title, category, icon, volume, volume24h, liquidity, openInterest, resolvesAt, resolutionDateLabel, venueCount, routeType, venues, venueMarkets, marketType, outcomes, imageUrl, iconUrl, priceLabel, priceVenue, changeLabel };
   const outcomeRailOverflowClass = outcomesExpanded ? 'overflow-x-hidden overflow-y-auto custom-scrollbar' : 'overflow-hidden';
+  const singleOutcome = (outcomes?.length ?? 0) === 1 ? outcomes[0] : null;
+  const singleOutcomeProbability = singleOutcome?.prob
+    ? (/^\d+(\.\d+)?$/.test(String(singleOutcome.prob)) ? `${singleOutcome.prob}%` : String(singleOutcome.prob))
+    : displayPrice && displayPrice !== 'Quote' && displayPrice !== '-'
+      ? String(displayPrice).replace('Â¢', '%')
+      : 'Quote';
+  const singleOutcomePayload = singleOutcome
+    ? {
+        ...terminalPayload,
+        id: singleOutcome.marketId ?? terminalPayload.id,
+        marketId: singleOutcome.marketId ?? terminalPayload.marketId,
+        eventId: singleOutcome.eventId ?? terminalPayload.eventId,
+        canonicalEventId: singleOutcome.canonicalEventId ?? terminalPayload.canonicalEventId,
+        title,
+        venues: singleOutcome.venues ?? terminalPayload.venues,
+        venueMarkets: singleOutcome.venueMarkets ?? terminalPayload.venueMarkets,
+        marketType: singleOutcome.marketType ?? terminalPayload.marketType,
+        imageUrl: singleOutcome.imageUrl ?? terminalPayload.imageUrl,
+        iconUrl: singleOutcome.iconUrl ?? terminalPayload.iconUrl,
+        priceLabel: singleOutcome.prob ?? terminalPayload.priceLabel,
+        priceVenue: singleOutcome.priceVenue ?? terminalPayload.priceVenue,
+        outcomes,
+        initialOutcomeId: singleOutcome.id,
+      }
+    : null;
+
+  if (singleOutcome && singleOutcomePayload) {
+    return (
+      <div className="flex h-full min-h-[276px] flex-col rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm transition-all hover:border-zinc-300 hover:shadow-md dark:border-zinc-800 dark:bg-[#121214] dark:hover:border-zinc-700 group">
+        <div className="grid grid-cols-[minmax(0,1fr)_76px] items-start gap-4">
+          <button
+            type="button"
+            onClick={() => onOpenTerminal?.(terminalPayload)}
+            className="flex min-w-0 gap-3 rounded-xl text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-[#121214]"
+            aria-label={`Open ${title} in terminal`}
+          >
+            <MarketMediaThumb title={title} icon={icon} imageUrl={imageUrl} iconUrl={iconUrl} className="h-11 w-11 text-xl shadow-sm" />
+            <span className="min-w-0 flex-1 pt-0.5">
+              <span className="block pr-2 text-base font-black leading-tight text-zinc-900 line-clamp-2 transition-colors group-hover:text-[#5c7300] dark:text-zinc-100 dark:group-hover:text-[#ccff00]">{title}</span>
+              <span className="mt-1 flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
+                <span className="truncate">{category}</span>
+                <span>-</span>
+                <span className="shrink-0">{venueCount} venues scanned</span>
+              </span>
+            </span>
+          </button>
+          <div className="flex flex-col items-end gap-2">
+            <button
+              type="button"
+              onClick={() => onToggleWatch?.(id)}
+              className={`inline-flex h-7 w-7 items-center justify-center rounded-md border transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${isWatched ? 'border-[#ccff00]/40 bg-[#ccff00]/10 text-[#ccff00]' : 'border-zinc-800 bg-zinc-900/50 text-zinc-500 hover:text-[#ccff00]'}`}
+              aria-label={`${isWatched ? 'Remove' : 'Add'} ${title} ${isWatched ? 'from' : 'to'} watchlist`}
+            >
+              <Bookmark className={`h-3.5 w-3.5 ${isWatched ? 'fill-current' : ''}`} />
+            </button>
+            <div className="relative flex h-16 w-16 flex-col items-center justify-center rounded-full border-[5px] border-emerald-500/25 border-r-emerald-400 border-t-emerald-400 bg-zinc-950/70 text-center shadow-[inset_0_0_18px_rgba(16,185,129,0.08)]">
+              <span className="text-sm font-black leading-none text-zinc-100">{singleOutcomeProbability}</span>
+              <span className="mt-1 text-[9px] font-semibold leading-none text-zinc-400">chance</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-5 grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => onOpenTerminal?.({ ...singleOutcomePayload, initialOutcomeSide: 'yes' })}
+            className="h-12 rounded-lg border border-emerald-500/10 bg-emerald-500/15 text-sm font-black text-emerald-300 transition hover:bg-emerald-500/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
+          >
+            Yes
+          </button>
+          <button
+            type="button"
+            onClick={() => onOpenTerminal?.({ ...singleOutcomePayload, initialOutcomeSide: 'no' })}
+            className="h-12 rounded-lg border border-red-500/10 bg-red-500/15 text-sm font-black text-red-300 transition hover:bg-red-500/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
+          >
+            No
+          </button>
+        </div>
+
+        {routeType ? (
+          <div className="mt-4 flex min-h-9 items-center justify-between gap-3 overflow-hidden rounded-lg border border-[#ccff00]/20 bg-[#ccff00]/5 px-3 py-2 text-[10px] font-medium">
+            <div className="flex min-w-0 items-center gap-3 overflow-hidden">
+              <span className="shrink-0 text-zinc-700 dark:text-zinc-300"><span className="text-zinc-500 dark:text-zinc-400">Route:</span> {routeType}</span>
+              {spread && <span className="truncate text-zinc-700 dark:text-zinc-300"><span className="text-zinc-500 dark:text-zinc-400">Spread:</span> {spread}</span>}
+            </div>
+            {showRouteVenueLogo ? (
+              <span
+                className="flex h-5 w-5 shrink-0 items-center justify-center rounded border border-zinc-700/70 bg-zinc-900/80 p-0.5 shadow-sm"
+                title={routeVenueLogoLabel}
+                aria-label={`Best venue ${routeVenueLogoLabel}`}
+              >
+                <VenueLogo id={dashboardVenueIconId(routeVenueLogoLabel)} label={routeVenueLogoLabel} className="h-full w-full rounded-[inherit] object-cover" />
+              </span>
+            ) : (
+              <span className="whitespace-nowrap text-zinc-700 dark:text-zinc-300">{diagnosticsEnabled ? fallbackText : 'Live'}</span>
+            )}
+          </div>
+        ) : null}
+
+        <div className="mt-auto flex items-end justify-between gap-3 pt-5 text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
+          <span>{shouldShowVolumeMetric ? <><span className="font-mono text-zinc-700 dark:text-zinc-300">{volume}</span> {volumeLabel}</> : emptyTxnCopy}</span>
+          <span>{quoteReadyVenueCount > 0 ? `${quoteReadyVenueCount} quote-ready venue${quoteReadyVenueCount === 1 ? '' : 's'}` : liveVenueCaption}</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full min-h-[452px] flex-col rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm transition-all hover:border-zinc-300 hover:shadow-md dark:border-zinc-800 dark:bg-[#121214] dark:hover:border-zinc-700 group">
