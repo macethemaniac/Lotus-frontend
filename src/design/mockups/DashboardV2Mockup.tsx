@@ -2449,7 +2449,7 @@ export const DashboardV2Mockup = ({
               </div>
               
               {effectiveMarketViewMode === 'grid' ? (
-              <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 items-start gap-3 lg:grid-cols-2 2xl:grid-cols-3">
                 {marketsLoading && displayedMarkets.length === 0 && [0, 1, 2, 3, 4, 5].map((item) => (
                   <MarketCardSkeleton key={item} />
                 ))}
@@ -3710,6 +3710,9 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
   const shouldShowVolumeMetric = volume != null && String(volume).trim().length > 0 && String(volume).trim().toLowerCase() !== 'backend catalog';
   const terminalPayload = { id, marketId, eventId, canonicalEventId, title, category, icon, volume, volume24h, liquidity, openInterest, resolvesAt, resolutionDateLabel, venueCount, routeType, venues, venueMarkets, marketType, outcomes, imageUrl, iconUrl, priceLabel, priceVenue, changeLabel };
   const outcomeRailOverflowClass = outcomesExpanded ? 'overflow-x-hidden overflow-y-auto custom-scrollbar' : 'overflow-hidden';
+  const outcomeCount = outcomes?.length ?? 0;
+  const multiCardMinHeightClass = outcomesExpanded ? 'min-h-[452px]' : outcomeCount <= 3 ? 'min-h-[356px]' : 'min-h-[416px]';
+  const outcomeRailHeightClass = outcomesExpanded ? 'h-[176px]' : outcomeCount <= 3 ? 'h-[86px]' : 'h-[146px]';
   const singleOutcome = (outcomes?.length ?? 0) === 1 ? outcomes[0] : null;
   const singleOutcomeProbability = singleOutcome?.prob
     ? (/^\d+(\.\d+)?$/.test(String(singleOutcome.prob)) ? `${singleOutcome.prob}%` : String(singleOutcome.prob))
@@ -3738,7 +3741,7 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
 
   if (singleOutcome && singleOutcomePayload) {
     return (
-      <div className="flex h-full min-h-[276px] flex-col rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm transition-all hover:border-zinc-300 hover:shadow-md dark:border-zinc-800 dark:bg-[#121214] dark:hover:border-zinc-700 group">
+      <div className="flex min-h-[276px] flex-col rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm transition-all hover:border-zinc-300 hover:shadow-md dark:border-zinc-800 dark:bg-[#121214] dark:hover:border-zinc-700 group">
         <div className="grid grid-cols-[minmax(0,1fr)_76px] items-start gap-4">
           <button
             type="button"
@@ -3818,7 +3821,7 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
   }
 
   return (
-    <div className="flex h-full min-h-[452px] flex-col rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm transition-all hover:border-zinc-300 hover:shadow-md dark:border-zinc-800 dark:bg-[#121214] dark:hover:border-zinc-700 group">
+    <div className={`flex ${multiCardMinHeightClass} flex-col rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm transition-all hover:border-zinc-300 hover:shadow-md dark:border-zinc-800 dark:bg-[#121214] dark:hover:border-zinc-700 group`}>
       
       {/* Header */}
       <div className="grid h-[112px] shrink-0 grid-cols-[minmax(0,1fr)_76px] items-start gap-3 overflow-hidden">
@@ -3919,7 +3922,7 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
       <div className="my-3 h-px w-full shrink-0 bg-zinc-100 dark:bg-zinc-800/60"></div>
 
       {/* Outcomes */}
-      <div className={`flex h-[176px] shrink-0 flex-col gap-1.5 pr-1 ${outcomeRailOverflowClass}`}>
+      <div className={`flex ${outcomeRailHeightClass} shrink-0 flex-col gap-1.5 pr-1 ${outcomeRailOverflowClass}`}>
         {outcomes && outcomes.length > 0 && (
           <>
           {visibleOutcomes.map((outcome: any, idx: number) => {
