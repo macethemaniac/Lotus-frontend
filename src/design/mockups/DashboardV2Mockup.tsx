@@ -19,8 +19,8 @@ import {
 } from '@/features/markets/api/market-api';
 import { getNotifications, markNotificationRead, type UserNotification } from '@/features/notifications/api/notification-api';
 import { NotificationToast, type NotificationToastTone } from '@/features/notifications/components/notification-toast';
-import { getPortfolioSummary, type LiveCandidatesResponse, type PortfolioSummary, type TradeRouteCandidate } from '@/features/trading/api/execution-api';
-import { getVenueBalances, type VenueBalance } from '@/features/funding/api/funding-api';
+import { getExecutionHistory, getPortfolioSummary, type ExecutionStatus, type LiveCandidatesResponse, type PortfolioSummary, type TradeRouteCandidate } from '@/features/trading/api/execution-api';
+import { getFundingHistory, getVenueBalances, type FundingHistoryRow, type VenueBalance } from '@/features/funding/api/funding-api';
 import { ApiClientError } from '@/lib/api/http-client';
 import { lotusMarketDiagnosticsEnabled } from '@/config/env';
 import { 
@@ -429,6 +429,15 @@ type HeaderPortfolioVenueRow = {
   venue: string;
   cash: number;
   positions: number;
+};
+
+type DashboardRailActivityItem = {
+  type: 'buy' | 'sell' | 'route' | 'deposit' | 'withdraw';
+  title: string;
+  market: string;
+  time: string;
+  price: string;
+  timestamp: number;
 };
 
 const loadWatchlistIds = (): string[] => {
@@ -1312,6 +1321,69 @@ const mapNotificationForDashboard = (notification: UserNotification) => {
   }
 };
 
+const activityTimestamp = (...values: Array<string | null | undefined>): number => {
+  for (const value of values) {
+    if (!value) continue;
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return 0;
+};
+
+const formatActivityStatus = (value: string | null | undefined): string => {
+  if (!value) return 'Updated';
+  return value
+    .replace(/_/g, ' ')
+    .toLowerCase()
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+};
+
+const mapExecutionActivity = (item: ExecutionStatus): DashboardRailActivityItem => {
+  const side = item.route?.side === 'sell' ? 'sell' : 'buy';
+  const status = (item.userStatus ?? item.status ?? '').toUpperCase();
+  const statusLabel = status.includes('FILLED')
+    ? 'Filled'
+    : status.includes('FAILED')
+      ? 'Failed'
+      : status.includes('SUBMITTED') || status.includes('PARTIAL')
+        ? 'Submitted'
+        : formatActivityStatus(item.userStatus ?? item.status);
+  const venuePath = item.route?.venuePath?.filter(Boolean).join(', ');
+  const outcome = item.route?.outcomeId ? `${item.route.outcomeId} ` : '';
+  const amount = item.route?.executableAmount ? `${item.route.executableAmount} ${side === 'buy' ? 'USDC' : 'shares'}` : '';
+  const timeValue = activityTimestamp(item.updatedAt, item.submittedAt);
+
+  return {
+    type: side,
+    title: `${side === 'buy' ? 'Buy' : 'Sell'} ${statusLabel.toLowerCase()}`,
+    market: [amount, outcome.trim(), venuePath ? `via ${venuePath}` : null].filter(Boolean).join(' - ') || item.executionId,
+    time: formatRelativeTime(timeValue ? new Date(timeValue).toISOString() : item.updatedAt ?? item.submittedAt ?? '') || 'Recent',
+    price: statusLabel,
+    timestamp: timeValue,
+  };
+};
+
+const mapFundingActivity = (item: FundingHistoryRow): DashboardRailActivityItem => {
+  const isWithdrawal = String(item.direction ?? '').toUpperCase().includes('WITHDRAW');
+  const amount = [item.amount, item.token ?? item.asset].filter(Boolean).join(' ');
+  const status = item.aggregateStatus ?? item.status ?? item.legStatus;
+  const venue = item.venue ? formatHeaderVenueLabel(item.venue) : null;
+  const chain = item.destinationChain ?? item.sourceChain;
+  const timeValue = activityTimestamp(item.updatedAt, item.checkedAt, item.createdAt);
+
+  return {
+    type: isWithdrawal ? 'withdraw' : 'deposit',
+    title: isWithdrawal ? 'Withdrawal' : 'Deposit',
+    market: [amount || null, venue, chain].filter(Boolean).join(' - ') || item.intentId,
+    time: formatRelativeTime(timeValue ? new Date(timeValue).toISOString() : item.updatedAt ?? item.createdAt ?? '') || 'Recent',
+    price: formatActivityStatus(status),
+    timestamp: timeValue,
+  };
+};
+
+const fundingHistoryRows = (response: Awaited<ReturnType<typeof getFundingHistory>>): FundingHistoryRow[] =>
+  response.items ?? response.rows ?? response.history ?? [];
+
 export const DashboardV2Mockup = ({
   activePage = 'home',
   onNavigate,
@@ -1348,6 +1420,9 @@ export const DashboardV2Mockup = ({
   const [portfolioBalances, setPortfolioBalances] = useState<VenueBalance[]>([]);
   const [portfolioLoading, setPortfolioLoading] = useState(false);
   const [portfolioError, setPortfolioError] = useState<string | null>(null);
+  const [railActivityItems, setRailActivityItems] = useState<DashboardRailActivityItem[]>([]);
+  const [railActivityLoading, setRailActivityLoading] = useState(false);
+  const [railActivityError, setRailActivityError] = useState<string | null>(null);
   const [expandedCategories, setExpandedCategories] = useState<Record<string, boolean>>({
     'Sports': true,
     'Politics': true,
@@ -1523,63 +1598,18 @@ export const DashboardV2Mockup = ({
       : 'MTM'
     : portfolioError || !dashboardDiagnosticsEnabled ? 'MTM' : 'MTM unavailable';
   const recentActivityItems = useMemo(() => {
-    const notificationRows = notificationItems.slice(0, 3).map((notification) => ({
+    const notificationRows: DashboardRailActivityItem[] = notificationItems.slice(0, 4).map((notification) => ({
       type: notification.severity === 'success' ? 'buy' : notification.severity === 'error' || notification.severity === 'warning' ? 'sell' : 'route',
       title: notification.title,
       market: notification.body,
       time: formatRelativeTime(notification.createdAt) || 'Live',
       price: notification.readAt ? '' : 'New',
+      timestamp: activityTimestamp(notification.createdAt),
     }));
-    const systemRows = [
-      {
-        type: marketsError ? 'sell' : 'route',
-        title: dashboardDiagnosticsEnabled
-          ? marketsError ? 'Market catalog unavailable' : 'Market catalog synced'
-          : marketsError ? 'Markets updating' : 'Markets synced',
-        market: dashboardDiagnosticsEnabled
-          ? marketsError ?? `${marketSummary.routeable} backend-approved markets loaded`
-          : marketsError ? 'Refreshing the latest market list' : `${marketSummary.routeable} markets loaded`,
-        time: marketsLoading ? 'Loading' : 'Live',
-        price: '',
-      },
-      {
-        type: marketSummary.routePreviewRequired > 0 ? 'route' : 'buy',
-        title: dashboardDiagnosticsEnabled
-          ? marketSummary.routePreviewRequired > 0 ? 'Quote readiness pending' : 'Routes refreshed'
-          : 'Live prices synced',
-        market: dashboardDiagnosticsEnabled
-          ? marketSummary.routePreviewRequired > 0
-            ? `${marketSummary.routePreviewRequired} markets have stale or unavailable quote evidence`
-            : 'Visible markets have live route evidence'
-          : `${marketSummary.livePriced} visible market${marketSummary.livePriced === 1 ? '' : 's'} have live price snapshots`,
-        time: dashboardDiagnosticsEnabled ? marketSummary.routePreviewRequired > 0 ? 'Safe' : 'Live' : 'Live',
-        price: '',
-      },
-      {
-        type: portfolioError ? 'sell' : 'buy',
-        title: dashboardDiagnosticsEnabled
-          ? portfolioError ? 'Portfolio sync blocked' : 'Portfolio MTM synced'
-          : portfolioError ? 'Portfolio updating' : 'Portfolio synced',
-        market: dashboardDiagnosticsEnabled
-          ? portfolioError ?? `${portfolioPositionsLabel} positions, ${portfolioCashLabel} available cash`
-          : portfolioError ? 'Refreshing balances and positions' : `${portfolioPositionsLabel} positions, ${portfolioCashLabel} available cash`,
-        time: portfolioLoading ? 'Loading' : 'Ready',
-        price: '',
-      },
-    ];
-    return [...notificationRows, ...systemRows].slice(0, 4);
+    return (railActivityItems.length > 0 ? railActivityItems : notificationRows).slice(0, 4);
   }, [
-    dashboardDiagnosticsEnabled,
-    marketSummary.livePriced,
-    marketSummary.routePreviewRequired,
-    marketSummary.routeable,
-    marketsError,
-    marketsLoading,
     notificationItems,
-    portfolioCashLabel,
-    portfolioError,
-    portfolioLoading,
-    portfolioPositionsLabel,
+    railActivityItems,
   ]);
   const inferTerminalMarketType = (title: string): 'binary' | 'multi' => (
     title.includes('Winner') || title.includes('Champion') || title.includes('Region') || title.includes('Season')
@@ -1899,6 +1929,50 @@ export const DashboardV2Mockup = ({
 
     loadPortfolioRail();
     const interval = window.setInterval(loadPortfolioRail, 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [session?.userJwt, terminalApiFocusActive]);
+
+  useEffect(() => {
+    if (!session?.userJwt) {
+      setRailActivityItems([]);
+      setRailActivityError(null);
+      setRailActivityLoading(false);
+      return;
+    }
+    if (terminalApiFocusActive) {
+      setRailActivityLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    const loadRailActivity = async () => {
+      setRailActivityLoading(true);
+      setRailActivityError(null);
+      try {
+        const [executionResponse, fundingResponse] = await Promise.all([
+          getExecutionHistory(session.userJwt, { limit: 6 }),
+          getFundingHistory(session.userJwt, { limit: 6 }),
+        ]);
+        if (cancelled) return;
+        const nextItems = [
+          ...(executionResponse.items ?? []).map(mapExecutionActivity),
+          ...fundingHistoryRows(fundingResponse).map(mapFundingActivity),
+        ]
+          .sort((left, right) => right.timestamp - left.timestamp)
+          .slice(0, 4);
+        setRailActivityItems(nextItems);
+      } catch (error) {
+        if (!cancelled) setRailActivityError(toSafeErrorMessage(error, 'Recent activity is unavailable right now.'));
+      } finally {
+        if (!cancelled) setRailActivityLoading(false);
+      }
+    };
+
+    loadRailActivity();
+    const interval = window.setInterval(loadRailActivity, 60_000);
     return () => {
       cancelled = true;
       window.clearInterval(interval);
@@ -2591,33 +2665,6 @@ export const DashboardV2Mockup = ({
               </div>
             </div>
 
-            {/* Portfolio Summary */}
-            <button
-              type="button"
-              onClick={() => onNavigate?.('portfolio')}
-              className="bg-zinc-900 dark:bg-zinc-800 rounded-2xl p-4 text-left text-white shadow-lg relative overflow-hidden border border-transparent dark:border-zinc-700 transition hover:border-[#ccff00]/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/60"
-              aria-label="Open portfolio"
-            >
-              <div className="absolute top-0 right-0 w-32 h-32 bg-[#ccff00]/10 rounded-full blur-2xl -mr-10 -mt-10 pointer-events-none"></div>
-              
-              <h3 className="text-xs font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-widest mb-2">Portfolio</h3>
-              <div className="flex items-end gap-2 mb-5">
-                <span className="text-2xl font-bold tracking-tight">{portfolioValueLabel}</span>
-                <span className="text-xs font-medium text-[#ccff00] mb-1">{portfolioMtmLabel}</span>
-              </div>
-              
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-zinc-400 dark:text-zinc-500">Available Cash</span>
-                  <span className="text-xs font-mono font-medium">{portfolioCashLabel}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-zinc-400 dark:text-zinc-500">Active Positions</span>
-                  <span className="text-xs font-mono font-medium">{portfolioPositionsLabel}</span>
-                </div>
-              </div>
-            </button>
-
             {/* Recent Activity */}
             <div>
               <div className="flex items-center justify-between mb-4">
@@ -2625,8 +2672,8 @@ export const DashboardV2Mockup = ({
               </div>
               
               <div className="space-y-4 relative before:absolute before:inset-y-0 before:left-[11px] before:w-px before:bg-zinc-200 dark:before:bg-zinc-700">
-                {notificationsLoading && recentActivityItems.length === 0 ? (
-                  <ActivityItem type="route" title="Loading activity" market="Checking durable notification inbox" time="Live" price="" />
+                {railActivityLoading && recentActivityItems.length === 0 ? (
+                  <ActivityItem type="route" title="Loading activity" market="Checking recent trades and funding activity" time="Live" price="" />
                 ) : recentActivityItems.map((item, index) => (
                   <ActivityItem
                     key={`${item.title}-${index}`}
@@ -2637,11 +2684,14 @@ export const DashboardV2Mockup = ({
                     price={item.price}
                   />
                 ))}
-                {notificationsError && (
+                {!railActivityLoading && recentActivityItems.length === 0 && !railActivityError && (
+                  <ActivityItem type="route" title="No recent activity" market="Buys, sells, deposits, and withdrawals will appear here." time="" price="" />
+                )}
+                {railActivityError && (
                   <ActivityItem
                     type="sell"
-                    title="Notification inbox unavailable"
-                    market={notificationsError}
+                    title="Recent activity unavailable"
+                    market={railActivityError}
                     time="Retry"
                     price=""
                   />
@@ -2727,6 +2777,8 @@ const ActivityItem = ({ type, title, market, time, price }: any) => {
     switch (type) {
       case 'buy': return <div className="w-6 h-6 rounded-full bg-emerald-100 dark:bg-emerald-900/30 border-2 border-white dark:border-zinc-900 flex items-center justify-center relative z-10"><ChevronRight className="w-3 h-3 text-emerald-600 dark:text-emerald-400" /></div>;
       case 'sell': return <div className="w-6 h-6 rounded-full bg-red-100 dark:bg-red-900/30 border-2 border-white dark:border-zinc-900 flex items-center justify-center relative z-10"><ChevronRight className="w-3 h-3 text-red-600 dark:text-red-400 rotate-180" /></div>;
+      case 'deposit': return <div className="w-6 h-6 rounded-full bg-[#ccff00]/20 dark:bg-[#ccff00]/15 border-2 border-white dark:border-zinc-900 flex items-center justify-center relative z-10"><Vault className="w-3 h-3 text-[#8fb300] dark:text-[#ccff00]" /></div>;
+      case 'withdraw': return <div className="w-6 h-6 rounded-full bg-violet-100 dark:bg-violet-900/30 border-2 border-white dark:border-zinc-900 flex items-center justify-center relative z-10"><ArrowRightLeft className="w-3 h-3 text-violet-600 dark:text-violet-400" /></div>;
       case 'route': return <div className="w-6 h-6 rounded-full bg-blue-100 dark:bg-blue-900/30 border-2 border-white dark:border-zinc-900 flex items-center justify-center relative z-10"><ArrowRightLeft className="w-3 h-3 text-blue-600 dark:text-blue-400" /></div>;
       default: return <div className="w-6 h-6 rounded-full bg-zinc-100 dark:bg-zinc-800 border-2 border-white dark:border-zinc-900 flex items-center justify-center relative z-10"><Activity className="w-3 h-3 text-zinc-600 dark:text-zinc-400" /></div>;
     }
