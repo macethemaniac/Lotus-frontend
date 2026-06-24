@@ -1446,7 +1446,6 @@ export const DashboardV2Mockup = ({
     );
   };
 
-  const pageTitle = activePage === 'markets' ? 'Markets' : 'Top Opportunities';
   const effectiveMarketViewMode = activePage === 'markets' ? 'list' : marketViewMode;
   const terminalApiFocusActive = activePage === 'terminal';
   const isMarketSurface = !terminalApiFocusActive && (activePage === 'home' || activePage === 'markets');
@@ -2308,6 +2307,12 @@ export const DashboardV2Mockup = ({
               <button type="button" onClick={() => setMarketFilter('politics')} className={filterButtonClass(marketFilter === 'politics')}>
                 <Landmark className="w-4 h-4 text-zinc-400 dark:text-zinc-500" /> Politics
               </button>
+              <div className="ml-auto flex shrink-0 items-center gap-2 rounded-lg bg-zinc-100 p-1 dark:bg-zinc-800/80">
+                <button className="px-3 py-1.5 text-[11px] font-bold rounded-md bg-white dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100 shadow-sm transition-all shadow-zinc-200/50 dark:shadow-none">24H</button>
+                <button className="px-3 py-1.5 text-[11px] font-bold rounded-md text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors">7D</button>
+                <button className="px-3 py-1.5 text-[11px] font-bold rounded-md text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors">30D</button>
+                <button className="px-3 py-1.5 text-[11px] font-bold rounded-md text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors">ALL</button>
+              </div>
             </div>
 
             {/* Hero Market */}
@@ -2452,18 +2457,8 @@ export const DashboardV2Mockup = ({
               </div>
             </div>
 
-            {/* Top Markets List */}
+            {/* Markets List */}
             <div>
-              <div className="flex items-center justify-between mb-5 relative z-10">
-                <h3 className="text-lg font-bold text-zinc-900 dark:text-zinc-100 tracking-tight">{pageTitle}</h3>
-                <div className="flex items-center gap-2 bg-zinc-100 dark:bg-zinc-800/80 p-1 rounded-lg">
-                  <button className="px-3 py-1.5 text-[11px] font-bold rounded-md bg-white dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100 shadow-sm transition-all shadow-zinc-200/50 dark:shadow-none">24H</button>
-                  <button className="px-3 py-1.5 text-[11px] font-bold rounded-md text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors">7D</button>
-                  <button className="px-3 py-1.5 text-[11px] font-bold rounded-md text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors">30D</button>
-                  <button className="px-3 py-1.5 text-[11px] font-bold rounded-md text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors">ALL</button>
-                </div>
-              </div>
-              
               {effectiveMarketViewMode === 'grid' ? (
               <div className="grid grid-cols-1 items-stretch gap-3 lg:grid-cols-2 2xl:grid-cols-3">
                 {marketsLoading && displayedMarkets.length === 0 && [0, 1, 2, 3, 4, 5].map((item) => (
