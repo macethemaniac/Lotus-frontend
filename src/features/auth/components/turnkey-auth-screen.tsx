@@ -8,10 +8,12 @@ export function TurnkeyAuthScreen({
   loading,
   error,
   onError,
+  embedded = false,
 }: {
   loading: boolean;
   error: string | null;
   onError: (message: string) => void;
+  embedded?: boolean;
 }) {
   const { clientState, handleGoogleOauth, handleXOauth, initOtp, completeOtp } = useTurnkey();
   const [emailOtpRequest, setEmailOtpRequest] = useState<{
@@ -85,6 +87,7 @@ export function TurnkeyAuthScreen({
       onEmailOtpCancel={() => setEmailOtpRequest(null)}
       onGoogleLogin={() => runTurnkeyFlow(() => handleGoogleOauth({ openInPage: true }))}
       onTwitterLogin={() => runTurnkeyFlow(() => handleXOauth({ openInPage: true }))}
+      embedded={embedded}
     />
   );
 }
