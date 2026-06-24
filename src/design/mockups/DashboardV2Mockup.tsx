@@ -3379,27 +3379,20 @@ const LotusMarketList = ({
   onOpenMarket?: (market: Pick<TerminalMarketSelection, 'title' | 'category' | 'icon' | 'volume' | 'venueCount' | 'routeType'> & Partial<TerminalMarketSelection>) => void;
   emptyCopy: string;
 }) => {
-  const changeClass = (direction: DashboardMarketRow['change24hDirection']) => {
-    if (direction === 'positive') return 'text-emerald-400';
-    if (direction === 'negative') return 'text-red-400';
-    return 'text-zinc-500';
-  };
   return (
   <div className="overflow-x-auto overflow-y-hidden rounded-2xl border border-zinc-800 bg-[#101012] shadow-sm custom-scrollbar">
-    <div className="grid min-w-[1150px] grid-cols-[minmax(360px,1.7fr)_112px_96px_84px_116px_92px_96px_150px] items-center gap-4 border-b border-zinc-800 bg-zinc-900/80 px-5 py-3 text-[11px] font-bold uppercase tracking-[0.08em] text-zinc-500">
+    <div className="grid min-w-[920px] grid-cols-[minmax(360px,1.8fr)_96px_116px_92px_96px_150px] items-center gap-4 border-b border-zinc-800 bg-zinc-900/80 px-5 py-3 text-[11px] font-bold uppercase tracking-[0.08em] text-zinc-500">
       <div className="flex items-center gap-3"><Sparkles className="h-4 w-4 text-[#ccff00]" /> Market</div>
-      <div>Last 7 Days</div>
       <div>Yes Price</div>
-      <div>24h</div>
-      <div>Volume 24h</div>
+      <div>Liquidity ⇅</div>
       <div>Closes By</div>
       <div>Spread</div>
       <div className="text-right">Trade</div>
     </div>
-    <div className="min-w-[1150px] divide-y divide-zinc-800">
+    <div className="min-w-[920px] divide-y divide-zinc-800">
       {loading && markets.length === 0 && [0, 1, 2, 3, 4, 5].map((item) => (
-        <div key={item} className="grid grid-cols-[minmax(360px,1.7fr)_112px_96px_84px_116px_92px_96px_150px] items-center gap-4 px-5 py-3.5">
-          {[0, 1, 2, 3, 4, 5, 6, 7].map((cell) => (
+        <div key={item} className="grid grid-cols-[minmax(360px,1.8fr)_96px_116px_92px_96px_150px] items-center gap-4 px-5 py-3.5">
+          {[0, 1, 2, 3, 4, 5].map((cell) => (
             <div key={cell} className="h-8 rounded bg-zinc-900 animate-pulse" />
           ))}
         </div>
@@ -3413,11 +3406,8 @@ const LotusMarketList = ({
       {markets.map((market) => {
         const statusBadge = marketQuoteStatusBadge(market.quoteStatus);
         return (
-        <div key={market.id} className="group grid grid-cols-[minmax(360px,1.7fr)_112px_96px_84px_116px_92px_96px_150px] items-center gap-4 px-5 py-3.5 transition-colors hover:bg-[#ccff00]/[0.035]">
+        <div key={market.id} className="group grid grid-cols-[minmax(360px,1.8fr)_96px_116px_92px_96px_150px] items-center gap-4 px-5 py-3.5 transition-colors hover:bg-[#ccff00]/[0.035]">
           <div className="flex min-w-0 items-center gap-3">
-            <button type="button" className="flex h-7 w-5 shrink-0 items-center justify-center rounded-md text-zinc-500 transition hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70" aria-label={`Expand ${market.title}`}>
-              <ChevronDown className="h-3.5 w-3.5" />
-            </button>
             <button
               type="button"
               onClick={() => onToggleWatch(market.id)}
@@ -3456,7 +3446,6 @@ const LotusMarketList = ({
               </span>
             </button>
           </div>
-          <Sparkline points={[]} positive={false} />
           <div className="font-mono">
             <div className="flex items-center gap-1.5 text-sm font-bold text-zinc-100">
               {market.priceVenue && <VenueChip id={normalizeVenueId(market.priceVenue)} size="xs" />}
@@ -3464,13 +3453,7 @@ const LotusMarketList = ({
             </div>
             <div className="mt-1 text-[10px] font-semibold text-zinc-500">{market.changeLabel}</div>
           </div>
-          <div className={`font-mono text-xs font-bold ${changeClass(market.change24hDirection)}`}>{market.change24hLabel}</div>
-          <div>
-            <div className="font-mono text-sm font-semibold text-zinc-100">{market.volume}</div>
-            <div className="mt-1 font-mono text-[10px] text-zinc-500">
-              <span className="text-emerald-500">{market.volumeLabel}</span>
-            </div>
-          </div>
+          <div className="font-mono text-sm font-semibold text-zinc-100">{market.liquidity ?? '-'}</div>
           <div className="font-mono text-xs font-bold text-zinc-400">{market.closesBy}</div>
           <div className="font-mono text-sm font-semibold text-zinc-100">
             <span className="rounded-full border border-zinc-800 bg-zinc-900 px-2.5 py-1">{market.spread}</span>
