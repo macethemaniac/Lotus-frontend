@@ -2449,11 +2449,9 @@ export const DashboardV2Mockup = ({
               </div>
               
               {effectiveMarketViewMode === 'grid' ? (
-              <div className="columns-1 gap-3 lg:columns-2 2xl:columns-3">
+              <div className="grid grid-cols-1 items-stretch gap-3 lg:grid-cols-2 2xl:grid-cols-3">
                 {marketsLoading && displayedMarkets.length === 0 && [0, 1, 2, 3, 4, 5].map((item) => (
-                  <div key={item} className="mb-3 break-inside-avoid">
-                    <MarketCardSkeleton />
-                  </div>
+                  <MarketCardSkeleton key={item} />
                 ))}
                 {!marketsLoading && marketsError && (
                   <MarketGridMessage title="Markets unavailable" body={marketsError} />
@@ -2462,14 +2460,13 @@ export const DashboardV2Mockup = ({
                   <MarketGridMessage title="No markets found" body={emptyMarketCopy} />
                 )}
                 {displayedMarkets.map((market) => (
-                  <div key={market.id} className="mb-3 break-inside-avoid">
-                    <MarketCard
-                      {...market}
-                      isWatched={watchlistIds.includes(market.id)}
-                      onToggleWatch={toggleMarketWatch}
-                      onOpenTerminal={openMarketInTerminal}
-                    />
-                  </div>
+                  <MarketCard
+                    key={market.id}
+                    {...market}
+                    isWatched={watchlistIds.includes(market.id)}
+                    onToggleWatch={toggleMarketWatch}
+                    onOpenTerminal={openMarketInTerminal}
+                  />
                 ))}
                 {false && <>
                 <MarketCard
@@ -3714,7 +3711,7 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
   const terminalPayload = { id, marketId, eventId, canonicalEventId, title, category, icon, volume, volume24h, liquidity, openInterest, resolvesAt, resolutionDateLabel, venueCount, routeType, venues, venueMarkets, marketType, outcomes, imageUrl, iconUrl, priceLabel, priceVenue, changeLabel };
   const outcomeRailOverflowClass = outcomesExpanded ? 'overflow-x-hidden overflow-y-auto custom-scrollbar' : 'overflow-hidden';
   const outcomeCount = outcomes?.length ?? 0;
-  const multiCardMinHeightClass = outcomesExpanded ? 'min-h-[452px]' : 'min-h-[332px]';
+  const multiCardMinHeightClass = outcomesExpanded ? 'min-h-[452px]' : 'h-[336px]';
   const outcomeRailHeightClass = outcomesExpanded ? 'h-[176px]' : outcomeCount > 2 ? 'h-[82px]' : 'h-[54px]';
   const singleOutcome = (outcomes?.length ?? 0) === 1 ? outcomes[0] : null;
   const singleOutcomeProbability = singleOutcome?.prob
@@ -3744,7 +3741,7 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
 
   if (singleOutcome && singleOutcomePayload) {
     return (
-      <div className="flex min-h-[276px] flex-col rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm transition-all hover:border-zinc-300 hover:shadow-md dark:border-zinc-800 dark:bg-[#121214] dark:hover:border-zinc-700 group">
+      <div className="flex h-[336px] flex-col rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm transition-all hover:border-zinc-300 hover:shadow-md dark:border-zinc-800 dark:bg-[#121214] dark:hover:border-zinc-700 group">
         <div className="grid grid-cols-[minmax(0,1fr)_76px] items-start gap-4">
           <button
             type="button"
@@ -3817,7 +3814,6 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
 
         <div className="mt-auto flex items-end justify-between gap-3 pt-5 text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
           <span>{shouldShowVolumeMetric ? <><span className="font-mono text-zinc-700 dark:text-zinc-300">{volume}</span> {volumeLabel}</> : emptyTxnCopy}</span>
-          <span>{quoteReadyVenueCount > 0 ? `${quoteReadyVenueCount} quote-ready venue${quoteReadyVenueCount === 1 ? '' : 's'}` : liveVenueCaption}</span>
         </div>
       </div>
     );
@@ -3981,7 +3977,7 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
             <span>{volumeLabel} <span className="font-mono text-zinc-700 dark:text-zinc-300">{volume}</span></span>
           ) : null}
         </div>
-        <div className="flex items-center justify-between text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
+        <div className="hidden items-center justify-between text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
           {totalCount > 0 ? (
             <>
               <span className="text-emerald-600 dark:text-emerald-500/90">
