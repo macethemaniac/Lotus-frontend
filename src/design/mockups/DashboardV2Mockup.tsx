@@ -141,7 +141,7 @@ type DashboardRouteFilter = 'Single' | 'Pair' | 'Tri' | 'Strict all';
 type DashboardSortKey = 'volume' | 'liquidity' | 'closing' | 'buys' | 'sells' | 'best_route';
 type ToastPosition = 'top-left' | 'top-center' | 'top-right' | 'bottom-left' | 'bottom-center' | 'bottom-right';
 
-const HOME_MARKET_INITIAL_LIMIT = 8;
+const HOME_MARKET_INITIAL_LIMIT = 9;
 const HOME_MARKET_LOAD_MORE_SIZE = 8;
 const HOME_MARKET_SOURCE_PAGE_SIZE = 32;
 const MARKET_PAGE_SIZE = 60;
@@ -1410,6 +1410,7 @@ export const DashboardV2Mockup = ({
   const [marketNextCursor, setMarketNextCursor] = useState<string | null>(null);
   const [marketsHasMore, setMarketsHasMore] = useState(false);
   const [marketsLoadingMore, setMarketsLoadingMore] = useState(false);
+  const [homeVisibleMarketCount, setHomeVisibleMarketCount] = useState(HOME_MARKET_INITIAL_LIMIT);
   const [marketFilter, setMarketFilter] = useState<MarketQuickFilter>('all');
   const [watchlistIds, setWatchlistIds] = useState<string[]>(loadWatchlistIds);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
@@ -1494,8 +1495,11 @@ export const DashboardV2Mockup = ({
     })),
     [quotedMarketRows],
   );
-  const displayedMarkets = filteredMarketRows;
-  const canLoadMoreMarkets = isMarketSurface && marketsHasMore && Boolean(marketNextCursor);
+  const displayedMarkets = activePage === 'home'
+    ? filteredMarketRows.slice(0, homeVisibleMarketCount)
+    : filteredMarketRows;
+  const homeHasHiddenMarkets = activePage === 'home' && homeVisibleMarketCount < filteredMarketRows.length;
+  const canLoadMoreMarkets = isMarketSurface && (homeHasHiddenMarkets || (marketsHasMore && Boolean(marketNextCursor)));
   const dashboardDiagnosticsEnabled = lotusMarketDiagnosticsEnabled();
   const emptyMarketCopy = marketFilter === 'watchlist'
     ? 'Your watchlist is empty. Bookmark markets from the cards or list to track them here.'
@@ -1685,6 +1689,10 @@ export const DashboardV2Mockup = ({
   }, [fundingModal]);
 
   useEffect(() => {
+    setHomeVisibleMarketCount(HOME_MARKET_INITIAL_LIMIT);
+  }, [activePage, marketFilter, marketSortKey, searchQuery, selectedCategories, selectedRouteTypes]);
+
+  useEffect(() => {
     if (!isMarketSurface) return;
     let cancelled = false;
     const timer = window.setTimeout(() => {
@@ -1759,6 +1767,14 @@ export const DashboardV2Mockup = ({
     marketsLoadingMore,
     searchQuery,
   ]);
+
+  const handleLoadMoreMarkets = useCallback(() => {
+    if (activePage === 'home' && homeVisibleMarketCount < filteredMarketRows.length) {
+      setHomeVisibleMarketCount((current) => Math.min(current + HOME_MARKET_LOAD_MORE_SIZE, filteredMarketRows.length));
+      return;
+    }
+    void loadMoreMarkets();
+  }, [activePage, filteredMarketRows.length, homeVisibleMarketCount, loadMoreMarkets]);
 
   useEffect(() => {
     if (!isMarketSurface || marketRows.length === 0) {
@@ -2629,11 +2645,15 @@ export const DashboardV2Mockup = ({
                 <div className="mt-4 mb-10 flex justify-center">
                   <button
                     type="button"
-                    onClick={loadMoreMarkets}
+                    onClick={handleLoadMoreMarkets}
                     disabled={marketsLoadingMore}
                     className="rounded-lg border border-[#ccff00]/40 bg-[#ccff00]/10 px-4 py-2 text-xs font-bold text-[#ccff00] transition hover:bg-[#ccff00]/20 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
                   >
-                    {marketsLoadingMore ? 'Loading markets...' : `Load ${activePage === 'markets' ? MARKET_PAGE_SIZE : HOME_MARKET_LOAD_MORE_SIZE} more`}
+                    {marketsLoadingMore
+                      ? 'Loading markets...'
+                      : activePage === 'home'
+                        ? `Load ${Math.min(HOME_MARKET_LOAD_MORE_SIZE, Math.max(0, filteredMarketRows.length - homeVisibleMarketCount)) || HOME_MARKET_LOAD_MORE_SIZE} more`
+                        : `Load ${MARKET_PAGE_SIZE} more`}
                   </button>
                 </div>
               )}
