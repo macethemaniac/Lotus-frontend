@@ -25,6 +25,7 @@ export function AuthPageMockup({
   onTwitterLogin,
   loading = false,
   error,
+  embedded = false,
 }: {
   onEmailSubmit?: (email: string) => Promise<void> | void;
   emailOtpContact?: string | null;
@@ -34,6 +35,7 @@ export function AuthPageMockup({
   onTwitterLogin?: () => Promise<void> | void;
   loading?: boolean;
   error?: string | null;
+  embedded?: boolean;
 }) {
   const [email, setEmail] = useState("");
   const [otpCode, setOtpCode] = useState("");
@@ -54,7 +56,7 @@ export function AuthPageMockup({
 
   return (
     <div className="dark animate-fade-in">
-      <div className="min-h-screen flex items-center justify-center p-4 bg-black">
+      <div className={embedded ? "flex items-center justify-center p-0" : "min-h-screen flex items-center justify-center p-4 bg-black"}>
           
           {/* Modal Container */}
           <div className="w-full max-w-[400px] bg-white dark:bg-zinc-900 rounded-2xl shadow-xl border border-zinc-200 dark:border-zinc-800 p-8 animate-in fade-in zoom-in-95 duration-300">

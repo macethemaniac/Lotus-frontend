@@ -1,10 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useTurnkey } from '@turnkey/react-wallet-kit';
 import { OAuthProviders } from '@turnkey/sdk-types';
 import { LotusLogo } from '@/components/icons/lotus-icons';
 import { CryptoLogo, VenueLogo, resolveTopicAssetLogoId } from '@/components/icons/asset-logo';
 import { InfraTradingTerminal, type TerminalMarketSelection } from '@/design/mockups/InfraTradingTerminal';
 import { PortfolioMockupV2 } from '@/design/mockups/PortfolioMockupV2';
+import { FundingDeposit } from '@/design/mockups/FundingDeposit';
 import type { AuthSession } from '@/features/auth/types';
 import {
   getMarket,
@@ -17,8 +19,8 @@ import {
 } from '@/features/markets/api/market-api';
 import { getNotifications, markNotificationRead, type UserNotification } from '@/features/notifications/api/notification-api';
 import { NotificationToast, type NotificationToastTone } from '@/features/notifications/components/notification-toast';
-import { getPortfolioSummary, type LiveCandidatesResponse, type PortfolioSummary, type TradeRouteCandidate } from '@/features/trading/api/execution-api';
-import { getVenueBalances, type VenueBalance } from '@/features/funding/api/funding-api';
+import { getExecutionHistory, getPortfolioSummary, type ExecutionStatus, type LiveCandidatesResponse, type PortfolioSummary, type TradeRouteCandidate } from '@/features/trading/api/execution-api';
+import { getFundingHistory, getVenueBalances, type FundingHistoryRow, type VenueBalance } from '@/features/funding/api/funding-api';
 import { ApiClientError } from '@/lib/api/http-client';
 import { lotusMarketDiagnosticsEnabled } from '@/config/env';
 import { 
@@ -26,7 +28,7 @@ import {
   Zap, PieChart, Activity, Settings, ChevronDown, ChevronUp,
   ShieldCheck, AlertTriangle, Clock, ChevronRight,
   Flame, Globe, Cpu, MessageSquare, ChevronsLeft, ChevronsRight,
-  Square, CheckSquare, Star, Sparkles, Trophy, Database, Filter, Sun, Moon, Vault, Volleyball, Landmark, Terminal,
+  Square, CheckSquare, Star, Sparkles, Trophy, Database, Filter, Vault, Volleyball, Landmark, Terminal,
   LayoutGrid, List, Bookmark, Radio, CheckCircle2, Wallet, X
 } from 'lucide-react';
 
@@ -139,7 +141,7 @@ type DashboardRouteFilter = 'Single' | 'Pair' | 'Tri' | 'Strict all';
 type DashboardSortKey = 'volume' | 'liquidity' | 'closing' | 'buys' | 'sells' | 'best_route';
 type ToastPosition = 'top-left' | 'top-center' | 'top-right' | 'bottom-left' | 'bottom-center' | 'bottom-right';
 
-const HOME_MARKET_INITIAL_LIMIT = 8;
+const HOME_MARKET_INITIAL_LIMIT = 9;
 const HOME_MARKET_LOAD_MORE_SIZE = 8;
 const HOME_MARKET_SOURCE_PAGE_SIZE = 32;
 const MARKET_PAGE_SIZE = 60;
@@ -408,6 +410,36 @@ const formatCurrencyValue = (value: string | number | null | undefined): string 
   return parsed.toLocaleString(undefined, { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
+const parseCurrencyNumber = (value: string | number | null | undefined): number => {
+  const parsed = typeof value === 'number'
+    ? value
+    : typeof value === 'string'
+      ? Number(value.replace(/[$,\s]/g, ''))
+      : NaN;
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const formatSignedPercentValue = (value: number): string => {
+  if (!Number.isFinite(value)) return '+0.00%';
+  const prefix = value >= 0 ? '+' : '';
+  return `${prefix}${value.toFixed(2)}%`;
+};
+
+type HeaderPortfolioVenueRow = {
+  venue: string;
+  cash: number;
+  positions: number;
+};
+
+type DashboardRailActivityItem = {
+  type: 'buy' | 'sell' | 'route';
+  title: string;
+  market: string;
+  time: string;
+  price: string;
+  timestamp: number;
+};
+
 const loadWatchlistIds = (): string[] => {
   try {
     const raw = window.localStorage.getItem(watchlistStorageKey);
@@ -473,6 +505,98 @@ const formatChange24h = (market: Pick<MarketCatalogMarket['venueMarkets'][number
   }
   const value = absolute ?? Math.abs(numeric);
   return { label: `${numeric > 0 ? '+' : numeric < 0 ? '-' : ''}${formatProbabilityPrice(value)}`, direction };
+};
+
+const formatHeaderVenueLabel = (venue: string): string => {
+  const normalized = venue.toUpperCase();
+  if (normalized === 'PREDICT_FUN' || normalized === 'PREDICT') return 'Predict.fun';
+  if (normalized === 'POLYMARKET') return 'Polymarket';
+  if (normalized === 'LIMITLESS') return 'Limitless';
+  if (normalized === 'OPINION') return 'Opinion';
+  if (normalized === 'MYRIAD') return 'Myriad';
+  return venue
+    .replace(/[_-]+/g, ' ')
+    .toLowerCase()
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+};
+
+const HeaderPortfolioSummary = ({
+  cashTotal,
+  positionsTotal,
+  pnlPercent,
+  rows,
+  loading,
+}: {
+  cashTotal: number;
+  positionsTotal: number;
+  pnlPercent: number;
+  rows: HeaderPortfolioVenueRow[];
+  loading: boolean;
+}) => {
+  const pnlPositive = !Number.isFinite(pnlPercent) || pnlPercent >= 0;
+  const hasRows = rows.length > 0;
+
+  return (
+    <div className="group relative hidden xl:block">
+      <button
+        type="button"
+        aria-label="Portfolio cash and positions summary"
+        className="flex h-10 min-w-[18.5rem] items-center justify-center gap-3 rounded-full border border-zinc-200 bg-white/85 px-4 text-sm shadow-sm backdrop-blur transition-colors hover:border-zinc-300 hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 dark:border-zinc-800 dark:bg-[#101114]/90 dark:hover:border-zinc-700 dark:hover:bg-[#141518]"
+      >
+        <span className="text-zinc-500 dark:text-zinc-400">Cash</span>
+        <span className="font-bold tabular-nums text-zinc-950 dark:text-zinc-50">
+          {loading ? 'Syncing' : formatCurrencyValue(cashTotal)}
+        </span>
+        <span className="h-5 w-px bg-zinc-200 dark:bg-zinc-700" aria-hidden />
+        <span className="text-zinc-500 dark:text-zinc-400">Positions</span>
+        <span className="font-bold tabular-nums text-zinc-950 dark:text-zinc-50">
+          {loading ? 'Syncing' : formatCurrencyValue(positionsTotal)}
+        </span>
+        <span className={`text-xs font-bold tabular-nums ${pnlPositive ? 'text-[#49e63d]' : 'text-rose-400'}`}>
+          {formatSignedPercentValue(pnlPercent)}
+        </span>
+      </button>
+
+      <div className="pointer-events-none absolute right-0 top-full z-50 mt-3 w-[min(28rem,calc(100vw-2rem))] translate-y-1 rounded-2xl border border-zinc-200 bg-white/95 p-3 opacity-0 shadow-2xl backdrop-blur-xl transition duration-150 group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:translate-y-0 group-focus-within:opacity-100 dark:border-zinc-800 dark:bg-[#101114]/95">
+        <div className="grid grid-cols-[minmax(7rem,1fr)_7rem_7rem] items-center gap-4 px-3 pb-3 text-[11px] font-bold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-500">
+          <span>Venue</span>
+          <span className="text-right">Cash</span>
+          <span className="text-right">Positions</span>
+        </div>
+        <div className="overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800">
+          {hasRows ? rows.map((row, index) => (
+            <div
+              key={row.venue}
+              className={`grid grid-cols-[minmax(7rem,1fr)_7rem_7rem] items-center gap-4 bg-white px-3 py-3 dark:bg-[#101114] ${index > 0 ? 'border-t border-zinc-200 dark:border-zinc-800' : ''}`}
+            >
+              <div className="flex min-w-0 items-center gap-3">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-zinc-100 dark:bg-zinc-900">
+                  <VenueLogo
+                    id={dashboardVenueIconId(row.venue)}
+                    label={formatHeaderVenueLabel(row.venue)}
+                    className="h-full w-full rounded-[inherit] object-cover"
+                  />
+                </span>
+                <span className="truncate text-sm font-bold text-zinc-900 dark:text-zinc-100">
+                  {formatHeaderVenueLabel(row.venue)}
+                </span>
+              </div>
+              <span className="text-right text-sm font-bold tabular-nums text-zinc-900 dark:text-zinc-100">
+                {formatCurrencyValue(row.cash)}
+              </span>
+              <span className="text-right text-sm font-bold tabular-nums text-zinc-900 dark:text-zinc-100">
+                {formatCurrencyValue(row.positions)}
+              </span>
+            </div>
+          )) : (
+            <div className="bg-white px-4 py-5 text-sm text-zinc-500 dark:bg-[#101114] dark:text-zinc-400">
+              Portfolio data is syncing.
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 };
 
 const formatSpreadBps = (candidate: TradeRouteCandidate | null): string => {
@@ -1197,6 +1321,69 @@ const mapNotificationForDashboard = (notification: UserNotification) => {
   }
 };
 
+const activityTimestamp = (...values: Array<string | null | undefined>): number => {
+  for (const value of values) {
+    if (!value) continue;
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return 0;
+};
+
+const formatActivityStatus = (value: string | null | undefined): string => {
+  if (!value) return 'Updated';
+  return value
+    .replace(/_/g, ' ')
+    .toLowerCase()
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+};
+
+const mapExecutionActivity = (item: ExecutionStatus): DashboardRailActivityItem => {
+  const side = item.route?.side === 'sell' ? 'sell' : 'buy';
+  const status = (item.userStatus ?? item.status ?? '').toUpperCase();
+  const statusLabel = status.includes('FILLED')
+    ? 'Filled'
+    : status.includes('FAILED')
+      ? 'Failed'
+      : status.includes('SUBMITTED') || status.includes('PARTIAL')
+        ? 'Submitted'
+        : formatActivityStatus(item.userStatus ?? item.status);
+  const venuePath = item.route?.venuePath?.filter(Boolean).join(', ');
+  const outcome = item.route?.outcomeId ? `${item.route.outcomeId} ` : '';
+  const amount = item.route?.executableAmount ? `${item.route.executableAmount} ${side === 'buy' ? 'USDC' : 'shares'}` : '';
+  const timeValue = activityTimestamp(item.updatedAt, item.submittedAt);
+
+  return {
+    type: side,
+    title: `${side === 'buy' ? 'Buy' : 'Sell'} ${statusLabel.toLowerCase()}`,
+    market: [amount, outcome.trim(), venuePath ? `via ${venuePath}` : null].filter(Boolean).join(' - ') || item.executionId,
+    time: formatRelativeTime(timeValue ? new Date(timeValue).toISOString() : item.updatedAt ?? item.submittedAt ?? '') || 'Recent',
+    price: statusLabel,
+    timestamp: timeValue,
+  };
+};
+
+const mapFundingActivity = (item: FundingHistoryRow): DashboardRailActivityItem => {
+  const isWithdrawal = String(item.direction ?? '').toUpperCase().includes('WITHDRAW');
+  const amount = [item.amount, item.token ?? item.asset].filter(Boolean).join(' ');
+  const status = item.aggregateStatus ?? item.status ?? item.legStatus;
+  const venue = item.venue ? formatHeaderVenueLabel(item.venue) : null;
+  const chain = item.destinationChain ?? item.sourceChain;
+  const timeValue = activityTimestamp(item.updatedAt, item.checkedAt, item.createdAt);
+
+  return {
+    type: isWithdrawal ? 'sell' : 'buy',
+    title: isWithdrawal ? 'Withdrawal' : 'Deposit',
+    market: [amount || null, venue, chain].filter(Boolean).join(' - ') || item.intentId,
+    time: formatRelativeTime(timeValue ? new Date(timeValue).toISOString() : item.updatedAt ?? item.createdAt ?? '') || 'Recent',
+    price: formatActivityStatus(status),
+    timestamp: timeValue,
+  };
+};
+
+const fundingHistoryRows = (response: Awaited<ReturnType<typeof getFundingHistory>>): FundingHistoryRow[] =>
+  response.items ?? response.rows ?? response.history ?? [];
+
 export const DashboardV2Mockup = ({
   activePage = 'home',
   onNavigate,
@@ -1206,7 +1393,8 @@ export const DashboardV2Mockup = ({
   onNavigate?: (page: LotusAppPage) => void;
   session?: AuthSession | null;
 }) => {
-  const [isDarkMode, setIsDarkMode] = useState(true);
+  const [isDarkMode] = useState(true);
+  const [fundingModal, setFundingModal] = useState<'deposit' | null>(null);
   const [isFilterCollapsed, setIsFilterCollapsed] = useState(true);
   const [showNotifications, setShowNotifications] = useState(false);
   const [marketViewMode, setMarketViewMode] = useState<'grid' | 'list'>('grid');
@@ -1222,6 +1410,7 @@ export const DashboardV2Mockup = ({
   const [marketNextCursor, setMarketNextCursor] = useState<string | null>(null);
   const [marketsHasMore, setMarketsHasMore] = useState(false);
   const [marketsLoadingMore, setMarketsLoadingMore] = useState(false);
+  const [homeVisibleMarketCount, setHomeVisibleMarketCount] = useState(HOME_MARKET_INITIAL_LIMIT);
   const [marketFilter, setMarketFilter] = useState<MarketQuickFilter>('all');
   const [watchlistIds, setWatchlistIds] = useState<string[]>(loadWatchlistIds);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
@@ -1232,6 +1421,9 @@ export const DashboardV2Mockup = ({
   const [portfolioBalances, setPortfolioBalances] = useState<VenueBalance[]>([]);
   const [portfolioLoading, setPortfolioLoading] = useState(false);
   const [portfolioError, setPortfolioError] = useState<string | null>(null);
+  const [railActivityItems, setRailActivityItems] = useState<DashboardRailActivityItem[]>([]);
+  const [railActivityLoading, setRailActivityLoading] = useState(false);
+  const [railActivityError, setRailActivityError] = useState<string | null>(null);
   const [expandedCategories, setExpandedCategories] = useState<Record<string, boolean>>({
     'Sports': true,
     'Politics': true,
@@ -1254,7 +1446,6 @@ export const DashboardV2Mockup = ({
     );
   };
 
-  const pageTitle = activePage === 'markets' ? 'Markets' : 'Top Opportunities';
   const effectiveMarketViewMode = activePage === 'markets' ? 'list' : marketViewMode;
   const terminalApiFocusActive = activePage === 'terminal';
   const isMarketSurface = !terminalApiFocusActive && (activePage === 'home' || activePage === 'markets');
@@ -1303,8 +1494,11 @@ export const DashboardV2Mockup = ({
     })),
     [quotedMarketRows],
   );
-  const displayedMarkets = filteredMarketRows;
-  const canLoadMoreMarkets = isMarketSurface && marketsHasMore && Boolean(marketNextCursor);
+  const displayedMarkets = activePage === 'home'
+    ? filteredMarketRows.slice(0, homeVisibleMarketCount)
+    : filteredMarketRows;
+  const homeHasHiddenMarkets = activePage === 'home' && homeVisibleMarketCount < filteredMarketRows.length;
+  const canLoadMoreMarkets = isMarketSurface && (homeHasHiddenMarkets || (marketsHasMore && Boolean(marketNextCursor)));
   const dashboardDiagnosticsEnabled = lotusMarketDiagnosticsEnabled();
   const emptyMarketCopy = marketFilter === 'watchlist'
     ? 'Your watchlist is empty. Bookmark markets from the cards or list to track them here.'
@@ -1332,6 +1526,54 @@ export const DashboardV2Mockup = ({
     const parsed = Number(balance.availableAmount ?? balance.readyAmount ?? 0);
     return Number.isFinite(parsed) ? sum + parsed : sum;
   }, 0);
+  const portfolioPositionsTotal = parseCurrencyNumber(portfolioSummary?.totalMarkValue ?? portfolioSummary?.totalCostBasis);
+  const portfolioPnlPercent = (() => {
+    const costBasis = parseCurrencyNumber(portfolioSummary?.totalCostBasis);
+    if (costBasis <= 0) return 0;
+    return (parseCurrencyNumber(portfolioSummary?.totalUnrealizedPnl) / costBasis) * 100;
+  })();
+  const headerPortfolioRows = useMemo<HeaderPortfolioVenueRow[]>(() => {
+    const preferredVenueOrder = ['POLYMARKET', 'LIMITLESS', 'PREDICT_FUN', 'OPINION', 'MYRIAD'];
+    const rowsByVenue = new Map<string, HeaderPortfolioVenueRow>();
+    const ensureRow = (venue: string) => {
+      const key = venue.toUpperCase();
+      const existing = rowsByVenue.get(key);
+      if (existing) return existing;
+      const row = { venue: key, cash: 0, positions: 0 };
+      rowsByVenue.set(key, row);
+      return row;
+    };
+
+    preferredVenueOrder.forEach(ensureRow);
+
+    portfolioBalances.forEach((balance) => {
+      const row = ensureRow(balance.venue);
+      row.cash += parseCurrencyNumber(balance.availableAmount ?? balance.readyAmount);
+    });
+
+    portfolioSummary?.positions?.forEach((position) => {
+      const row = ensureRow(position.venue);
+      const markedValue = parseCurrencyNumber(position.markValue);
+      if (markedValue > 0) {
+        row.positions += markedValue;
+        return;
+      }
+      const size = Number(position.verifiedSize ?? 0);
+      const entryPrice = Number(position.averageEntryPrice ?? 0);
+      if (Number.isFinite(size) && Number.isFinite(entryPrice) && size > 0 && entryPrice > 0) {
+        row.positions += size * entryPrice;
+      }
+    });
+
+    return Array.from(rowsByVenue.values()).sort((left, right) => {
+      const leftIndex = preferredVenueOrder.indexOf(left.venue);
+      const rightIndex = preferredVenueOrder.indexOf(right.venue);
+      if (leftIndex !== -1 || rightIndex !== -1) {
+        return (leftIndex === -1 ? Number.MAX_SAFE_INTEGER : leftIndex) - (rightIndex === -1 ? Number.MAX_SAFE_INTEGER : rightIndex);
+      }
+      return left.venue.localeCompare(right.venue);
+    });
+  }, [portfolioBalances, portfolioSummary]);
   const portfolioValueLabel = portfolioLoading
     ? 'Syncing'
     : portfolioSummary?.totalMarkValue !== null && portfolioSummary?.totalMarkValue !== undefined
@@ -1359,63 +1601,18 @@ export const DashboardV2Mockup = ({
       : 'MTM'
     : portfolioError || !dashboardDiagnosticsEnabled ? 'MTM' : 'MTM unavailable';
   const recentActivityItems = useMemo(() => {
-    const notificationRows = notificationItems.slice(0, 3).map((notification) => ({
+    const notificationRows: DashboardRailActivityItem[] = notificationItems.slice(0, 4).map((notification) => ({
       type: notification.severity === 'success' ? 'buy' : notification.severity === 'error' || notification.severity === 'warning' ? 'sell' : 'route',
       title: notification.title,
       market: notification.body,
       time: formatRelativeTime(notification.createdAt) || 'Live',
       price: notification.readAt ? '' : 'New',
+      timestamp: activityTimestamp(notification.createdAt),
     }));
-    const systemRows = [
-      {
-        type: marketsError ? 'sell' : 'route',
-        title: dashboardDiagnosticsEnabled
-          ? marketsError ? 'Market catalog unavailable' : 'Market catalog synced'
-          : marketsError ? 'Markets updating' : 'Markets synced',
-        market: dashboardDiagnosticsEnabled
-          ? marketsError ?? `${marketSummary.routeable} backend-approved markets loaded`
-          : marketsError ? 'Refreshing the latest market list' : `${marketSummary.routeable} markets loaded`,
-        time: marketsLoading ? 'Loading' : 'Live',
-        price: '',
-      },
-      {
-        type: marketSummary.routePreviewRequired > 0 ? 'route' : 'buy',
-        title: dashboardDiagnosticsEnabled
-          ? marketSummary.routePreviewRequired > 0 ? 'Quote readiness pending' : 'Routes refreshed'
-          : 'Live prices synced',
-        market: dashboardDiagnosticsEnabled
-          ? marketSummary.routePreviewRequired > 0
-            ? `${marketSummary.routePreviewRequired} markets have stale or unavailable quote evidence`
-            : 'Visible markets have live route evidence'
-          : `${marketSummary.livePriced} visible market${marketSummary.livePriced === 1 ? '' : 's'} have live price snapshots`,
-        time: dashboardDiagnosticsEnabled ? marketSummary.routePreviewRequired > 0 ? 'Safe' : 'Live' : 'Live',
-        price: '',
-      },
-      {
-        type: portfolioError ? 'sell' : 'buy',
-        title: dashboardDiagnosticsEnabled
-          ? portfolioError ? 'Portfolio sync blocked' : 'Portfolio MTM synced'
-          : portfolioError ? 'Portfolio updating' : 'Portfolio synced',
-        market: dashboardDiagnosticsEnabled
-          ? portfolioError ?? `${portfolioPositionsLabel} positions, ${portfolioCashLabel} available cash`
-          : portfolioError ? 'Refreshing balances and positions' : `${portfolioPositionsLabel} positions, ${portfolioCashLabel} available cash`,
-        time: portfolioLoading ? 'Loading' : 'Ready',
-        price: '',
-      },
-    ];
-    return [...notificationRows, ...systemRows].slice(0, 4);
+    return (railActivityItems.length > 0 ? railActivityItems : notificationRows).slice(0, 4);
   }, [
-    dashboardDiagnosticsEnabled,
-    marketSummary.livePriced,
-    marketSummary.routePreviewRequired,
-    marketSummary.routeable,
-    marketsError,
-    marketsLoading,
     notificationItems,
-    portfolioCashLabel,
-    portfolioError,
-    portfolioLoading,
-    portfolioPositionsLabel,
+    railActivityItems,
   ]);
   const inferTerminalMarketType = (title: string): 'binary' | 'multi' => (
     title.includes('Winner') || title.includes('Champion') || title.includes('Region') || title.includes('Season')
@@ -1478,6 +1675,21 @@ export const DashboardV2Mockup = ({
     { id: 'sells', label: 'Sells' },
     { id: 'best_route', label: 'Best route' },
   ];
+
+  useEffect(() => {
+    if (!fundingModal) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setFundingModal(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [fundingModal]);
+
+  useEffect(() => {
+    setHomeVisibleMarketCount(HOME_MARKET_INITIAL_LIMIT);
+  }, [activePage, marketFilter, marketSortKey, searchQuery, selectedCategories, selectedRouteTypes]);
 
   useEffect(() => {
     if (!isMarketSurface) return;
@@ -1554,6 +1766,14 @@ export const DashboardV2Mockup = ({
     marketsLoadingMore,
     searchQuery,
   ]);
+
+  const handleLoadMoreMarkets = useCallback(() => {
+    if (activePage === 'home' && homeVisibleMarketCount < filteredMarketRows.length) {
+      setHomeVisibleMarketCount((current) => Math.min(current + HOME_MARKET_LOAD_MORE_SIZE, filteredMarketRows.length));
+      return;
+    }
+    void loadMoreMarkets();
+  }, [activePage, filteredMarketRows.length, homeVisibleMarketCount, loadMoreMarkets]);
 
   useEffect(() => {
     if (!isMarketSurface || marketRows.length === 0) {
@@ -1730,6 +1950,50 @@ export const DashboardV2Mockup = ({
     };
   }, [session?.userJwt, terminalApiFocusActive]);
 
+  useEffect(() => {
+    if (!session?.userJwt) {
+      setRailActivityItems([]);
+      setRailActivityError(null);
+      setRailActivityLoading(false);
+      return;
+    }
+    if (terminalApiFocusActive) {
+      setRailActivityLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    const loadRailActivity = async () => {
+      setRailActivityLoading(true);
+      setRailActivityError(null);
+      try {
+        const [executionResponse, fundingResponse] = await Promise.all([
+          getExecutionHistory(session.userJwt, { limit: 6 }),
+          getFundingHistory(session.userJwt, { limit: 6 }),
+        ]);
+        if (cancelled) return;
+        const nextItems = [
+          ...(executionResponse.items ?? []).map(mapExecutionActivity),
+          ...fundingHistoryRows(fundingResponse).map(mapFundingActivity),
+        ]
+          .sort((left, right) => right.timestamp - left.timestamp)
+          .slice(0, 4);
+        setRailActivityItems(nextItems);
+      } catch (error) {
+        if (!cancelled) setRailActivityError(toSafeErrorMessage(error, 'Recent activity is unavailable right now.'));
+      } finally {
+        if (!cancelled) setRailActivityLoading(false);
+      }
+    };
+
+    loadRailActivity();
+    const interval = window.setInterval(loadRailActivity, 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [session?.userJwt, terminalApiFocusActive]);
+
   const handleReadNotification = (notification: UserNotification) => {
     if (!session?.userJwt || notification.readAt) return;
     setNotificationItems((items) =>
@@ -1853,11 +2117,19 @@ export const DashboardV2Mockup = ({
                   </div>
                 )}
               </div>
-              <button 
-                onClick={() => setIsDarkMode(!isDarkMode)}
-                className="p-1.5 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors rounded-full hover:bg-zinc-100 dark:hover:bg-zinc-800"
+              <HeaderPortfolioSummary
+                cashTotal={portfolioCashTotal}
+                positionsTotal={portfolioPositionsTotal}
+                pnlPercent={portfolioPnlPercent}
+                rows={headerPortfolioRows}
+                loading={portfolioLoading}
+              />
+              <button
+                type="button"
+                onClick={() => setFundingModal('deposit')}
+                className="relative inline-flex h-9 items-center justify-center overflow-hidden rounded-full border border-[#e5ff73]/60 bg-[#ccff00] px-4 text-xs font-black text-black shadow-[inset_0_1px_0_rgba(255,255,255,0.45),0_8px_18px_rgba(204,255,0,0.12)] transition-colors before:absolute before:inset-x-2 before:top-0 before:h-1/2 before:rounded-full before:bg-white/20 hover:bg-[#d8ff2f] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/80 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-900"
               >
-                {isDarkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+                <span className="relative z-10">Deposit</span>
               </button>
             </div>
           </div>
@@ -2035,6 +2307,12 @@ export const DashboardV2Mockup = ({
               <button type="button" onClick={() => setMarketFilter('politics')} className={filterButtonClass(marketFilter === 'politics')}>
                 <Landmark className="w-4 h-4 text-zinc-400 dark:text-zinc-500" /> Politics
               </button>
+              <div className="ml-auto flex shrink-0 items-center gap-2 rounded-lg bg-zinc-100 p-1 dark:bg-zinc-800/80">
+                <button className="px-3 py-1.5 text-[11px] font-bold rounded-md bg-white dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100 shadow-sm transition-all shadow-zinc-200/50 dark:shadow-none">24H</button>
+                <button className="px-3 py-1.5 text-[11px] font-bold rounded-md text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors">7D</button>
+                <button className="px-3 py-1.5 text-[11px] font-bold rounded-md text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors">30D</button>
+                <button className="px-3 py-1.5 text-[11px] font-bold rounded-md text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors">ALL</button>
+              </div>
             </div>
 
             {/* Hero Market */}
@@ -2179,20 +2457,10 @@ export const DashboardV2Mockup = ({
               </div>
             </div>
 
-            {/* Top Markets List */}
+            {/* Markets List */}
             <div>
-              <div className="flex items-center justify-between mb-5 relative z-10">
-                <h3 className="text-lg font-bold text-zinc-900 dark:text-zinc-100 tracking-tight">{pageTitle}</h3>
-                <div className="flex items-center gap-2 bg-zinc-100 dark:bg-zinc-800/80 p-1 rounded-lg">
-                  <button className="px-3 py-1.5 text-[11px] font-bold rounded-md bg-white dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100 shadow-sm transition-all shadow-zinc-200/50 dark:shadow-none">24H</button>
-                  <button className="px-3 py-1.5 text-[11px] font-bold rounded-md text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors">7D</button>
-                  <button className="px-3 py-1.5 text-[11px] font-bold rounded-md text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors">30D</button>
-                  <button className="px-3 py-1.5 text-[11px] font-bold rounded-md text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors">ALL</button>
-                </div>
-              </div>
-              
               {effectiveMarketViewMode === 'grid' ? (
-              <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 items-stretch gap-3 lg:grid-cols-2 2xl:grid-cols-3">
                 {marketsLoading && displayedMarkets.length === 0 && [0, 1, 2, 3, 4, 5].map((item) => (
                   <MarketCardSkeleton key={item} />
                 ))}
@@ -2372,11 +2640,15 @@ export const DashboardV2Mockup = ({
                 <div className="mt-4 mb-10 flex justify-center">
                   <button
                     type="button"
-                    onClick={loadMoreMarkets}
+                    onClick={handleLoadMoreMarkets}
                     disabled={marketsLoadingMore}
                     className="rounded-lg border border-[#ccff00]/40 bg-[#ccff00]/10 px-4 py-2 text-xs font-bold text-[#ccff00] transition hover:bg-[#ccff00]/20 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
                   >
-                    {marketsLoadingMore ? 'Loading markets...' : `Load ${activePage === 'markets' ? MARKET_PAGE_SIZE : HOME_MARKET_LOAD_MORE_SIZE} more`}
+                    {marketsLoadingMore
+                      ? 'Loading markets...'
+                      : activePage === 'home'
+                        ? `Load ${Math.min(HOME_MARKET_LOAD_MORE_SIZE, Math.max(0, filteredMarketRows.length - homeVisibleMarketCount)) || HOME_MARKET_LOAD_MORE_SIZE} more`
+                        : `Load ${MARKET_PAGE_SIZE} more`}
                   </button>
                 </div>
               )}
@@ -2408,33 +2680,6 @@ export const DashboardV2Mockup = ({
               </div>
             </div>
 
-            {/* Portfolio Summary */}
-            <button
-              type="button"
-              onClick={() => onNavigate?.('portfolio')}
-              className="bg-zinc-900 dark:bg-zinc-800 rounded-2xl p-4 text-left text-white shadow-lg relative overflow-hidden border border-transparent dark:border-zinc-700 transition hover:border-[#ccff00]/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/60"
-              aria-label="Open portfolio"
-            >
-              <div className="absolute top-0 right-0 w-32 h-32 bg-[#ccff00]/10 rounded-full blur-2xl -mr-10 -mt-10 pointer-events-none"></div>
-              
-              <h3 className="text-xs font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-widest mb-2">Portfolio</h3>
-              <div className="flex items-end gap-2 mb-5">
-                <span className="text-2xl font-bold tracking-tight">{portfolioValueLabel}</span>
-                <span className="text-xs font-medium text-[#ccff00] mb-1">{portfolioMtmLabel}</span>
-              </div>
-              
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-zinc-400 dark:text-zinc-500">Available Cash</span>
-                  <span className="text-xs font-mono font-medium">{portfolioCashLabel}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-zinc-400 dark:text-zinc-500">Active Positions</span>
-                  <span className="text-xs font-mono font-medium">{portfolioPositionsLabel}</span>
-                </div>
-              </div>
-            </button>
-
             {/* Recent Activity */}
             <div>
               <div className="flex items-center justify-between mb-4">
@@ -2442,8 +2687,8 @@ export const DashboardV2Mockup = ({
               </div>
               
               <div className="space-y-4 relative before:absolute before:inset-y-0 before:left-[11px] before:w-px before:bg-zinc-200 dark:before:bg-zinc-700">
-                {notificationsLoading && recentActivityItems.length === 0 ? (
-                  <ActivityItem type="route" title="Loading activity" market="Checking durable notification inbox" time="Live" price="" />
+                {railActivityLoading && recentActivityItems.length === 0 ? (
+                  <ActivityItem type="route" title="Loading activity" market="Checking recent trades and funding activity" time="Live" price="" />
                 ) : recentActivityItems.map((item, index) => (
                   <ActivityItem
                     key={`${item.title}-${index}`}
@@ -2454,11 +2699,14 @@ export const DashboardV2Mockup = ({
                     price={item.price}
                   />
                 ))}
-                {notificationsError && (
+                {!railActivityLoading && recentActivityItems.length === 0 && !railActivityError && (
+                  <ActivityItem type="route" title="No recent activity" market="Buys, sells, deposits, and withdrawals will appear here." time="" price="" />
+                )}
+                {railActivityError && (
                   <ActivityItem
                     type="sell"
-                    title="Notification inbox unavailable"
-                    market={notificationsError}
+                    title="Recent activity unavailable"
+                    market={railActivityError}
                     time="Retry"
                     price=""
                   />
@@ -2494,6 +2742,25 @@ export const DashboardV2Mockup = ({
         </div>
       </main>
       </div>
+      {fundingModal && createPortal(
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Deposit funds"
+          className="fixed left-0 top-0 z-[2147483647] flex h-[100dvh] w-[100dvw] items-center justify-center overflow-hidden bg-black/60 px-4 py-6 backdrop-blur-md"
+        >
+          <button
+            type="button"
+            aria-label="Close funding modal"
+            onClick={() => setFundingModal(null)}
+            className="absolute inset-0 cursor-default"
+          />
+          <div className="relative z-10 w-full max-w-[400px]">
+            <FundingDeposit initialMode="deposit" modal onClose={() => setFundingModal(null)} session={session} />
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   );
 };
@@ -3112,27 +3379,20 @@ const LotusMarketList = ({
   onOpenMarket?: (market: Pick<TerminalMarketSelection, 'title' | 'category' | 'icon' | 'volume' | 'venueCount' | 'routeType'> & Partial<TerminalMarketSelection>) => void;
   emptyCopy: string;
 }) => {
-  const changeClass = (direction: DashboardMarketRow['change24hDirection']) => {
-    if (direction === 'positive') return 'text-emerald-400';
-    if (direction === 'negative') return 'text-red-400';
-    return 'text-zinc-500';
-  };
   return (
   <div className="overflow-x-auto overflow-y-hidden rounded-2xl border border-zinc-800 bg-[#101012] shadow-sm custom-scrollbar">
-    <div className="grid min-w-[1150px] grid-cols-[minmax(360px,1.7fr)_112px_96px_84px_116px_92px_96px_150px] items-center gap-4 border-b border-zinc-800 bg-zinc-900/80 px-5 py-3 text-[11px] font-bold uppercase tracking-[0.08em] text-zinc-500">
+    <div className="grid min-w-[920px] grid-cols-[minmax(360px,1.8fr)_96px_116px_92px_96px_150px] items-center gap-4 border-b border-zinc-800 bg-zinc-900/80 px-5 py-3 text-[11px] font-bold uppercase tracking-[0.08em] text-zinc-500">
       <div className="flex items-center gap-3"><Sparkles className="h-4 w-4 text-[#ccff00]" /> Market</div>
-      <div>Last 7 Days</div>
       <div>Yes Price</div>
-      <div>24h</div>
-      <div>Volume 24h</div>
+      <div>Liquidity ⇅</div>
       <div>Closes By</div>
       <div>Spread</div>
       <div className="text-right">Trade</div>
     </div>
-    <div className="min-w-[1150px] divide-y divide-zinc-800">
+    <div className="min-w-[920px] divide-y divide-zinc-800">
       {loading && markets.length === 0 && [0, 1, 2, 3, 4, 5].map((item) => (
-        <div key={item} className="grid grid-cols-[minmax(360px,1.7fr)_112px_96px_84px_116px_92px_96px_150px] items-center gap-4 px-5 py-3.5">
-          {[0, 1, 2, 3, 4, 5, 6, 7].map((cell) => (
+        <div key={item} className="grid grid-cols-[minmax(360px,1.8fr)_96px_116px_92px_96px_150px] items-center gap-4 px-5 py-3.5">
+          {[0, 1, 2, 3, 4, 5].map((cell) => (
             <div key={cell} className="h-8 rounded bg-zinc-900 animate-pulse" />
           ))}
         </div>
@@ -3146,11 +3406,8 @@ const LotusMarketList = ({
       {markets.map((market) => {
         const statusBadge = marketQuoteStatusBadge(market.quoteStatus);
         return (
-        <div key={market.id} className="group grid grid-cols-[minmax(360px,1.7fr)_112px_96px_84px_116px_92px_96px_150px] items-center gap-4 px-5 py-3.5 transition-colors hover:bg-[#ccff00]/[0.035]">
+        <div key={market.id} className="group grid grid-cols-[minmax(360px,1.8fr)_96px_116px_92px_96px_150px] items-center gap-4 px-5 py-3.5 transition-colors hover:bg-[#ccff00]/[0.035]">
           <div className="flex min-w-0 items-center gap-3">
-            <button type="button" className="flex h-7 w-5 shrink-0 items-center justify-center rounded-md text-zinc-500 transition hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70" aria-label={`Expand ${market.title}`}>
-              <ChevronDown className="h-3.5 w-3.5" />
-            </button>
             <button
               type="button"
               onClick={() => onToggleWatch(market.id)}
@@ -3189,7 +3446,6 @@ const LotusMarketList = ({
               </span>
             </button>
           </div>
-          <Sparkline points={[]} positive={false} />
           <div className="font-mono">
             <div className="flex items-center gap-1.5 text-sm font-bold text-zinc-100">
               {market.priceVenue && <VenueChip id={normalizeVenueId(market.priceVenue)} size="xs" />}
@@ -3197,13 +3453,7 @@ const LotusMarketList = ({
             </div>
             <div className="mt-1 text-[10px] font-semibold text-zinc-500">{market.changeLabel}</div>
           </div>
-          <div className={`font-mono text-xs font-bold ${changeClass(market.change24hDirection)}`}>{market.change24hLabel}</div>
-          <div>
-            <div className="font-mono text-sm font-semibold text-zinc-100">{market.volume}</div>
-            <div className="mt-1 font-mono text-[10px] text-zinc-500">
-              <span className="text-emerald-500">{market.volumeLabel}</span>
-            </div>
-          </div>
+          <div className="font-mono text-sm font-semibold text-zinc-100">{market.liquidity ?? '-'}</div>
           <div className="font-mono text-xs font-bold text-zinc-400">{market.closesBy}</div>
           <div className="font-mono text-sm font-semibold text-zinc-100">
             <span className="rounded-full border border-zinc-800 bg-zinc-900 px-2.5 py-1">{market.spread}</span>
@@ -3443,7 +3693,7 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
   const sellCount = typeof txnSell === 'number' ? txnSell : 0;
   const totalCount = buyCount + sellCount;
   const activeBadgeIds = new Set((badges as string[]).map(dashboardVenueIconId));
-  const visibleOutcomes = outcomesExpanded ? outcomes : outcomes?.slice(0, 5);
+  const visibleOutcomes = outcomesExpanded ? outcomes : outcomes?.slice(0, 2);
   const hiddenOutcomeCount = Math.max(0, (outcomes?.length ?? 0) - (visibleOutcomes?.length ?? 0));
   const fallbackText = !diagnosticsEnabled && normalizedQuoteStatus === 'unavailable'
     ? '-'
@@ -3458,9 +3708,117 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
   const shouldShowVolumeMetric = volume != null && String(volume).trim().length > 0 && String(volume).trim().toLowerCase() !== 'backend catalog';
   const terminalPayload = { id, marketId, eventId, canonicalEventId, title, category, icon, volume, volume24h, liquidity, openInterest, resolvesAt, resolutionDateLabel, venueCount, routeType, venues, venueMarkets, marketType, outcomes, imageUrl, iconUrl, priceLabel, priceVenue, changeLabel };
   const outcomeRailOverflowClass = outcomesExpanded ? 'overflow-x-hidden overflow-y-auto custom-scrollbar' : 'overflow-hidden';
+  const outcomeCount = outcomes?.length ?? 0;
+  const multiCardMinHeightClass = outcomesExpanded ? 'min-h-[452px]' : 'h-[336px]';
+  const outcomeRailHeightClass = outcomesExpanded ? 'h-[176px]' : outcomeCount > 2 ? 'h-[82px]' : 'h-[54px]';
+  const singleOutcome = (outcomes?.length ?? 0) === 1 ? outcomes[0] : null;
+  const singleOutcomeProbability = singleOutcome?.prob
+    ? (/^\d+(\.\d+)?$/.test(String(singleOutcome.prob)) ? `${singleOutcome.prob}%` : String(singleOutcome.prob))
+    : displayPrice && displayPrice !== 'Quote' && displayPrice !== '-'
+      ? String(displayPrice).replace('Â¢', '%')
+      : 'Quote';
+  const singleOutcomePayload = singleOutcome
+    ? {
+        ...terminalPayload,
+        id: singleOutcome.marketId ?? terminalPayload.id,
+        marketId: singleOutcome.marketId ?? terminalPayload.marketId,
+        eventId: singleOutcome.eventId ?? terminalPayload.eventId,
+        canonicalEventId: singleOutcome.canonicalEventId ?? terminalPayload.canonicalEventId,
+        title,
+        venues: singleOutcome.venues ?? terminalPayload.venues,
+        venueMarkets: singleOutcome.venueMarkets ?? terminalPayload.venueMarkets,
+        marketType: singleOutcome.marketType ?? terminalPayload.marketType,
+        imageUrl: singleOutcome.imageUrl ?? terminalPayload.imageUrl,
+        iconUrl: singleOutcome.iconUrl ?? terminalPayload.iconUrl,
+        priceLabel: singleOutcome.prob ?? terminalPayload.priceLabel,
+        priceVenue: singleOutcome.priceVenue ?? terminalPayload.priceVenue,
+        outcomes,
+        initialOutcomeId: singleOutcome.id,
+      }
+    : null;
+
+  if (singleOutcome && singleOutcomePayload) {
+    return (
+      <div className="flex h-[336px] flex-col rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm transition-all hover:border-zinc-300 hover:shadow-md dark:border-zinc-800 dark:bg-[#121214] dark:hover:border-zinc-700 group">
+        <div className="grid grid-cols-[minmax(0,1fr)_76px] items-start gap-4">
+          <button
+            type="button"
+            onClick={() => onOpenTerminal?.(terminalPayload)}
+            className="flex min-w-0 gap-3 rounded-xl text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-[#121214]"
+            aria-label={`Open ${title} in terminal`}
+          >
+            <MarketMediaThumb title={title} icon={icon} imageUrl={imageUrl} iconUrl={iconUrl} className="h-11 w-11 text-xl shadow-sm" />
+            <span className="min-w-0 flex-1 pt-0.5">
+              <span className="block pr-2 text-base font-black leading-tight text-zinc-900 line-clamp-2 transition-colors group-hover:text-[#5c7300] dark:text-zinc-100 dark:group-hover:text-[#ccff00]">{title}</span>
+              <span className="mt-1 flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
+                <span className="truncate">{category}</span>
+                <span>-</span>
+                <span className="shrink-0">{venueCount} venues scanned</span>
+              </span>
+            </span>
+          </button>
+          <div className="flex flex-col items-end gap-2">
+            <button
+              type="button"
+              onClick={() => onToggleWatch?.(id)}
+              className={`inline-flex h-7 w-7 items-center justify-center rounded-md border transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${isWatched ? 'border-[#ccff00]/40 bg-[#ccff00]/10 text-[#ccff00]' : 'border-zinc-800 bg-zinc-900/50 text-zinc-500 hover:text-[#ccff00]'}`}
+              aria-label={`${isWatched ? 'Remove' : 'Add'} ${title} ${isWatched ? 'from' : 'to'} watchlist`}
+            >
+              <Bookmark className={`h-3.5 w-3.5 ${isWatched ? 'fill-current' : ''}`} />
+            </button>
+            <div className="relative flex h-16 w-16 flex-col items-center justify-center rounded-full border-[5px] border-emerald-500/25 border-r-emerald-400 border-t-emerald-400 bg-zinc-950/70 text-center shadow-[inset_0_0_18px_rgba(16,185,129,0.08)]">
+              <span className="text-sm font-black leading-none text-zinc-100">{singleOutcomeProbability}</span>
+              <span className="mt-1 text-[9px] font-semibold leading-none text-zinc-400">chance</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-5 grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => onOpenTerminal?.({ ...singleOutcomePayload, initialOutcomeSide: 'yes' })}
+            className="h-12 rounded-lg border border-emerald-500/10 bg-emerald-500/15 text-sm font-black text-emerald-300 transition hover:bg-emerald-500/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
+          >
+            Yes
+          </button>
+          <button
+            type="button"
+            onClick={() => onOpenTerminal?.({ ...singleOutcomePayload, initialOutcomeSide: 'no' })}
+            className="h-12 rounded-lg border border-red-500/10 bg-red-500/15 text-sm font-black text-red-300 transition hover:bg-red-500/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
+          >
+            No
+          </button>
+        </div>
+
+        {routeType ? (
+          <div className="mt-4 flex min-h-9 items-center justify-between gap-3 overflow-hidden rounded-lg border border-[#ccff00]/20 bg-[#ccff00]/5 px-3 py-2 text-[10px] font-medium">
+            <div className="flex min-w-0 items-center gap-3 overflow-hidden">
+              <span className="shrink-0 text-zinc-700 dark:text-zinc-300"><span className="text-zinc-500 dark:text-zinc-400">Route:</span> {routeType}</span>
+              {spread && <span className="truncate text-zinc-700 dark:text-zinc-300"><span className="text-zinc-500 dark:text-zinc-400">Spread:</span> {spread}</span>}
+            </div>
+            {showRouteVenueLogo ? (
+              <span
+                className="flex h-5 w-5 shrink-0 items-center justify-center rounded border border-zinc-700/70 bg-zinc-900/80 p-0.5 shadow-sm"
+                title={routeVenueLogoLabel}
+                aria-label={`Best venue ${routeVenueLogoLabel}`}
+              >
+                <VenueLogo id={dashboardVenueIconId(routeVenueLogoLabel)} label={routeVenueLogoLabel} className="h-full w-full rounded-[inherit] object-cover" />
+              </span>
+            ) : (
+              <span className="whitespace-nowrap text-zinc-700 dark:text-zinc-300">{diagnosticsEnabled ? fallbackText : 'Live'}</span>
+            )}
+          </div>
+        ) : null}
+
+        <div className="mt-auto flex items-end justify-between gap-3 pt-5 text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
+          <span>{shouldShowVolumeMetric ? <><span className="font-mono text-zinc-700 dark:text-zinc-300">{volume}</span> {volumeLabel}</> : emptyTxnCopy}</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="flex h-full min-h-[452px] flex-col rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm transition-all hover:border-zinc-300 hover:shadow-md dark:border-zinc-800 dark:bg-[#121214] dark:hover:border-zinc-700 group">
+    <div className={`flex ${multiCardMinHeightClass} flex-col rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm transition-all hover:border-zinc-300 hover:shadow-md dark:border-zinc-800 dark:bg-[#121214] dark:hover:border-zinc-700 group`}>
       
       {/* Header */}
       <div className="grid h-[112px] shrink-0 grid-cols-[minmax(0,1fr)_76px] items-start gap-3 overflow-hidden">
@@ -3561,7 +3919,7 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
       <div className="my-3 h-px w-full shrink-0 bg-zinc-100 dark:bg-zinc-800/60"></div>
 
       {/* Outcomes */}
-      <div className={`flex h-[176px] shrink-0 flex-col gap-1.5 pr-1 ${outcomeRailOverflowClass}`}>
+      <div className={`flex ${outcomeRailHeightClass} shrink-0 flex-col gap-1.5 pr-1 ${outcomeRailOverflowClass}`}>
         {outcomes && outcomes.length > 0 && (
           <>
           {visibleOutcomes.map((outcome: any, idx: number) => {
@@ -3596,7 +3954,7 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
             );
           })}
 
-          {(outcomes?.length ?? 0) > 5 && (
+          {(outcomes?.length ?? 0) > 2 && (
             <button
               type="button"
               onClick={() => setOutcomesExpanded((current) => !current)}
@@ -3617,7 +3975,7 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
             <span>{volumeLabel} <span className="font-mono text-zinc-700 dark:text-zinc-300">{volume}</span></span>
           ) : null}
         </div>
-        <div className="flex items-center justify-between text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
+        <div className="hidden items-center justify-between text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
           {totalCount > 0 ? (
             <>
               <span className="text-emerald-600 dark:text-emerald-500/90">

@@ -107,6 +107,7 @@ const portfolioToastPositionClass = (position: ToastPosition) => {
 type PortfolioPerformancePoint = {
   label: string;
   date: string;
+  timestampMs: number;
   costBasis: number;
   unrealizedPnl: number;
   totalValue: number;
@@ -137,6 +138,73 @@ const parseMoney = (value: string | number | null | undefined): number | null =>
   if (value === null || value === undefined) return null;
   const parsed = typeof value === 'number' ? value : Number(String(value).replace(/[$,\s]/g, ''));
   return Number.isFinite(parsed) ? parsed : null;
+};
+
+const performanceRangeMs: Record<PerformanceRange, number | null> = {
+  '1D': 24 * 60 * 60 * 1000,
+  '7D': 7 * 24 * 60 * 60 * 1000,
+  '30D': 30 * 24 * 60 * 60 * 1000,
+  '90D': 90 * 24 * 60 * 60 * 1000,
+  ALL: null,
+};
+
+const performanceTickCount: Record<PerformanceRange, number> = {
+  '1D': 7,
+  '7D': 8,
+  '30D': 6,
+  '90D': 7,
+  ALL: 7,
+};
+
+const formatPerformanceTime = (timestamp: number | string, range: PerformanceRange, detailed = false) => {
+  const date = new Date(timestamp);
+  if (!Number.isFinite(date.getTime())) return '';
+  if (range === '1D') {
+    return date.toLocaleTimeString(undefined, {
+      hour: 'numeric',
+      minute: detailed ? '2-digit' : undefined,
+    });
+  }
+  if (range === '7D') {
+    return date.toLocaleDateString(undefined, detailed
+      ? { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric' }
+      : { weekday: 'short' });
+  }
+  if (range === '30D') {
+    return date.toLocaleDateString(undefined, detailed
+      ? { month: 'short', day: 'numeric', year: 'numeric' }
+      : { month: 'short', day: 'numeric' });
+  }
+  if (range === '90D') {
+    return date.toLocaleDateString(undefined, detailed
+      ? { month: 'short', day: 'numeric', year: 'numeric' }
+      : { month: 'short', day: 'numeric' });
+  }
+  return date.toLocaleDateString(undefined, detailed
+    ? { month: 'short', day: 'numeric', year: 'numeric' }
+    : { month: 'short', year: '2-digit' });
+};
+
+const timelineStartForRange = (range: PerformanceRange, endMs: number, history: ExecutionStatus[] = []) => {
+  const rangeMs = performanceRangeMs[range];
+  if (rangeMs !== null) return endMs - rangeMs;
+  const filledTimes = history
+    .filter((execution) => executionDisplayStatus(execution) === 'FILLED')
+    .map((execution) => Date.parse(execution.updatedAt ?? execution.submittedAt ?? ''))
+    .filter(Number.isFinite)
+    .sort((left, right) => left - right);
+  return filledTimes[0] ?? endMs - 365 * 24 * 60 * 60 * 1000;
+};
+
+const timelineTicks = (range: PerformanceRange, points: PortfolioPerformancePoint[]) => {
+  if (points.length === 0) return [];
+  const start = points[0]?.timestampMs;
+  const end = points[points.length - 1]?.timestampMs;
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start === end) return [];
+  const count = performanceTickCount[range];
+  return Array.from({ length: count }, (_, index) =>
+    Math.round(start + ((end - start) * index) / (count - 1))
+  );
 };
 
 const isOpenExecutionPosition = (position: { verifiedSize?: string | number | null }) =>
@@ -637,12 +705,14 @@ const isTurnkeyMissingSessionError = (error: unknown) =>
 const turnkeySessionRequiredMessage =
   'Your Lotus session is active, but the Turnkey wallet session needs to be refreshed before signing. Reconnect with Turnkey, then activate again.';
 
-const pointFromSnapshot = (point: PortfolioTimeSeriesResponse['points'][number]): PortfolioPerformancePoint => {
+const pointFromSnapshot = (point: PortfolioTimeSeriesResponse['points'][number], range: PerformanceRange): PortfolioPerformancePoint => {
+  const timestampMs = Date.parse(point.timestamp);
   const totalValue = parseMoney(point.totalMarkValue) ?? parseMoney(point.totalCostBasis) ?? 0;
   const unrealizedPnl = parseMoney(point.totalUnrealizedPnl) ?? 0;
   return {
-    label: new Date(point.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+    label: formatPerformanceTime(point.timestamp, range),
     date: point.timestamp,
+    timestampMs: Number.isFinite(timestampMs) ? timestampMs : Date.now(),
     costBasis: parseMoney(point.totalCostBasis) ?? 0,
     unrealizedPnl,
     totalValue,
@@ -652,20 +722,16 @@ const pointFromSnapshot = (point: PortfolioTimeSeriesResponse['points'][number])
   };
 };
 
-const rangeStartLabel: Record<PerformanceRange, string> = {
-  '1D': '24h ago',
-  '7D': '7d ago',
-  '30D': '30d ago',
-  '90D': '90d ago',
-  ALL: 'Start',
-};
-
 const baselinePerformanceSeries = (
   range: PerformanceRange,
   summary: PortfolioSummary | null,
   currentTotalValue: number,
+  history: ExecutionStatus[] = [],
 ): PortfolioPerformancePoint[] => {
   const generatedAt = summary?.generatedAt ?? new Date().toISOString();
+  const endMs = Date.parse(generatedAt);
+  const safeEndMs = Number.isFinite(endMs) ? endMs : Date.now();
+  const startMs = timelineStartForRange(range, safeEndMs, history);
   const costBasis = parseMoney(summary?.totalCostBasis) ?? 0;
   const unrealizedPnl = parseMoney(summary?.totalUnrealizedPnl) ?? 0;
   const totalValue = parseMoney(summary?.totalMarkValue) ?? currentTotalValue;
@@ -681,13 +747,15 @@ const baselinePerformanceSeries = (
   return [
     {
       ...basePoint,
-      label: rangeStartLabel[range],
-      date: generatedAt,
+      label: formatPerformanceTime(startMs, range),
+      date: new Date(startMs).toISOString(),
+      timestampMs: startMs,
     },
     {
       ...basePoint,
-      label: 'Now',
-      date: generatedAt,
+      label: formatPerformanceTime(safeEndMs, range),
+      date: new Date(safeEndMs).toISOString(),
+      timestampMs: safeEndMs,
     },
   ];
 };
@@ -698,15 +766,8 @@ const tradeDrivenPerformanceSeries = (
   summary: PortfolioSummary | null,
   currentTotalValue: number,
 ): PortfolioPerformancePoint[] => {
-  const rangeMs: Record<PerformanceRange, number | null> = {
-    '1D': 24 * 60 * 60 * 1000,
-    '7D': 7 * 24 * 60 * 60 * 1000,
-    '30D': 30 * 24 * 60 * 60 * 1000,
-    '90D': 90 * 24 * 60 * 60 * 1000,
-    ALL: null,
-  };
   const now = Date.now();
-  const cutoff = rangeMs[range] === null ? null : now - rangeMs[range]!;
+  const cutoff = performanceRangeMs[range] === null ? null : now - performanceRangeMs[range]!;
   const fills = history
     .filter((execution) => executionDisplayStatus(execution) === 'FILLED')
     .filter((execution) => {
@@ -717,13 +778,26 @@ const tradeDrivenPerformanceSeries = (
       Date.parse(left.updatedAt ?? left.submittedAt ?? '') - Date.parse(right.updatedAt ?? right.submittedAt ?? '')
     );
   if (fills.length === 0) {
-    return baselinePerformanceSeries(range, summary, currentTotalValue);
+    return baselinePerformanceSeries(range, summary, currentTotalValue, history);
   }
 
   let costBasis = 0;
   let realizedPnl = 0;
   let exposure = 0;
   const points: PortfolioPerformancePoint[] = [];
+  const startMs = timelineStartForRange(range, now, fills);
+  const startIso = new Date(startMs).toISOString();
+  points.push({
+    label: formatPerformanceTime(startMs, range),
+    date: startIso,
+    timestampMs: startMs,
+    costBasis,
+    unrealizedPnl: realizedPnl,
+    totalValue: exposure + realizedPnl,
+    positionCount: summary?.positionCount ?? 0,
+    markedPositionCount: summary?.markedPositionCount ?? 0,
+    source: 'history',
+  });
   for (const execution of fills) {
     const side = executionSide(execution);
     const value = executionFilledValue(execution);
@@ -737,9 +811,11 @@ const tradeDrivenPerformanceSeries = (
       costBasis = Math.max(0, costBasis - value);
     }
     const timestamp = execution.updatedAt ?? execution.submittedAt ?? new Date().toISOString();
+    const timestampMs = Date.parse(timestamp);
     points.push({
-      label: new Date(timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+      label: formatPerformanceTime(timestamp, range),
       date: timestamp,
+      timestampMs: Number.isFinite(timestampMs) ? timestampMs : Date.now(),
       costBasis,
       unrealizedPnl: realizedPnl,
       totalValue: exposure + realizedPnl,
@@ -750,9 +826,11 @@ const tradeDrivenPerformanceSeries = (
   }
 
   const latestTimestamp = summary?.generatedAt ?? new Date().toISOString();
+  const latestTimestampMs = Date.parse(latestTimestamp);
   points.push({
-    label: 'Now',
+    label: formatPerformanceTime(latestTimestamp, range),
     date: latestTimestamp,
+    timestampMs: Number.isFinite(latestTimestampMs) ? latestTimestampMs : Date.now(),
     costBasis: parseMoney(summary?.totalCostBasis) ?? costBasis,
     unrealizedPnl: parseMoney(summary?.totalUnrealizedPnl) ?? realizedPnl,
     totalValue: currentTotalValue,
@@ -822,7 +900,7 @@ type PortfolioDataState = {
   marketCatalog: MarketCatalogMarket[];
 };
 
-function PerformanceTooltip({ active, payload, label }: { active?: boolean; payload?: any[]; label?: string }) {
+function PerformanceTooltip({ active, payload, range }: { active?: boolean; payload?: any[]; range: PerformanceRange }) {
   if (!active || !payload?.length) return null;
 
   const point = payload[0]?.payload as PortfolioPerformancePoint | undefined;
@@ -830,7 +908,7 @@ function PerformanceTooltip({ active, payload, label }: { active?: boolean; payl
 
   return (
     <div className="w-[178px] rounded-lg border border-zinc-700/80 bg-[#18181b] p-3 shadow-2xl">
-      <div className="mb-2 text-xs font-semibold text-zinc-200">{label}</div>
+      <div className="mb-2 text-xs font-semibold text-zinc-200">{formatPerformanceTime(point.timestampMs, range, true)}</div>
       <div className="space-y-1.5 rounded-md bg-black/40 px-2 py-1.5 text-[11px]">
         <div className="flex items-center justify-between gap-3">
           <span className="text-zinc-500">Portfolio value</span>
@@ -1126,10 +1204,11 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
     : null;
   const performanceSeries = useMemo(() => {
     if (data.timeseries?.historyAvailable && data.timeseries.points.length > 1) {
-      return data.timeseries.points.map(pointFromSnapshot);
+      return data.timeseries.points.map((point) => pointFromSnapshot(point, performanceRange));
     }
     return tradeDrivenPerformanceSeries(performanceRange, data.history, data.summary, totalValue);
   }, [data.history, data.summary, data.timeseries, performanceRange, totalValue]);
+  const performanceTicks = useMemo(() => timelineTicks(performanceRange, performanceSeries), [performanceRange, performanceSeries]);
   const latestPerformance = performanceSeries[performanceSeries.length - 1] ?? null;
   const hasPersistedPerformanceHistory = Boolean(data.timeseries?.historyAvailable && data.timeseries.points.length > 1);
   const hasTradePerformanceHistory = hasPersistedPerformanceHistory || hasFilledExecutionHistory(data.history);
@@ -1818,7 +1897,11 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
                 </defs>
                 <CartesianGrid vertical={false} stroke="#27272a" strokeDasharray="4 4" opacity={0.6} />
                 <XAxis
-                  dataKey="label"
+                  dataKey="timestampMs"
+                  type="number"
+                  domain={['dataMin', 'dataMax']}
+                  ticks={performanceTicks}
+                  tickFormatter={(value) => formatPerformanceTime(Number(value), performanceRange)}
                   axisLine={false}
                   tickLine={false}
                   tick={{ fill: '#71717a', fontSize: 11, fontWeight: 600 }}
@@ -1836,7 +1919,7 @@ export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ 
                 <ReferenceLine y={0} stroke="#3f3f46" strokeDasharray="4 4" />
                 <Tooltip
                   cursor={{ stroke: '#71717a', strokeDasharray: '4 4' }}
-                  content={<PerformanceTooltip />}
+                  content={<PerformanceTooltip range={performanceRange} />}
                 />
                 <Area
                   type="monotone"

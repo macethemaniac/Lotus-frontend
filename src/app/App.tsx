@@ -750,20 +750,28 @@ export function App() {
       onAuthenticationSuccess={handleTurnkeyAuthenticationSuccess}
       onError={(error) => setAuthError(formatTurnkeyError(error))}
     >
-      {!session ? (
-        <TurnkeyAuthScreen
-          loading={authLoading}
-          error={authError}
-          onError={setAuthError}
-        />
-      ) : (
-        <div className="relative h-[100dvh] min-h-[100dvh] overflow-hidden bg-black">
-          <WalletProvisioner session={session} />
-          <AccountDropdown session={session} onLogout={handleLogout} onNavigate={navigateToPage} />
+      <div className="relative h-[100dvh] min-h-[100dvh] overflow-hidden bg-black">
+        {session ? (
+          <>
+            <WalletProvisioner session={session} />
+            <AccountDropdown session={session} onLogout={handleLogout} onNavigate={navigateToPage} />
+          </>
+        ) : null}
+        <div className={session ? "h-full" : "h-full pointer-events-none select-none blur-[2px] brightness-[0.48]"}>
           <DashboardV2Mockup activePage={activePage} onNavigate={navigateToPage} session={session} />
           <DenseStripFooter fixed />
         </div>
-      )}
+        {!session ? (
+          <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/45 px-4 backdrop-blur-sm">
+            <TurnkeyAuthScreen
+              loading={authLoading}
+              error={authError}
+              onError={setAuthError}
+              embedded
+            />
+          </div>
+        ) : null}
+      </div>
     </LotusTurnkeyProvider>
   );
 }
