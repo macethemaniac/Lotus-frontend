@@ -393,11 +393,12 @@ export function getLiveReadiness(token: string, executionId: string) {
   );
 }
 
-export function previewExecutionOrder(token: string, request: ExecutionOrderPreviewRequest) {
-  return staleWhileRevalidate(`execution:order-preview:${token}:${JSON.stringify(request)}`, () =>
+export function previewExecutionOrder(token: string | null | undefined, request: ExecutionOrderPreviewRequest) {
+  const cacheUserKey = token ? token : "public";
+  return staleWhileRevalidate(`execution:order-preview:${cacheUserKey}:${JSON.stringify(request)}`, () =>
     apiRequest<ExecutionOrderResponse>("/execution/orders/preview", {
       method: "POST",
-      token,
+      token: token ?? undefined,
       body: request,
     }),
     { ttlMs: 1_500, maxStaleMs: 5_000 }

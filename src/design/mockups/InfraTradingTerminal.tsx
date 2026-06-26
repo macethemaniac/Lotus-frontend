@@ -5151,8 +5151,8 @@ export const InfraTradingTerminal = ({
   ): Promise<ExecutionOrderResponse | null> => {
     if (!executionOrchestratorEnabled) return null;
     const trimmedAmount = ticketAmount.trim();
-    if (!token || !selectedTicketMarketId || !selectedTicketQuoteOutcomeId || !trimmedAmount) {
-      if (!options.quiet) setTicketError(!token ? 'Log in to place a market order.' : 'Select a market outcome and enter an amount.');
+    if (!selectedTicketMarketId || !selectedTicketQuoteOutcomeId || !trimmedAmount) {
+      if (!options.quiet) setTicketError('Select a market outcome and enter an amount.');
       return null;
     }
     const amountValue = parsePositiveNumber(trimmedAmount);
@@ -5429,7 +5429,7 @@ export const InfraTradingTerminal = ({
 
   React.useEffect(() => {
     if (!executionOrchestratorEnabled) return;
-    if (!token || !selectedTicketMarketId || !selectedTicketQuoteOutcomeId || !parsePositiveNumber(ticketAmount.trim())) return;
+    if (!selectedTicketMarketId || !selectedTicketQuoteOutcomeId || !parsePositiveNumber(ticketAmount.trim())) return;
     const timeoutId = window.setTimeout(() => {
       void previewOrchestratorOrder({ quiet: true });
     }, 450);
@@ -5440,7 +5440,6 @@ export const InfraTradingTerminal = ({
     selectedTicketMarketId,
     selectedTicketQuoteOutcomeId,
     ticketAmount,
-    token,
   ]);
 
   React.useEffect(() => {
