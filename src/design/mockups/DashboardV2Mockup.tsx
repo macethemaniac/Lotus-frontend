@@ -1388,10 +1388,12 @@ export const DashboardV2Mockup = ({
   activePage = 'home',
   onNavigate,
   session,
+  onRequireLogin,
 }: {
   activePage?: LotusAppPage;
   onNavigate?: (page: LotusAppPage) => void;
   session?: AuthSession | null;
+  onRequireLogin?: () => void;
 }) => {
   const [isDarkMode] = useState(true);
   const [fundingModal, setFundingModal] = useState<'deposit' | null>(null);
@@ -2723,6 +2725,7 @@ export const DashboardV2Mockup = ({
                 selectedMarket={selectedTerminalMarket}
                 relatedMarkets={terminalMarketSelections}
                 session={session}
+                onRequireLogin={onRequireLogin}
               />
             </div>
           ) : activePage === 'portfolio' ? (

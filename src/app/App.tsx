@@ -667,10 +667,28 @@ function AccountMenuButton({
   );
 }
 
+function LoginHeaderButton({ onClick }: { onClick: () => void }) {
+  return (
+    <div className="fixed right-3 top-3 z-50 sm:right-5">
+      <button
+        type="button"
+        onClick={onClick}
+        className="group flex h-10 items-center gap-2 rounded-full border border-[#ccff00]/25 bg-[#070708]/95 px-4 text-xs font-black text-[#ccff00] shadow-2xl shadow-black/40 backdrop-blur transition hover:border-[#ccff00]/50 hover:bg-[#ccff00]/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
+      >
+        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#ccff00] text-[10px] font-black text-black shadow-[0_0_24px_rgba(204,255,0,0.2)]">
+          L
+        </span>
+        Login
+      </button>
+    </div>
+  );
+}
+
 export function App() {
   const [session, setSession] = useState<AuthSession | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
   const [activePage, setActivePage] = useState<LotusAppPage>(() => lotusPageFromPath(window.location.pathname));
 
   useEffect(() => {
@@ -708,6 +726,7 @@ export function App() {
   const handleLogout = () => {
     clearStoredSession();
     setSession(null);
+    setAuthModalOpen(false);
   };
 
   const handleTurnkeyAuthenticationSuccess = (params: {
@@ -738,6 +757,7 @@ export function App() {
           turnkeyOrganizationId: params.session?.organizationId,
           source: "lotus_jwt",
         });
+        setAuthModalOpen(false);
       })
       .catch((error) => {
         setAuthError(formatLotusSessionExchangeError(error));
@@ -756,19 +776,39 @@ export function App() {
             <WalletProvisioner session={session} />
             <AccountDropdown session={session} onLogout={handleLogout} onNavigate={navigateToPage} />
           </>
-        ) : null}
-        <div className={session ? "h-full" : "h-full pointer-events-none select-none blur-[2px] brightness-[0.48]"}>
-          <DashboardV2Mockup activePage={activePage} onNavigate={navigateToPage} session={session} />
+        ) : (
+          <LoginHeaderButton onClick={() => setAuthModalOpen(true)} />
+        )}
+        <div className="h-full">
+          <DashboardV2Mockup
+            activePage={activePage}
+            onNavigate={navigateToPage}
+            session={session}
+            onRequireLogin={() => setAuthModalOpen(true)}
+          />
           <DenseStripFooter fixed />
         </div>
-        {!session ? (
-          <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/45 px-4 backdrop-blur-sm">
-            <TurnkeyAuthScreen
-              loading={authLoading}
-              error={authError}
-              onError={setAuthError}
-              embedded
-            />
+        {!session && authModalOpen ? (
+          <div
+            className="fixed inset-0 z-[80] flex items-center justify-center bg-black/55 px-4 backdrop-blur-sm"
+            onMouseDown={() => setAuthModalOpen(false)}
+          >
+            <div className="relative" onMouseDown={(event) => event.stopPropagation()}>
+              <button
+                type="button"
+                aria-label="Close login"
+                onClick={() => setAuthModalOpen(false)}
+                className="absolute right-3 top-3 z-10 flex h-8 w-8 items-center justify-center rounded-full border border-zinc-800 bg-black/50 text-zinc-400 transition hover:border-zinc-700 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
+              >
+                <X className="h-4 w-4" aria-hidden />
+              </button>
+              <TurnkeyAuthScreen
+                loading={authLoading}
+                error={authError}
+                onError={setAuthError}
+                embedded
+              />
+            </div>
           </div>
         ) : null}
       </div>

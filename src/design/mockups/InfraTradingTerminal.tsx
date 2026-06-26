@@ -2902,12 +2902,14 @@ export const InfraTradingTerminal = ({
   selectedMarket,
   relatedMarkets = [],
   session,
+  onRequireLogin,
 }: {
   embedded?: boolean;
   darkMode?: boolean;
   selectedMarket?: TerminalMarketSelection | null;
   relatedMarkets?: TerminalMarketSelection[];
   session?: AuthSession | null;
+  onRequireLogin?: () => void;
 } = {}) => {
   const {
     wallets: turnkeyWallets,
@@ -5611,8 +5613,11 @@ export const InfraTradingTerminal = ({
   const ticketReadinessQuoteExpired = Boolean(ticketReadinessExpiryMs && Number.isFinite(ticketReadinessExpiryMs) && Date.now() >= ticketReadinessExpiryMs);
   const ticketSellUnavailable = side === 'sell' && Boolean(token) && ticketSellableShares <= 0;
   const ticketNeedsFundingAction = ticketActivationRequired || ticketDepositRequired || ticketLimitlessSetupRequired || ticketPredictFunAuthRequired || ticketOpinionSetupRequired || ticketRouteApprovalRequired || ticketPolymarketClobSyncRequired || ticketPolymarketClobPropagationPending || ticketLimitlessBalanceBlocked;
+  const ticketLoginRequired = !token;
   const ticketActionDisabled = executionOrchestratorEnabled
-    ? !token || !terminalMarketId || !selectedTicketOutcomeId || ticketLoading || ticketActivationPolling ||
+    ? ticketLoginRequired
+      ? false
+      : !terminalMarketId || !selectedTicketOutcomeId || ticketLoading || ticketActivationPolling ||
       ticketOrchestratorPlacing ||
       ticketOrchestratorSigning ||
       ticketSellUnavailable ||
@@ -5623,14 +5628,18 @@ export const InfraTradingTerminal = ({
       ticketOrchestratorState === 'SUBMITTING' ||
       ticketOrchestratorState === 'SUBMITTED' ||
       ticketOrchestratorState === 'FILLED'
-    : !token || !terminalMarketId || !selectedTicketOutcomeId || ticketLoading || ticketActivationPolling ||
+    : ticketLoginRequired
+      ? false
+      : !terminalMarketId || !selectedTicketOutcomeId || ticketLoading || ticketActivationPolling ||
       ticketSellUnavailable ||
       ticketPolymarketClobSyncRequired ||
       (ticketPolymarketClobPropagationPending && ticketReadinessPolling) ||
       Boolean(ticketExecutionId && ticketQuote && !ticketRequiresSignature && !ticketNeedsFundingAction) ||
       Boolean(side === 'buy' && !ticketQuote && fundingLoading);
   const ticketActionLabel = executionOrchestratorEnabled
-    ? ticketActivationPolling
+    ? ticketLoginRequired
+      ? 'Login'
+      : ticketActivationPolling
       ? 'Confirming venue readiness...'
       : ticketOrchestratorSigning
         ? ticketOrchestratorState === 'NEEDS_SIGNATURE'
@@ -5663,6 +5672,8 @@ export const InfraTradingTerminal = ({
       : ticketOrchestratorState === 'EXPIRED' || ticketOrchestratorAutoRenewFailed
         ? 'Refresh route'
       : 'Place order'
+    : ticketLoginRequired
+    ? 'Login'
     : ticketActivationPolling
     ? 'Confirming Polymarket readiness...'
     : ticketLoading
@@ -5716,7 +5727,7 @@ export const InfraTradingTerminal = ({
     : ticketQuote
       ? side === 'buy' ? 'Place market order' : 'Place sell order'
       : 'Preview market order';
-  const ticketActionNeedsConfirmation = !ticketActionDisabled && (
+  const ticketActionNeedsConfirmation = !ticketLoginRequired && !ticketActionDisabled && (
     executionOrchestratorEnabled
       ? ticketOrchestratorState === 'READY_TO_PLACE' && Boolean(ticketOrchestratorOrder?.orderId)
       : Boolean(
@@ -7603,6 +7614,10 @@ export const InfraTradingTerminal = ({
                   <button
                     type="button"
                     onClick={() => {
+                      if (ticketLoginRequired) {
+                        onRequireLogin?.();
+                        return;
+                      }
                       if (ticketActionNeedsConfirmation && !ticketConfirmArmed) {
                         setTicketConfirmArmed(true);
                         return;
