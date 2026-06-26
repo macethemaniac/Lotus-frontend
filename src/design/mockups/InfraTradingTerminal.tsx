@@ -27,6 +27,7 @@ import {
 } from '@/features/funding/api/funding-api';
 import {
   getCanonicalResolutionRisk,
+  getMarketBatchQuotes,
   getMarketChart,
   getMarketLivePrices,
   getMarketOrderbook,
@@ -35,6 +36,7 @@ import {
   type MarketChartResponse,
   type MarketChartTimeframe,
   type MarketCatalogVenueMarket,
+  type MarketBatchQuoteItem,
   type MarketLivePriceItem,
   type MarketOrderbookLevel,
   type MarketOrderbookResponse,
@@ -2934,6 +2936,8 @@ export const InfraTradingTerminal = ({
   const [ticketOrchestratorAutoRenewFailed, setTicketOrchestratorAutoRenewFailed] = useState(false);
   const [ticketOrchestratorPlacing, setTicketOrchestratorPlacing] = useState(false);
   const [ticketOrchestratorSigning, setTicketOrchestratorSigning] = useState(false);
+  const [ticketPublicQuote, setTicketPublicQuote] = useState<MarketBatchQuoteItem | null>(null);
+  const [ticketPublicQuoteLoading, setTicketPublicQuoteLoading] = useState(false);
   const [ticketConfirmArmed, setTicketConfirmArmed] = useState(false);
   const [ticketSettingsOpen, setTicketSettingsOpen] = useState(false);
   const [ticketPriceDetailsOpen, setTicketPriceDetailsOpen] = useState(false);
@@ -2992,6 +2996,7 @@ export const InfraTradingTerminal = ({
   const terminalOutcomesRef = React.useRef<TerminalOutcomeRow[]>([]);
   const autoPolymarketClobSyncKeyRef = React.useRef<string | null>(null);
   const orchestratorPreviewSeqRef = React.useRef(0);
+  const publicQuotePreviewSeqRef = React.useRef(0);
   const orchestratorPollTimeoutRef = React.useRef<number | null>(null);
   const orchestratorPlacePromiseRef = React.useRef<Promise<void> | null>(null);
   const orchestratorSignaturePromiseRef = React.useRef<Promise<ExecutionOrderResponse | null> | null>(null);
@@ -5151,6 +5156,7 @@ export const InfraTradingTerminal = ({
   ): Promise<ExecutionOrderResponse | null> => {
     if (!executionOrchestratorEnabled) return null;
     const trimmedAmount = ticketAmount.trim();
+    if (!token) return null;
     if (!selectedTicketMarketId || !selectedTicketQuoteOutcomeId || !trimmedAmount) {
       if (!options.quiet) setTicketError('Select a market outcome and enter an amount.');
       return null;
@@ -5417,7 +5423,10 @@ export const InfraTradingTerminal = ({
     setTicketOrchestratorOrder(null);
     setTicketOrchestratorAmount(null);
     setTicketOrchestratorAutoRenewFailed(false);
+    setTicketPublicQuote(null);
+    setTicketPublicQuoteLoading(false);
     orchestratorPreviewSeqRef.current += 1;
+    publicQuotePreviewSeqRef.current += 1;
   }, [
     executionOrchestratorEnabled,
     selectedTicketMarketId,
@@ -5429,7 +5438,7 @@ export const InfraTradingTerminal = ({
 
   React.useEffect(() => {
     if (!executionOrchestratorEnabled) return;
-    if (!selectedTicketMarketId || !selectedTicketQuoteOutcomeId || !parsePositiveNumber(ticketAmount.trim())) return;
+    if (!token || !selectedTicketMarketId || !selectedTicketQuoteOutcomeId || !parsePositiveNumber(ticketAmount.trim())) return;
     const timeoutId = window.setTimeout(() => {
       void previewOrchestratorOrder({ quiet: true });
     }, 450);
@@ -5440,6 +5449,55 @@ export const InfraTradingTerminal = ({
     selectedTicketMarketId,
     selectedTicketQuoteOutcomeId,
     ticketAmount,
+    token,
+  ]);
+
+  React.useEffect(() => {
+    if (!executionOrchestratorEnabled || token) return;
+    const trimmedAmount = ticketAmount.trim();
+    if (!selectedTicketMarketId || !selectedTicketQuoteOutcomeId || !parsePositiveNumber(trimmedAmount)) {
+      setTicketPublicQuote(null);
+      setTicketPublicQuoteLoading(false);
+      return;
+    }
+
+    const previewSeq = ++publicQuotePreviewSeqRef.current;
+    setTicketPublicQuoteLoading(true);
+    const timeoutId = window.setTimeout(() => {
+      getMarketBatchQuotes({
+        displayMode: 'user',
+        items: [{
+          marketId: selectedTicketMarketId,
+          outcomeId: selectedTicketQuoteOutcomeId,
+          side,
+          amount: trimmedAmount,
+        }],
+      })
+        .then((response) => {
+          if (previewSeq !== publicQuotePreviewSeqRef.current) return;
+          setTicketPublicQuote(response.quotes[0] ?? null);
+        })
+        .catch(() => {
+          if (previewSeq !== publicQuotePreviewSeqRef.current) return;
+          setTicketPublicQuote(null);
+        })
+        .finally(() => {
+          if (previewSeq === publicQuotePreviewSeqRef.current) {
+            setTicketPublicQuoteLoading(false);
+          }
+        });
+    }, 450);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [
+    executionOrchestratorEnabled,
+    selectedTicketMarketId,
+    selectedTicketQuoteOutcomeId,
+    side,
+    ticketAmount,
+    token,
   ]);
 
   React.useEffect(() => {
@@ -5613,6 +5671,30 @@ export const InfraTradingTerminal = ({
   const ticketSellUnavailable = side === 'sell' && Boolean(token) && ticketSellableShares <= 0;
   const ticketNeedsFundingAction = ticketActivationRequired || ticketDepositRequired || ticketLimitlessSetupRequired || ticketPredictFunAuthRequired || ticketOpinionSetupRequired || ticketRouteApprovalRequired || ticketPolymarketClobSyncRequired || ticketPolymarketClobPropagationPending || ticketLimitlessBalanceBlocked;
   const ticketLoginRequired = !token;
+  const ticketPublicQuoteLegs = useMemo<ExecutionOrderRouteLegSummary[]>(() => {
+    if (!ticketLoginRequired || !ticketPublicQuote) return [];
+    const amountValue = parsePositiveNumber(ticketAmount.trim());
+    if (!amountValue) return [];
+
+    const bestVenueId = normalizeVenueId(ticketPublicQuote.bestVenue ?? '');
+    const viableVenues = ticketPublicQuote.venues
+      .filter((venue) => venue.blockers.length === 0 && Boolean(venue.price ?? venue.ask ?? venue.bid ?? ticketPublicQuote.bestVenuePrice))
+      .sort((left, right) => {
+        const leftIsBest = normalizeVenueId(left.venue) === bestVenueId ? 0 : 1;
+        const rightIsBest = normalizeVenueId(right.venue) === bestVenueId ? 0 : 1;
+        return leftIsBest - rightIsBest;
+      });
+
+    return viableVenues.slice(0, 3).map((venue) => {
+      const price = parsePositiveNumber(String(venue.price ?? (side === 'buy' ? venue.ask : venue.bid) ?? ticketPublicQuote.bestVenuePrice ?? ticketPublicQuote.unifiedAveragePrice ?? ''));
+      const size = side === 'buy' && price ? amountValue / price : amountValue;
+      return {
+        venue: venue.venue,
+        price,
+        size: Number.isFinite(size) && size > 0 ? formatRouteAmount(size) : null,
+      };
+    });
+  }, [side, ticketAmount, ticketLoginRequired, ticketPublicQuote]);
   const ticketActionDisabled = executionOrchestratorEnabled
     ? ticketLoginRequired
       ? false
@@ -5740,6 +5822,18 @@ export const InfraTradingTerminal = ({
   const ticketRouteReady = executionOrchestratorEnabled
     ? Boolean(ticketOrchestratorOrder && ticketRoutePath.length > 0)
     : Boolean(ticketQuote && ticketRoutePath.length > 0);
+  const ticketPreviewLegs = ticketOrchestratorRouteLegs.length > 0
+    ? ticketOrchestratorRouteLegs
+    : ticketPublicQuoteLegs;
+  const ticketPreviewRouteBadge = ticketOrchestratorRouteLegs.length > 0
+    ? ticketOrchestratorRouteBadge
+    : ticketPublicQuoteLegs.length > 1
+      ? `${ticketPublicQuoteLegs.length}_VENUES`
+      : 'SINGLE_VENUE';
+  const ticketShowExecutionPreviewCard = executionOrchestratorEnabled && (
+    Boolean(ticketOrchestratorOrder && ticketOrchestratorRouteLegs.length > 0) ||
+    Boolean(ticketLoginRequired && ticketPublicQuoteLegs.length > 0)
+  );
   const ticketPolymarketClobReadinessKey = ticketQuote?.quoteId
     ?? ticketExecutionId
     ?? `${selectedTicketMarketId}:${selectedTicketQuoteOutcomeId}:${ticketAmount.trim() || 'empty'}`;
@@ -7354,17 +7448,22 @@ export const InfraTradingTerminal = ({
                   </div>
 
                   <div className="flex flex-col gap-2">
-                      {executionOrchestratorEnabled && ticketOrchestratorOrder && ticketOrchestratorRouteLegs.length > 0 && (
+                      {executionOrchestratorEnabled && ticketLoginRequired && ticketPublicQuoteLoading && ticketPublicQuoteLegs.length === 0 && (
+                        <div className="rounded-lg border border-zinc-800 bg-[#0c0c0e] px-3 py-2 text-[11px] font-semibold text-zinc-400">
+                          Loading quote preview...
+                        </div>
+                      )}
+                      {ticketShowExecutionPreviewCard && (
                         <div className="rounded-lg border border-emerald-500/20 bg-[#0c0c0e] p-2.5 shadow-[0_0_15px_rgba(16,185,129,0.05)]">
                           <div className="flex items-center justify-between gap-3 border-b border-zinc-800/60 pb-1.5">
                             <span className="h-px min-w-0 flex-1 bg-zinc-800/70" aria-hidden />
                             <span className="rounded border border-emerald-500/20 bg-emerald-500/10 px-1.5 py-0.5 font-mono text-[8px] font-bold uppercase tracking-widest text-emerald-400">
-                              {ticketOrchestratorRouteBadge}
+                              {ticketPreviewRouteBadge}
                             </span>
                             <span className="h-px min-w-0 flex-1 bg-zinc-800/70" aria-hidden />
                           </div>
                           <div className="mt-2 flex items-center gap-1 overflow-x-auto pb-1 font-mono text-[9px] custom-scrollbar">
-                            {ticketOrchestratorRouteLegs.map((leg, index) => (
+                            {ticketPreviewLegs.map((leg, index) => (
                               <React.Fragment key={`${leg.venue}-${index}`}>
                                 {index > 0 && (
                                   <div className="flex items-center justify-center text-zinc-600">
