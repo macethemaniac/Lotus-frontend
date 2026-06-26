@@ -1833,6 +1833,40 @@ type ExecutionOrderRouteLegSummary = {
   size: string | null;
 };
 
+const mergePublicQuoteItems = (quotes: MarketBatchQuoteItem[]): MarketBatchQuoteItem | null => {
+  const firstQuote = quotes[0];
+  if (!firstQuote) return null;
+
+  const venueById = new Map<string, MarketBatchQuoteItem['venues'][number]>();
+  for (const quote of quotes) {
+    for (const venue of quote.venues) {
+      const key = normalizeVenueId(venue.venue);
+      const current = venueById.get(key);
+      const currentBlocked = current ? current.blockers.length > 0 : true;
+      const nextBlocked = venue.blockers.length > 0;
+      if (!current || (currentBlocked && !nextBlocked)) {
+        venueById.set(key, venue);
+      }
+    }
+  }
+
+  const venues = Array.from(venueById.values());
+  const liveVenues = venues.filter((venue) => venue.blockers.length === 0);
+  const bestVenueId = normalizeVenueId(firstQuote.bestVenue ?? '');
+  const bestVenue = liveVenues.find((venue) => normalizeVenueId(venue.venue) === bestVenueId) ?? liveVenues[0] ?? venues[0] ?? null;
+  const bestPrice = bestVenue?.price ?? (firstQuote.bestVenuePrice ?? firstQuote.unifiedAveragePrice);
+
+  return {
+    ...firstQuote,
+    status: liveVenues.length > 1 ? 'partial' : firstQuote.status,
+    bestVenue: bestVenue?.venue ?? firstQuote.bestVenue,
+    bestVenuePrice: bestPrice ?? null,
+    unifiedAveragePrice: firstQuote.unifiedAveragePrice ?? bestPrice ?? null,
+    venues,
+    blockers: quotes.flatMap((quote) => quote.blockers ?? []),
+  };
+};
+
 const arrayField = (value: unknown, fields: string[]): unknown[] => {
   const source = recordValue(value);
   for (const field of fields) {
@@ -5464,18 +5498,22 @@ export const InfraTradingTerminal = ({
     const previewSeq = ++publicQuotePreviewSeqRef.current;
     setTicketPublicQuoteLoading(true);
     const timeoutId = window.setTimeout(() => {
+      const quoteMarketIds = uniqueNonEmptyStrings([
+        ...selectedOutcomeCanonicalMarketIds,
+        selectedTicketMarketId,
+      ]);
       getMarketBatchQuotes({
         displayMode: 'user',
-        items: [{
-          marketId: selectedTicketMarketId,
+        items: quoteMarketIds.map((marketId) => ({
+          marketId,
           outcomeId: selectedTicketQuoteOutcomeId,
           side,
           amount: trimmedAmount,
-        }],
+        })),
       })
         .then((response) => {
           if (previewSeq !== publicQuotePreviewSeqRef.current) return;
-          setTicketPublicQuote(response.quotes[0] ?? null);
+          setTicketPublicQuote(mergePublicQuoteItems(response.quotes));
         })
         .catch(() => {
           if (previewSeq !== publicQuotePreviewSeqRef.current) return;
@@ -5495,6 +5533,7 @@ export const InfraTradingTerminal = ({
     executionOrchestratorEnabled,
     selectedTicketMarketId,
     selectedTicketQuoteOutcomeId,
+    selectedOutcomeCanonicalMarketIds,
     side,
     ticketAmount,
     token,
