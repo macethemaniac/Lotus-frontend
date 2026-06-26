@@ -5,6 +5,7 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
 
   return {
+    logLevel: "error",
     plugins: [react()],
     server: {
       proxy: {
@@ -30,6 +31,9 @@ export default defineConfig(({ mode }) => {
       alias: {
         "@": "/src",
       },
+    },
+    build: {
+      chunkSizeWarningLimit: 3000,
     },
   };
 });

@@ -5,6 +5,9 @@ coverage/
 
 .env
 .env.*
+!.env.*.example
+.dev.vars
+.dev.vars.*
 
 *.log
 npm-debug.log*
@@ -14,4 +17,5 @@ pnpm-debug.log*
 .DS_Store
 Thumbs.db
 
+.wrangler/
 .vercel

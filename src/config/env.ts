@@ -4,10 +4,15 @@ const turnkeyApiBaseUrl = import.meta.env.VITE_TURNKEY_API_BASE_URL;
 const turnkeyOrganizationId = import.meta.env.VITE_TURNKEY_ORGANIZATION_ID;
 const turnkeyAuthProxyConfigId = import.meta.env.VITE_TURNKEY_AUTH_PROXY_CONFIG_ID;
 const turnkeyAuthProxyUrl = import.meta.env.VITE_TURNKEY_AUTH_PROXY_URL;
+const turnkeyOauthRedirectOrigin = import.meta.env.VITE_TURNKEY_OAUTH_REDIRECT_ORIGIN;
 const lotusAuthExchangePath = import.meta.env.VITE_LOTUS_AUTH_EXCHANGE_PATH;
+const lotusDeployEnv = import.meta.env.VITE_LOTUS_DEPLOY_ENV;
 const executionOrchestratorV1Enabled = import.meta.env.VITE_EXECUTION_ORCHESTRATOR_V1_ENABLED;
 const lotusProductionBackendApiBaseUrl = "https://api.uselotus.xyz";
 const lotusStagingBackendApiBaseUrl = "https://staging-api.uselotus.xyz";
+const resolvedLotusDeployEnv = configuredLotusDeployEnv(lotusDeployEnv);
+
+export type LotusDeployEnv = "local" | "preview" | "staging" | "production";
 
 function isEnabledFlag(value: unknown): boolean {
   return typeof value === "string" && value.trim().toLowerCase() === "true";
@@ -18,7 +23,8 @@ function isDisabledFlag(value: unknown): boolean {
 }
 
 export const env = {
-  lotusApiBaseUrl: configuredLotusApiBaseUrl(apiBaseUrl),
+  lotusDeployEnv: resolvedLotusDeployEnv,
+  lotusApiBaseUrl: configuredLotusApiBaseUrl(apiBaseUrl, resolvedLotusDeployEnv),
   turnkeyAuthEnabled: turnkeyEnabled === "true",
   turnkeyApiBaseUrl: typeof turnkeyApiBaseUrl === "string" && turnkeyApiBaseUrl.length > 0
     ? turnkeyApiBaseUrl.replace(/\/$/, "")
@@ -28,6 +34,7 @@ export const env = {
   turnkeyAuthProxyUrl: typeof turnkeyAuthProxyUrl === "string" && turnkeyAuthProxyUrl.length > 0
     ? turnkeyAuthProxyUrl.replace(/\/$/, "")
     : "/turnkey-auth-proxy",
+  turnkeyOauthRedirectOrigin: normalizedOrigin(turnkeyOauthRedirectOrigin),
   lotusAuthExchangePath: typeof lotusAuthExchangePath === "string" && lotusAuthExchangePath.length > 0
     ? lotusAuthExchangePath
     : "/auth/turnkey/exchange",
@@ -48,82 +55,76 @@ export function lotusMarketDiagnosticsEnabled(): boolean {
 }
 
 export function lotusMarketDiagnosticsEnabledForHost(hostname: string): boolean {
-  const normalized = hostname.toLowerCase();
-  if (normalized === "app.uselotus.xyz") return false;
-  return true;
+  return deployedFrontendKind(hostname) !== "production";
 }
 
 function resolveLotusWsBaseUrl(): string {
-  if (typeof window === "undefined") return env.lotusApiBaseUrl;
-
-  const appHostname = window.location.hostname.toLowerCase();
-  if (!isDeployedFrontendHost(appHostname)) return env.lotusApiBaseUrl;
-
-  try {
-    const configured = new URL(env.lotusApiBaseUrl);
-    const configuredHostname = configured.hostname.toLowerCase();
-    if (
-      configuredHostname === "localhost" ||
-      configuredHostname === "127.0.0.1" ||
-      configuredHostname === appHostname
-    ) {
-      return deployedLotusApiBaseUrl(appHostname) ?? env.lotusApiBaseUrl;
-    }
-  } catch {
-    return deployedLotusApiBaseUrl(appHostname) ?? env.lotusApiBaseUrl;
-  }
-
   return env.lotusApiBaseUrl;
 }
 
-function defaultLotusApiBaseUrl(): string {
-  if (typeof window === "undefined") return "http://localhost:3000";
-  return deployedLotusApiBaseUrl(window.location.hostname.toLowerCase()) ?? "http://localhost:3000";
-}
-
-function configuredLotusApiBaseUrl(value: unknown): string {
-  const appHostname = typeof window === "undefined" ? "" : window.location.hostname.toLowerCase();
-  const deployedForCurrentHost = deployedLotusApiBaseUrl(appHostname);
-  if (deployedForCurrentHost !== undefined) {
-    return deployedForCurrentHost;
-  }
-
-  if (typeof value !== "string" || value.length === 0) return defaultLotusApiBaseUrl();
-  const trimmed = value.replace(/\/$/, "");
-
-  try {
-    const configured = new URL(trimmed);
-    const configuredHostname = configured.hostname.toLowerCase();
-
-    if (isDeployedFrontendHost(configuredHostname)) {
-      return deployedLotusApiBaseUrl(appHostname) ??
-        deployedLotusApiBaseUrl(configuredHostname) ??
-        defaultLotusApiBaseUrl();
-    }
-  } catch {
-    return trimmed;
-  }
-
-  return trimmed;
+function configuredLotusApiBaseUrl(value: unknown, deployEnv: LotusDeployEnv): string {
+  if (typeof value === "string" && value.length > 0) return value.replace(/\/$/, "");
+  return defaultLotusApiBaseUrlForDeployEnv(deployEnv);
 }
 
 function executionOrchestratorEnabledForCurrentHost(value: unknown): boolean {
   if (isDisabledFlag(value)) return false;
   if (isEnabledFlag(value)) return true;
-  if (typeof window === "undefined") return false;
-  return isDeployedFrontendHost(window.location.hostname.toLowerCase());
+  return resolvedLotusDeployEnv !== "local";
 }
 
-function deployedLotusApiBaseUrl(hostname: string): string | undefined {
-  if (hostname === "app.uselotus.xyz") return lotusProductionBackendApiBaseUrl;
-  if (hostname === "staging.uselotus.xyz" || hostname.endsWith(".vercel.app")) {
-    return lotusStagingBackendApiBaseUrl;
+function configuredLotusDeployEnv(value: unknown): LotusDeployEnv {
+  const normalized = normalizeDeployEnv(value);
+  return normalized ?? inferDeployEnvFromHostname();
+}
+
+function normalizeDeployEnv(value: unknown): LotusDeployEnv | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "local" || normalized === "preview" || normalized === "staging" || normalized === "production") {
+    return normalized;
   }
-  return undefined;
+  return null;
 }
 
-function isDeployedFrontendHost(hostname: string): boolean {
-  return hostname === "staging.uselotus.xyz" ||
-    hostname === "app.uselotus.xyz" ||
-    hostname.endsWith(".vercel.app");
+function inferDeployEnvFromHostname(): LotusDeployEnv {
+  if (typeof window === "undefined") return "local";
+
+  const hostname = window.location.hostname.toLowerCase();
+  if (hostname === "localhost" || hostname === "127.0.0.1") return "local";
+
+  const deployedKind = deployedFrontendKind(hostname);
+  if (deployedKind) return deployedKind;
+
+  return "preview";
+}
+
+function defaultLotusApiBaseUrlForDeployEnv(deployEnv: LotusDeployEnv): string {
+  switch (deployEnv) {
+    case "production":
+      return lotusProductionBackendApiBaseUrl;
+    case "staging":
+    case "preview":
+      return lotusStagingBackendApiBaseUrl;
+    case "local":
+    default:
+      return "http://localhost:3000";
+  }
+}
+
+function deployedFrontendKind(hostname: string): Exclude<LotusDeployEnv, "local"> | null {
+  if (hostname === "app.uselotus.xyz") return "production";
+  if (hostname === "staging.uselotus.xyz") return "staging";
+  if (hostname.endsWith(".workers.dev") || hostname.endsWith(".pages.dev")) return "preview";
+  return null;
+}
+
+function normalizedOrigin(value: unknown): string | null {
+  if (typeof value !== "string" || value.length === 0) return null;
+
+  try {
+    return new URL(value).origin;
+  } catch {
+    return null;
+  }
 }

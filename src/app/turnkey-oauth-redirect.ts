@@ -1,3 +1,5 @@
+import { env } from "@/config/env";
+
 const productionOrigin = "https://app.uselotus.xyz";
 
 const allowedTurnkeyOauthOrigins = new Set([
@@ -22,6 +24,10 @@ const normalizeOrigin = (origin: string): string | null => {
 };
 
 export function resolveAllowedFrontendOrigin(origin = typeof window === "undefined" ? productionOrigin : window.location.origin): string {
+  if (env.turnkeyOauthRedirectOrigin) {
+    return env.turnkeyOauthRedirectOrigin;
+  }
+
   const normalized = normalizeOrigin(origin);
   return normalized && allowedTurnkeyOauthOrigins.has(normalized) ? normalized : productionOrigin;
 }

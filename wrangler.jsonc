@@ -1,0 +1,32 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "lotus-frontend",
+  "main": "cloudflare/worker.ts",
+  "compatibility_date": "2026-06-26",
+  "workers_dev": true,
+  "preview_urls": true,
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS"
+  },
+  "vars": {
+    "LOTUS_API_ORIGIN": "https://staging-api.uselotus.xyz",
+    "TURNKEY_AUTH_PROXY_URL": "https://authproxy.turnkey.com"
+  },
+  "env": {
+    "staging": {
+      "name": "lotus-frontend-staging",
+      "vars": {
+        "LOTUS_API_ORIGIN": "https://staging-api.uselotus.xyz",
+        "TURNKEY_AUTH_PROXY_URL": "https://authproxy.turnkey.com"
+      }
+    },
+    "production": {
+      "name": "lotus-frontend-production",
+      "vars": {
+        "LOTUS_API_ORIGIN": "https://api.uselotus.xyz",
+        "TURNKEY_AUTH_PROXY_URL": "https://authproxy.turnkey.com"
+      }
+    }
+  }
+}

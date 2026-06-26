@@ -51,23 +51,7 @@ export async function apiRequest<T>(path: string, options: ApiOptions = {}): Pro
 
 function resolveApiBaseUrl(baseUrlOverride?: string): string {
   if (baseUrlOverride !== undefined) return baseUrlOverride.replace(/\/$/, "");
-  if (hasConfiguredApiBaseUrl()) return env.lotusApiBaseUrl;
-  if (shouldUseSameOriginApiProxy()) return "/api";
   return env.lotusApiBaseUrl;
-}
-
-function hasConfiguredApiBaseUrl(): boolean {
-  return env.lotusApiBaseUrl !== "http://localhost:3000" &&
-    env.lotusApiBaseUrl !== "http://127.0.0.1:3000";
-}
-
-function shouldUseSameOriginApiProxy(): boolean {
-  if (typeof window === "undefined") return false;
-
-  const hostname = window.location.hostname.toLowerCase();
-  if (hostname === "localhost" || hostname === "127.0.0.1") return false;
-
-  return hostname.endsWith(".vercel.app") || hostname === "staging.uselotus.xyz" || hostname === "app.uselotus.xyz";
 }
 
 function parseJson(text: string): unknown {
