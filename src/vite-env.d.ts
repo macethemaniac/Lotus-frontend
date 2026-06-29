@@ -16,3 +16,13 @@ interface ImportMetaEnv {
 interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
+
+interface Window {
+  __LOTUS_RUNTIME_CONFIG__?: {
+    lotusApiBaseUrl?: string;
+    turnkeyAuthEnabled?: boolean | string;
+    turnkeyAuthProxyConfigId?: string;
+    turnkeyAuthProxyUrl?: string;
+    turnkeyOauthRedirectOrigin?: string;
+  };
+}

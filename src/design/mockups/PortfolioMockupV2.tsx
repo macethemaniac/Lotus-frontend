@@ -57,6 +57,7 @@ import { listMarkets, type MarketCatalogMarket } from '@/features/markets/api/ma
 import { ApiClientError } from '@/lib/api/http-client';
 import { openExecutionSocket } from '@/lib/ws/execution-ws-client';
 import { lotusMarketDiagnosticsEnabled } from '@/config/env';
+import { isTurnkeyProviderConfigured } from '@/app/turnkey-provider';
 import { FundingDeposit } from './FundingDeposit';
 import { DepositFailedReceipt } from './DepositFailedReceipt';
 import { DepositSuccessReceipt } from './DepositSuccessReceipt';
@@ -933,7 +934,32 @@ function PerformanceTooltip({ active, payload, range }: { active?: boolean; payl
   );
 }
 
+const TurnkeyUnavailableState = ({ title, detail }: { title: string; detail: string }) => (
+  <div className="flex min-h-[calc(100dvh-7rem)] items-center justify-center bg-[#070708] p-6">
+    <div className="w-full max-w-lg rounded-2xl border border-zinc-800 bg-zinc-950 p-8 text-center shadow-2xl shadow-black/30">
+      <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full border border-[#ccff00]/25 bg-[#ccff00]/10 text-[#ccff00]">
+        <ShieldCheck className="h-6 w-6" />
+      </div>
+      <h2 className="mt-5 text-lg font-bold text-white">{title}</h2>
+      <p className="mt-3 text-sm text-zinc-400">{detail}</p>
+    </div>
+  </div>
+);
+
 export const PortfolioMockupV2: React.FC<{ session?: AuthSession | null }> = ({ session }) => {
+  if (!isTurnkeyProviderConfigured()) {
+    return (
+      <TurnkeyUnavailableState
+        title="Portfolio unavailable"
+        detail="Secure wallet configuration is still loading for this deployment. Core routing is live, but portfolio pages that depend on Turnkey are temporarily unavailable."
+      />
+    );
+  }
+
+  return <PortfolioMockupV2Inner session={session} />;
+};
+
+const PortfolioMockupV2Inner: React.FC<{ session?: AuthSession | null }> = ({ session }) => {
   const diagnosticsEnabled = lotusMarketDiagnosticsEnabled();
   const {
     authState: turnkeyAuthState,

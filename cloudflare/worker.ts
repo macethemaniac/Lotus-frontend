@@ -8,6 +8,7 @@ interface Env {
 const LOTUS_API_PREFIX = "/api";
 const TURNKEY_PROXY_PREFIX = "/turnkey-auth-proxy";
 const WEBSOCKET_PATH = "/ws";
+const LOTUS_RUNTIME_CONFIG_GLOBAL = "__LOTUS_RUNTIME_CONFIG__";
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -30,12 +31,11 @@ export default {
 };
 
 async function serveSpaAsset(request: Request, env: Env): Promise<Response> {
-  const directResponse = await env.ASSETS.fetch(request);
-  if (directResponse.status !== 404 || !isHtmlNavigation(request)) return directResponse;
+  const assetResponse = shouldServeSpaShell(request) && shouldBypassDirectAssetLookup(request)
+    ? await env.ASSETS.fetch(spaShellRequest(request))
+    : await resolveAssetResponse(request, env);
 
-  const indexUrl = new URL(request.url);
-  indexUrl.pathname = "/index.html";
-  return env.ASSETS.fetch(new Request(indexUrl.toString(), request));
+  return injectRuntimeConfig(assetResponse, request, env);
 }
 
 async function proxyLotusBackend(request: Request, env: Env, prefixToStrip = ""): Promise<Response> {
@@ -85,11 +85,71 @@ async function proxyTurnkey(request: Request, env: Env): Promise<Response> {
   });
 }
 
-function isHtmlNavigation(request: Request): boolean {
-  if (request.method !== "GET") return false;
+function shouldServeSpaShell(request: Request): boolean {
+  if (request.method !== "GET" && request.method !== "HEAD") return false;
+
+  const url = new URL(request.url);
+  if (hasFileExtension(url.pathname)) return false;
 
   const accept = request.headers.get("accept") || "";
-  return accept.includes("text/html");
+  const fetchMode = request.headers.get("sec-fetch-mode") || "";
+  return request.method === "HEAD" || accept.includes("text/html") || fetchMode === "navigate";
+}
+
+async function resolveAssetResponse(request: Request, env: Env): Promise<Response> {
+  const directResponse = await env.ASSETS.fetch(request);
+  if (directResponse.status !== 404 || !shouldServeSpaShell(request)) {
+    return directResponse;
+  }
+
+  return env.ASSETS.fetch(spaShellRequest(request));
+}
+
+function spaShellRequest(request: Request): Request {
+  const indexUrl = new URL(request.url);
+  indexUrl.pathname = "/index.html";
+  return new Request(indexUrl.toString(), request);
+}
+
+function shouldBypassDirectAssetLookup(request: Request): boolean {
+  const pathname = new URL(request.url).pathname;
+  return pathname !== "/" && pathname !== "/index.html" && !hasFileExtension(pathname);
+}
+
+function injectRuntimeConfig(response: Response, request: Request, env: Env): Response {
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.includes("text/html")) return response;
+
+  const runtimeConfig = JSON.stringify(buildRuntimeConfig(request, env));
+  const script = `<script>window.${LOTUS_RUNTIME_CONFIG_GLOBAL}=Object.assign(window.${LOTUS_RUNTIME_CONFIG_GLOBAL}||{},${runtimeConfig});</script>`;
+  return new HTMLRewriter()
+    .on("head", {
+      element(element) {
+        element.append(script, { html: true });
+      },
+    })
+    .transform(response);
+}
+
+function buildRuntimeConfig(request: Request, env: Env): Record<string, string> {
+  const url = new URL(request.url);
+  const config: Record<string, string> = {
+    lotusApiBaseUrl: LOTUS_API_PREFIX,
+    turnkeyAuthProxyUrl: TURNKEY_PROXY_PREFIX,
+    turnkeyOauthRedirectOrigin: url.origin,
+  };
+
+  const turnkeyAuthProxyConfigId = env.TURNKEY_AUTH_PROXY_CONFIG_ID?.trim();
+  if (turnkeyAuthProxyConfigId) {
+    config.turnkeyAuthProxyConfigId = turnkeyAuthProxyConfigId;
+  }
+
+  return config;
+}
+
+function hasFileExtension(pathname: string): boolean {
+  const lastSegment = pathname.split("/").pop() || "";
+  return lastSegment.includes(".");
 }
 
 function canIncludeBody(method: string): boolean {

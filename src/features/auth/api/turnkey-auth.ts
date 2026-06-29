@@ -39,7 +39,7 @@ export function assertTurnkeyConfigured(): void {
     throw new Error("Turnkey login is not configured for this frontend environment.");
   }
   if (!env.turnkeyAuthProxyConfigId) {
-    throw new Error("Turnkey Auth Proxy config ID is missing. Set VITE_TURNKEY_AUTH_PROXY_CONFIG_ID.");
+    throw new Error("Turnkey Auth Proxy config ID is missing from the frontend runtime configuration.");
   }
 }
 

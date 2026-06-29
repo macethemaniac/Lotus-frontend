@@ -11,6 +11,7 @@ import { JsonRpcProvider, Transaction } from 'ethers';
 import { CryptoLogo, VenueLogo, resolveTopicAssetLogoId } from '@/components/icons/asset-logo';
 import { LotusLogo } from '@/components/icons/lotus-icons';
 import { FundingDeposit } from '@/design/mockups/FundingDeposit';
+import { isTurnkeyProviderConfigured } from '@/app/turnkey-provider';
 import { env, lotusMarketDiagnosticsEnabled } from '@/config/env';
 import type { AuthSession } from '@/features/auth/types';
 import {
@@ -2932,7 +2933,39 @@ const LiveCanonicalChart = ({
   );
 };
 
-export const InfraTradingTerminal = ({
+const TurnkeyUnavailableState = ({ title, detail }: { title: string; detail: string }) => (
+  <div className="flex min-h-[calc(100dvh-7rem)] items-center justify-center bg-[#070708] p-6 text-center">
+    <div className="w-full max-w-lg rounded-2xl border border-zinc-800 bg-zinc-950 p-8 shadow-2xl shadow-black/30">
+      <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full border border-[#ccff00]/25 bg-[#ccff00]/10 text-[#ccff00]">
+        <ShieldCheck className="h-6 w-6" />
+      </div>
+      <h2 className="mt-5 text-lg font-bold text-white">{title}</h2>
+      <p className="mt-3 text-sm text-zinc-400">{detail}</p>
+    </div>
+  </div>
+);
+
+export const InfraTradingTerminal = (props: {
+  embedded?: boolean;
+  darkMode?: boolean;
+  selectedMarket?: TerminalMarketSelection | null;
+  relatedMarkets?: TerminalMarketSelection[];
+  session?: AuthSession | null;
+  onRequireLogin?: () => void;
+} = {}) => {
+  if (!isTurnkeyProviderConfigured()) {
+    return (
+      <TurnkeyUnavailableState
+        title="Terminal unavailable"
+        detail="Secure wallet configuration is still loading for this deployment. The Cloudflare route is live, but trading views that depend on Turnkey are temporarily unavailable."
+      />
+    );
+  }
+
+  return <InfraTradingTerminalInner {...props} />;
+};
+
+const InfraTradingTerminalInner = ({
   embedded = false,
   darkMode = true,
   selectedMarket,

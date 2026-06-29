@@ -7,6 +7,7 @@ import { CryptoLogo, VenueLogo, resolveTopicAssetLogoId } from '@/components/ico
 import { InfraTradingTerminal, type TerminalMarketSelection } from '@/design/mockups/InfraTradingTerminal';
 import { PortfolioMockupV2 } from '@/design/mockups/PortfolioMockupV2';
 import { FundingDeposit } from '@/design/mockups/FundingDeposit';
+import { isTurnkeyProviderConfigured } from '@/app/turnkey-provider';
 import type { AuthSession } from '@/features/auth/types';
 import {
   getMarket,
@@ -2850,94 +2851,9 @@ const SettingsPage = ({
 }) => {
   const [activeSection, setActiveSection] = useState<'notifications' | 'animations' | 'connected'>('notifications');
   const [reducedMotion, setReducedMotion] = useState(false);
-  const [connectedAppsStatus, setConnectedAppsStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
-  const [connectedAppsBusyId, setConnectedAppsBusyId] = useState<string | null>(null);
-  const {
-    user,
-    session: turnkeySession,
-    handleAddEmail,
-    handleRemoveUserEmail,
-    handleAddOauthProvider,
-    handleRemoveOauthProvider,
-    refreshUser,
-  } = useTurnkey();
   const updateNotificationSetting = (partial: Partial<typeof settings>) => {
     onSettingsChange({ ...settings, ...partial });
   };
-  const turnkeyOrganizationId = turnkeySession?.organizationId;
-  const turnkeyUserId = turnkeySession?.userId;
-  const oauthProviders = (user?.oauthProviders ?? []) as ConnectedOauthProvider[];
-  const linkedGoogle = getLinkedProvider(oauthProviders, OAuthProviders.GOOGLE);
-  const linkedX = getLinkedProvider(oauthProviders, OAuthProviders.X);
-
-  const runConnectedAppAction = async (busyId: string, action: () => Promise<void>, successMessage: string) => {
-    setConnectedAppsBusyId(busyId);
-    setConnectedAppsStatus(null);
-    try {
-      await action();
-      if (turnkeyOrganizationId && turnkeyUserId) {
-        await refreshUser({ organizationId: turnkeyOrganizationId, userId: turnkeyUserId }).catch(() => undefined);
-      }
-      setConnectedAppsStatus({ tone: 'success', message: successMessage });
-    } catch (error) {
-      setConnectedAppsStatus({
-        tone: 'error',
-        message: error instanceof Error ? error.message : 'Unable to update the connected account.',
-      });
-    } finally {
-      setConnectedAppsBusyId(null);
-    }
-  };
-
-  const linkEmail = () => runConnectedAppAction(
-    'email',
-    async () => {
-      await handleAddEmail({
-        title: 'Link email',
-        subTitle: 'Add an email address to your Lotus account.',
-        successPageDuration: 1200,
-      });
-    },
-    'Email linked.',
-  );
-
-  const unlinkEmail = () => runConnectedAppAction(
-    'email',
-    async () => {
-      await handleRemoveUserEmail({
-        userId: turnkeyUserId,
-        organizationId: turnkeyOrganizationId,
-        successPageDuration: 1200,
-      });
-    },
-    'Email unlinked.',
-  );
-
-  const linkOauthProvider = (providerName: OAuthProviders, label: string) => runConnectedAppAction(
-    providerName,
-    async () => {
-      await handleAddOauthProvider({
-        providerName,
-        openInPage: true,
-        successPageDuration: 1200,
-      });
-    },
-    `${label} linked.`,
-  );
-
-  const unlinkOauthProvider = (provider: ConnectedOauthProvider, label: string) => runConnectedAppAction(
-    provider.providerName,
-    async () => {
-      await handleRemoveOauthProvider({
-        providerId: provider.providerId,
-        organizationId: turnkeyOrganizationId,
-        title: `Unlink ${label}`,
-        subTitle: `Remove ${label} from this Lotus account.`,
-        successPageDuration: 1200,
-      });
-    },
-    `${label} unlinked.`,
-  );
 
   const positions = [
     { id: 'top-left' as const, label: 'Top Left' },
@@ -3028,45 +2944,7 @@ const SettingsPage = ({
             )}
 
             {activeSection === 'connected' && (
-              <div>
-                <h1 className="text-base font-bold text-white">Connected Apps</h1>
-                <p className="mt-2 text-xs text-zinc-500">Manage account-linked services and wallet sessions.</p>
-                <div className="mt-8 space-y-3">
-                  <ConnectedAppRow name="Turnkey" status="Connected" statusTone="success" />
-                  <ConnectedAppRow
-                    name="Email"
-                    status={formatLinkedEmail(user?.userEmail)}
-                    statusTone={user?.userEmail ? 'success' : 'muted'}
-                    actionLabel={user?.userEmail ? 'Unlink' : 'Link'}
-                    actionTone={user?.userEmail ? 'neutral' : 'primary'}
-                    busy={connectedAppsBusyId === 'email'}
-                    onAction={user?.userEmail ? unlinkEmail : linkEmail}
-                  />
-                  <ConnectedAppRow
-                    name="X / Twitter"
-                    status={linkedX ? 'Linked' : 'Not linked'}
-                    statusTone={linkedX ? 'success' : 'muted'}
-                    actionLabel={linkedX ? 'Unlink' : 'Link'}
-                    actionTone={linkedX ? 'neutral' : 'primary'}
-                    busy={connectedAppsBusyId === OAuthProviders.X || connectedAppsBusyId === linkedX?.providerName}
-                    onAction={linkedX ? () => unlinkOauthProvider(linkedX, 'X / Twitter') : () => linkOauthProvider(OAuthProviders.X, 'X / Twitter')}
-                  />
-                  <ConnectedAppRow
-                    name="Google"
-                    status={linkedGoogle ? 'Linked' : 'Not linked'}
-                    statusTone={linkedGoogle ? 'success' : 'muted'}
-                    actionLabel={linkedGoogle ? 'Unlink' : 'Link'}
-                    actionTone={linkedGoogle ? 'neutral' : 'primary'}
-                    busy={connectedAppsBusyId === OAuthProviders.GOOGLE || connectedAppsBusyId === linkedGoogle?.providerName}
-                    onAction={linkedGoogle ? () => unlinkOauthProvider(linkedGoogle, 'Google') : () => linkOauthProvider(OAuthProviders.GOOGLE, 'Google')}
-                  />
-                </div>
-                {connectedAppsStatus ? (
-                  <div className={`mt-4 rounded-lg border px-3 py-2 text-xs font-medium ${connectedAppsStatus.tone === 'success' ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-300' : 'border-red-500/25 bg-red-500/10 text-red-300'}`}>
-                    {connectedAppsStatus.message}
-                  </div>
-                ) : null}
-              </div>
+              isTurnkeyProviderConfigured() ? <ConnectedAppsSection /> : <ConnectedAppsUnavailableSection />
             )}
           </section>
         </div>
@@ -3088,6 +2966,146 @@ const SettingsToggle = ({ label, enabled, onChange }: { label: string; enabled: 
     </button>
   </div>
 );
+
+const ConnectedAppsUnavailableSection = () => (
+  <div>
+    <h1 className="text-base font-bold text-white">Connected Apps</h1>
+    <p className="mt-2 text-xs text-zinc-500">Manage account-linked services and wallet sessions.</p>
+    <div className="mt-8 rounded-xl border border-zinc-800 bg-zinc-950/50 p-4 text-sm text-zinc-400">
+      Turnkey is not configured for this deployment yet, so connected-app management is temporarily unavailable.
+    </div>
+  </div>
+);
+
+const ConnectedAppsSection = () => {
+  const [connectedAppsStatus, setConnectedAppsStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
+  const [connectedAppsBusyId, setConnectedAppsBusyId] = useState<string | null>(null);
+  const {
+    user,
+    session: turnkeySession,
+    handleAddEmail,
+    handleRemoveUserEmail,
+    handleAddOauthProvider,
+    handleRemoveOauthProvider,
+    refreshUser,
+  } = useTurnkey();
+  const turnkeyOrganizationId = turnkeySession?.organizationId;
+  const turnkeyUserId = turnkeySession?.userId;
+  const oauthProviders = (user?.oauthProviders ?? []) as ConnectedOauthProvider[];
+  const linkedGoogle = getLinkedProvider(oauthProviders, OAuthProviders.GOOGLE);
+  const linkedX = getLinkedProvider(oauthProviders, OAuthProviders.X);
+
+  const runConnectedAppAction = async (busyId: string, action: () => Promise<void>, successMessage: string) => {
+    setConnectedAppsBusyId(busyId);
+    setConnectedAppsStatus(null);
+    try {
+      await action();
+      if (turnkeyOrganizationId && turnkeyUserId) {
+        await refreshUser({ organizationId: turnkeyOrganizationId, userId: turnkeyUserId }).catch(() => undefined);
+      }
+      setConnectedAppsStatus({ tone: 'success', message: successMessage });
+    } catch (error) {
+      setConnectedAppsStatus({
+        tone: 'error',
+        message: error instanceof Error ? error.message : 'Unable to update the connected account.',
+      });
+    } finally {
+      setConnectedAppsBusyId(null);
+    }
+  };
+
+  const linkEmail = () => runConnectedAppAction(
+    'email',
+    async () => {
+      await handleAddEmail({
+        title: 'Link email',
+        subTitle: 'Add an email address to your Lotus account.',
+        successPageDuration: 1200,
+      });
+    },
+    'Email linked.',
+  );
+
+  const unlinkEmail = () => runConnectedAppAction(
+    'email',
+    async () => {
+      await handleRemoveUserEmail({
+        userId: turnkeyUserId,
+        organizationId: turnkeyOrganizationId,
+        successPageDuration: 1200,
+      });
+    },
+    'Email unlinked.',
+  );
+
+  const linkOauthProvider = (providerName: OAuthProviders, label: string) => runConnectedAppAction(
+    providerName,
+    async () => {
+      await handleAddOauthProvider({
+        providerName,
+        openInPage: true,
+        successPageDuration: 1200,
+      });
+    },
+    `${label} linked.`,
+  );
+
+  const unlinkOauthProvider = (provider: ConnectedOauthProvider, label: string) => runConnectedAppAction(
+    provider.providerName,
+    async () => {
+      await handleRemoveOauthProvider({
+        providerId: provider.providerId,
+        organizationId: turnkeyOrganizationId,
+        title: `Unlink ${label}`,
+        subTitle: `Remove ${label} from this Lotus account.`,
+        successPageDuration: 1200,
+      });
+    },
+    `${label} unlinked.`,
+  );
+
+  return (
+    <div>
+      <h1 className="text-base font-bold text-white">Connected Apps</h1>
+      <p className="mt-2 text-xs text-zinc-500">Manage account-linked services and wallet sessions.</p>
+      <div className="mt-8 space-y-3">
+        <ConnectedAppRow name="Turnkey" status="Connected" statusTone="success" />
+        <ConnectedAppRow
+          name="Email"
+          status={formatLinkedEmail(user?.userEmail)}
+          statusTone={user?.userEmail ? 'success' : 'muted'}
+          actionLabel={user?.userEmail ? 'Unlink' : 'Link'}
+          actionTone={user?.userEmail ? 'neutral' : 'primary'}
+          busy={connectedAppsBusyId === 'email'}
+          onAction={user?.userEmail ? unlinkEmail : linkEmail}
+        />
+        <ConnectedAppRow
+          name="X / Twitter"
+          status={linkedX ? 'Linked' : 'Not linked'}
+          statusTone={linkedX ? 'success' : 'muted'}
+          actionLabel={linkedX ? 'Unlink' : 'Link'}
+          actionTone={linkedX ? 'neutral' : 'primary'}
+          busy={connectedAppsBusyId === OAuthProviders.X || connectedAppsBusyId === linkedX?.providerName}
+          onAction={linkedX ? () => unlinkOauthProvider(linkedX, 'X / Twitter') : () => linkOauthProvider(OAuthProviders.X, 'X / Twitter')}
+        />
+        <ConnectedAppRow
+          name="Google"
+          status={linkedGoogle ? 'Linked' : 'Not linked'}
+          statusTone={linkedGoogle ? 'success' : 'muted'}
+          actionLabel={linkedGoogle ? 'Unlink' : 'Link'}
+          actionTone={linkedGoogle ? 'neutral' : 'primary'}
+          busy={connectedAppsBusyId === OAuthProviders.GOOGLE || connectedAppsBusyId === linkedGoogle?.providerName}
+          onAction={linkedGoogle ? () => unlinkOauthProvider(linkedGoogle, 'Google') : () => linkOauthProvider(OAuthProviders.GOOGLE, 'Google')}
+        />
+      </div>
+      {connectedAppsStatus ? (
+        <div className={`mt-4 rounded-lg border px-3 py-2 text-xs font-medium ${connectedAppsStatus.tone === 'success' ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-300' : 'border-red-500/25 bg-red-500/10 text-red-300'}`}>
+          {connectedAppsStatus.message}
+        </div>
+      ) : null}
+    </div>
+  );
+};
 
 const ConnectedAppRow = ({
   name,

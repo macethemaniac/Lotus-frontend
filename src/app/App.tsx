@@ -17,7 +17,7 @@ import {
 import { KeyFormat, useTurnkey, type Wallet as TurnkeyWallet, type WalletAccount } from "@turnkey/react-wallet-kit";
 import type { AuthSession } from "@/features/auth/types";
 import { exchangeTurnkeySessionForLotusJwt } from "@/features/auth/api/turnkey-auth";
-import { LotusTurnkeyProvider } from "@/app/turnkey-provider";
+import { isTurnkeyProviderConfigured, LotusTurnkeyProvider } from "@/app/turnkey-provider";
 import { ApiClientError } from "@/lib/api/http-client";
 import {
   clearStoredSession,
@@ -684,7 +684,28 @@ function LoginHeaderButton({ onClick }: { onClick: () => void }) {
   );
 }
 
+function AuthUnavailableScreen({
+  message,
+}: {
+  message: string;
+}) {
+  return (
+    <div className="w-full max-w-[400px] rounded-2xl border border-zinc-800 bg-zinc-950 p-8 shadow-xl">
+      <div className="flex flex-col items-center gap-4 text-center">
+        <div className="flex h-14 w-14 items-center justify-center rounded-full border border-[#ccff00]/30 bg-[#ccff00]/10 text-[#ccff00]">
+          <ShieldCheck className="h-6 w-6" />
+        </div>
+        <div className="space-y-2">
+          <h3 className="text-lg font-bold text-white">Secure login unavailable</h3>
+          <p className="text-sm text-zinc-400">{message}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function App() {
+  const turnkeyConfigured = isTurnkeyProviderConfigured();
   const [session, setSession] = useState<AuthSession | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
@@ -802,12 +823,18 @@ export function App() {
               >
                 <X className="h-4 w-4" aria-hidden />
               </button>
-              <TurnkeyAuthScreen
-                loading={authLoading}
-                error={authError}
-                onError={setAuthError}
-                embedded
-              />
+              {turnkeyConfigured ? (
+                <TurnkeyAuthScreen
+                  loading={authLoading}
+                  error={authError}
+                  onError={setAuthError}
+                  embedded
+                />
+              ) : (
+                <AuthUnavailableScreen
+                  message={authError ?? "Turnkey login is not configured for this Cloudflare deployment yet."}
+                />
+              )}
             </div>
           </div>
         ) : null}
