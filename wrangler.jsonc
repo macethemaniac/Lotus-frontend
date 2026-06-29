@@ -3,8 +3,8 @@
   "name": "lotus-frontend",
   "main": "cloudflare/worker.ts",
   "compatibility_date": "2026-06-26",
-  "workers_dev": true,
-  "preview_urls": true,
+  "workers_dev": false,
+  "preview_urls": false,
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS"
@@ -16,6 +16,12 @@
   "env": {
     "staging": {
       "name": "lotus-frontend-staging",
+      "routes": [
+        {
+          "pattern": "staging.uselotus.xyz",
+          "custom_domain": true
+        }
+      ],
       "vars": {
         "LOTUS_API_ORIGIN": "https://staging-api.uselotus.xyz",
         "TURNKEY_AUTH_PROXY_URL": "https://authproxy.turnkey.com"
@@ -23,6 +29,12 @@
     },
     "production": {
       "name": "lotus-frontend-production",
+      "routes": [
+        {
+          "pattern": "app.uselotus.xyz",
+          "custom_domain": true
+        }
+      ],
       "vars": {
         "LOTUS_API_ORIGIN": "https://api.uselotus.xyz",
         "TURNKEY_AUTH_PROXY_URL": "https://authproxy.turnkey.com"
