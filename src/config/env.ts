@@ -4,13 +4,14 @@ type LotusRuntimeConfig = {
   turnkeyAuthProxyConfigId?: string;
   turnkeyAuthProxyUrl?: string;
   turnkeyOauthRedirectOrigin?: string;
+  turnkeyOrganizationId?: string;
 };
 
 const runtimeConfig = readRuntimeConfig();
 const apiBaseUrl = firstConfiguredString(runtimeConfig.lotusApiBaseUrl, import.meta.env.VITE_LOTUS_API_BASE_URL);
 const turnkeyEnabled = firstConfiguredBoolean(runtimeConfig.turnkeyAuthEnabled, import.meta.env.VITE_TURNKEY_AUTH_ENABLED);
 const turnkeyApiBaseUrl = import.meta.env.VITE_TURNKEY_API_BASE_URL;
-const turnkeyOrganizationId = import.meta.env.VITE_TURNKEY_ORGANIZATION_ID;
+const turnkeyOrganizationId = firstConfiguredString(runtimeConfig.turnkeyOrganizationId, import.meta.env.VITE_TURNKEY_ORGANIZATION_ID);
 const turnkeyAuthProxyConfigId = firstConfiguredString(runtimeConfig.turnkeyAuthProxyConfigId, import.meta.env.VITE_TURNKEY_AUTH_PROXY_CONFIG_ID);
 const turnkeyAuthProxyUrl = firstConfiguredString(runtimeConfig.turnkeyAuthProxyUrl, import.meta.env.VITE_TURNKEY_AUTH_PROXY_URL);
 const turnkeyOauthRedirectOrigin = firstConfiguredString(runtimeConfig.turnkeyOauthRedirectOrigin, import.meta.env.VITE_TURNKEY_OAUTH_REDIRECT_ORIGIN);

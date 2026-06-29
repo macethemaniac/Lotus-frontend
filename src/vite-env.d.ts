@@ -24,5 +24,6 @@ interface Window {
     turnkeyAuthProxyConfigId?: string;
     turnkeyAuthProxyUrl?: string;
     turnkeyOauthRedirectOrigin?: string;
+    turnkeyOrganizationId?: string;
   };
 }

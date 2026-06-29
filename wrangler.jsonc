@@ -13,6 +13,7 @@
   },
   "vars": {
     "LOTUS_API_ORIGIN": "https://staging-api.uselotus.xyz",
+    "TURNKEY_AUTH_ENABLED": "true",
     "TURNKEY_AUTH_PROXY_URL": "https://authproxy.turnkey.com"
   },
   "env": {
@@ -26,6 +27,8 @@
       ],
       "vars": {
         "LOTUS_API_ORIGIN": "https://staging-api.uselotus.xyz",
+        "TURNKEY_AUTH_ENABLED": "true",
+        "TURNKEY_ORGANIZATION_ID": "619adca6-9bb2-41a2-81f1-4b5f23e0a6f4",
         "TURNKEY_AUTH_PROXY_URL": "https://authproxy.turnkey.com"
       }
     },
@@ -39,6 +42,8 @@
       ],
       "vars": {
         "LOTUS_API_ORIGIN": "https://api.uselotus.xyz",
+        "TURNKEY_AUTH_ENABLED": "true",
+        "TURNKEY_ORGANIZATION_ID": "619adca6-9bb2-41a2-81f1-4b5f23e0a6f4",
         "TURNKEY_AUTH_PROXY_URL": "https://authproxy.turnkey.com"
       }
     }

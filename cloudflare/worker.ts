@@ -1,8 +1,10 @@
 interface Env {
   ASSETS: Fetcher;
   LOTUS_API_ORIGIN?: string;
+  TURNKEY_AUTH_ENABLED?: string;
   TURNKEY_AUTH_PROXY_CONFIG_ID?: string;
   TURNKEY_AUTH_PROXY_URL?: string;
+  TURNKEY_ORGANIZATION_ID?: string;
 }
 
 const LOTUS_API_PREFIX = "/api";
@@ -139,9 +141,19 @@ function buildRuntimeConfig(request: Request, env: Env): Record<string, string> 
     turnkeyOauthRedirectOrigin: url.origin,
   };
 
+  const turnkeyAuthEnabled = env.TURNKEY_AUTH_ENABLED?.trim();
+  if (turnkeyAuthEnabled) {
+    config.turnkeyAuthEnabled = turnkeyAuthEnabled;
+  }
+
   const turnkeyAuthProxyConfigId = env.TURNKEY_AUTH_PROXY_CONFIG_ID?.trim();
   if (turnkeyAuthProxyConfigId) {
     config.turnkeyAuthProxyConfigId = turnkeyAuthProxyConfigId;
+  }
+
+  const turnkeyOrganizationId = env.TURNKEY_ORGANIZATION_ID?.trim();
+  if (turnkeyOrganizationId) {
+    config.turnkeyOrganizationId = turnkeyOrganizationId;
   }
 
   return config;
