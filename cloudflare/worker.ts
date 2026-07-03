@@ -1,6 +1,7 @@
 interface Env {
   ASSETS: Fetcher;
   LOTUS_API_ORIGIN?: string;
+  LOTUS_WS_ORIGIN?: string;
   TURNKEY_AUTH_ENABLED?: string;
   TURNKEY_AUTH_PROXY_CONFIG_ID?: string;
   TURNKEY_AUTH_PROXY_URL?: string;
@@ -49,6 +50,12 @@ async function proxyLotusBackend(request: Request, env: Env, prefixToStrip = "")
   const incomingUrl = new URL(request.url);
   const targetUrl = new URL(stripOptionalPrefix(incomingUrl.pathname, prefixToStrip), backendOrigin);
   targetUrl.search = incomingUrl.search;
+
+  // Preserve the original websocket upgrade request end-to-end. Rebuilding the
+  // request by hand turns it into a plain HTTP GET, which breaks `/ws` at the edge.
+  if (request.headers.get("upgrade")?.toLowerCase() === "websocket") {
+    return fetch(new Request(targetUrl.toString(), request));
+  }
 
   const headers = new Headers(request.headers);
   headers.delete("origin");
@@ -137,6 +144,7 @@ function buildRuntimeConfig(request: Request, env: Env): Record<string, string> 
   const url = new URL(request.url);
   const config: Record<string, string> = {
     lotusApiBaseUrl: LOTUS_API_PREFIX,
+    lotusWsBaseUrl: env.LOTUS_WS_ORIGIN?.trim() || env.LOTUS_API_ORIGIN?.trim() || LOTUS_API_PREFIX,
     turnkeyAuthProxyUrl: TURNKEY_PROXY_PREFIX,
     turnkeyOauthRedirectOrigin: url.origin,
   };

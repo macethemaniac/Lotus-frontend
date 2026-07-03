@@ -1,5 +1,6 @@
 type LotusRuntimeConfig = {
   lotusApiBaseUrl?: string;
+  lotusWsBaseUrl?: string;
   turnkeyAuthEnabled?: boolean | string;
   turnkeyAuthProxyConfigId?: string;
   turnkeyAuthProxyUrl?: string;
@@ -9,6 +10,7 @@ type LotusRuntimeConfig = {
 
 const runtimeConfig = readRuntimeConfig();
 const apiBaseUrl = firstConfiguredString(runtimeConfig.lotusApiBaseUrl, import.meta.env.VITE_LOTUS_API_BASE_URL);
+const wsBaseUrl = firstConfiguredString(runtimeConfig.lotusWsBaseUrl, import.meta.env.VITE_LOTUS_WS_BASE_URL);
 const turnkeyEnabled = firstConfiguredBoolean(runtimeConfig.turnkeyAuthEnabled, import.meta.env.VITE_TURNKEY_AUTH_ENABLED);
 const turnkeyApiBaseUrl = import.meta.env.VITE_TURNKEY_API_BASE_URL;
 const turnkeyOrganizationId = firstConfiguredString(runtimeConfig.turnkeyOrganizationId, import.meta.env.VITE_TURNKEY_ORGANIZATION_ID);
@@ -33,6 +35,7 @@ function isDisabledFlag(value: unknown): boolean {
 export const env = {
   lotusDeployEnv: resolvedLotusDeployEnv,
   lotusApiBaseUrl: configuredLotusApiBaseUrl(apiBaseUrl, resolvedLotusDeployEnv),
+  lotusWsBaseUrl: configuredLotusWsBaseUrl(wsBaseUrl, resolvedLotusDeployEnv),
   turnkeyAuthEnabled: turnkeyEnabled ?? false,
   turnkeyApiBaseUrl: typeof turnkeyApiBaseUrl === "string" && turnkeyApiBaseUrl.length > 0
     ? turnkeyApiBaseUrl.replace(/\/$/, "")
@@ -67,12 +70,17 @@ export function lotusMarketDiagnosticsEnabledForHost(hostname: string): boolean 
 }
 
 function resolveLotusWsBaseUrl(): string {
-  return env.lotusApiBaseUrl;
+  return env.lotusWsBaseUrl;
 }
 
 function configuredLotusApiBaseUrl(value: unknown, deployEnv: LotusDeployEnv): string {
   if (typeof value === "string" && value.length > 0) return value.replace(/\/$/, "");
   return defaultLotusApiBaseUrlForDeployEnv(deployEnv);
+}
+
+function configuredLotusWsBaseUrl(value: unknown, deployEnv: LotusDeployEnv): string {
+  if (typeof value === "string" && value.length > 0) return value.replace(/\/$/, "");
+  return defaultLotusWsBaseUrlForDeployEnv(deployEnv);
 }
 
 function executionOrchestratorEnabledForCurrentHost(value: unknown): boolean {
@@ -113,6 +121,19 @@ function defaultLotusApiBaseUrlForDeployEnv(deployEnv: LotusDeployEnv): string {
     case "staging":
     case "preview":
       return "/api";
+    case "local":
+    default:
+      return "http://localhost:3000";
+  }
+}
+
+function defaultLotusWsBaseUrlForDeployEnv(deployEnv: LotusDeployEnv): string {
+  switch (deployEnv) {
+    case "production":
+      return "https://api.uselotus.xyz";
+    case "staging":
+    case "preview":
+      return "https://staging-api.uselotus.xyz";
     case "local":
     default:
       return "http://localhost:3000";
