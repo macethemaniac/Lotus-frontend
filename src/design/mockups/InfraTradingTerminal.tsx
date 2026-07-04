@@ -35,6 +35,7 @@ import {
 } from '@/features/funding/api/funding-api';
 import {
   getCanonicalResolutionRisk,
+  getEventMarkets,
   getMarketBatchQuotes,
   getMarketChart,
   getMarketLivePrices,
@@ -43,6 +44,7 @@ import {
   getVenueMarketResolutionRisk,
   type MarketChartResponse,
   type MarketChartTimeframe,
+  type MarketCatalogMarket,
   type MarketCatalogVenueMarket,
   type MarketBatchQuoteItem,
   type MarketLivePriceItem,
@@ -614,6 +616,27 @@ const sameTerminalEvent = (market: TerminalMarketSelection, selected: TerminalMa
   const selectedEventIds = [selected.eventId, selected.canonicalEventId].filter(Boolean);
   const marketEventIds = [market.eventId, market.canonicalEventId].filter(Boolean);
   return selectedEventIds.length > 0 && marketEventIds.some((id) => selectedEventIds.includes(id));
+};
+
+const terminalOutcomeNameForEventMarket = (market: MarketCatalogMarket): string => {
+  const displayOutcome = market.displayOutcome?.trim();
+  if (displayOutcome) return displayOutcome;
+  const suffix = market.title.match(/:\s*(.+)$/)?.[1]?.trim();
+  return suffix && suffix.length > 0 ? suffix : market.title.trim();
+};
+
+const terminalOutcomeSeedForEventMarket = (market: MarketCatalogMarket) => {
+  const marketId = market.canonicalMarketIds[0] ?? market.canonicalEventId;
+  return {
+    id: marketId,
+    label: terminalOutcomeNameForEventMarket(market),
+    venues: market.venues,
+    marketId,
+    canonicalMarketIds: market.canonicalMarketIds,
+    quoteOutcomeId: 'YES',
+    volume: market.volume ?? null as string | null,
+    volume24h: market.volume24h ?? null as string | null,
+  };
 };
 
 const outcomePriceLabel = (market: TerminalMarketSelection, outcomeId: string, fallback: string): string => {
@@ -3183,6 +3206,7 @@ const InfraTradingTerminalInner = ({
   */
   const terminalMarketId = executionMarketId(terminalMarket);
   const terminalCanonicalEventId = selectedMarket?.canonicalEventId ?? selectedMarket?.eventId ?? null;
+  const terminalEventId = selectedMarket?.eventId ?? terminalMarket.eventId ?? null;
   const selectedVenueMarkets = selectedMarket?.venueMarkets ?? EMPTY_VENUE_MARKETS;
   const resolutionRuleFallbacks = useMemo(
     () => catalogRuleFallbacks(selectedVenueMarkets),
@@ -3610,6 +3634,9 @@ const InfraTradingTerminalInner = ({
       const seededEventOutcomes = fallbackRows.length > 0 && fallbackRows.some((row) =>
         row.marketId !== terminalMarketId || !isGenericBinaryOutcome(row.name)
       );
+      const eventMarketsResponse = terminalMarket.marketType === 'multi' && terminalEventId
+        ? await getEventMarkets(terminalEventId)
+        : null;
       const seededOutcomes = fallbackRows.map((row) => ({
         id: row.id,
         label: row.name,
@@ -3622,7 +3649,9 @@ const InfraTradingTerminalInner = ({
       }));
       const shouldFetchCanonicalOutcomes = !seededEventOutcomes && terminalMarket.marketType !== 'multi';
       const outcomeResponse = shouldFetchCanonicalOutcomes ? await getMarketOutcomes(terminalMarketId) : null;
-      const baseOutcomes = seededEventOutcomes
+      const baseOutcomes = eventMarketsResponse && eventMarketsResponse.markets.length > 0
+        ? eventMarketsResponse.markets.map(terminalOutcomeSeedForEventMarket)
+        : seededEventOutcomes
         ? seededOutcomes
         : outcomeResponse && outcomeResponse.outcomes.length > 0
           ? outcomeResponse.outcomes.map((outcome) => ({
@@ -3723,7 +3752,7 @@ const InfraTradingTerminalInner = ({
     } finally {
       setOutcomesLoading(false);
     }
-  }, [marketVenueList, selectTerminalOutcome, terminalMarket, terminalMarketId]);
+  }, [marketVenueList, selectTerminalOutcome, terminalEventId, terminalMarket, terminalMarketId]);
 
   const refreshAllOutcomePrices = useCallback(async () => {
     if (terminalLivePriceRefreshInFlightRef.current) {
