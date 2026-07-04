@@ -111,5 +111,5 @@ Worker configuration lives in [`wrangler.jsonc`](/Users/davidarnal/Documents/Lot
 ## Notes
 
 - Preview and `workers.dev` environments use the same-origin proxy approach as staging and production.
-- The frontend env layer resolves deployment mode explicitly instead of relying on `.vercel.app` assumptions.
+- The frontend env layer resolves deployment mode explicitly instead of relying on hostname-specific platform assumptions.
 - API traffic should go through `/api`, not direct browser calls to backend origins.
