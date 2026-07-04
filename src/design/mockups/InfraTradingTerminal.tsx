@@ -3251,8 +3251,16 @@ const InfraTradingTerminalInner = ({
     const activation = fundingActivations.find((item) => toBackendVenueId(item.venue) === 'POLYMARKET');
     return String(activation?.readinessReason ?? '').toUpperCase() === 'POLYMARKET_CLOB_SYNC_PENDING';
   }, [backendVenueList, fundingActivations, polymarketClobConfirmed]);
-  const visibleOutcomeRows = showAllOutcomes ? terminalOutcomes : terminalOutcomes.slice(0, 5);
   const selectedOutcome = terminalOutcomes.find((outcome) => outcome.id === selectedOutcomeId) ?? terminalOutcomes[0] ?? null;
+  const visibleOutcomeRows = useMemo(() => {
+    if (showAllOutcomes || terminalOutcomes.length <= 5) return terminalOutcomes;
+    const defaultRows = terminalOutcomes.slice(0, 5);
+    const pinnedOutcomeId = selectedOutcomeId ?? terminalMarket.initialOutcomeId ?? null;
+    if (!pinnedOutcomeId) return defaultRows;
+    const pinnedIndex = terminalOutcomes.findIndex((outcome) => outcome.id === pinnedOutcomeId);
+    if (pinnedIndex < 0 || pinnedIndex < 5) return defaultRows;
+    return [...terminalOutcomes.slice(0, 4), terminalOutcomes[pinnedIndex]!];
+  }, [selectedOutcomeId, showAllOutcomes, terminalMarket.initialOutcomeId, terminalOutcomes]);
   const selectedOutcomeMarketId = selectedOutcome?.marketId ?? terminalMarketId;
   const selectedQuoteOutcomeId = selectedOutcome?.quoteOutcomeId ?? selectedOutcomeId;
   const selectedOutcomeRefreshKey = `${selectedOutcome?.id ?? 'none'}:${selectedOutcomeMarketId ?? 'none'}:${selectedQuoteOutcomeId ?? 'none'}`;
@@ -3807,7 +3815,7 @@ const InfraTradingTerminalInner = ({
   }, [terminalMarket.canonicalMarketIds, terminalMarket.marketType, terminalMarketId]);
 
   React.useEffect(() => {
-    setShowAllOutcomes(false);
+    setShowAllOutcomes(terminalMarket.marketType === 'multi');
     selectTerminalOutcome(terminalMarket.initialOutcomeId ?? null);
     setExpandedOutcomeId(null);
     setTicketOutcomeSide(terminalMarket.initialOutcomeSide ?? 'yes');
