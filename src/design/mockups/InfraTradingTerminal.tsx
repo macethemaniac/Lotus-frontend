@@ -91,6 +91,7 @@ import { openExecutionSocket, type ExecutionTopic, type ExecutionWsState } from 
 const ORDERBOOK_DISPLAY_REST_FALLBACK_DELAY_MS = 1_000;
 const ORDERBOOK_REST_RECOVERY_MIN_INTERVAL_MS = 45_000;
 const ORDERBOOK_STREAM_GAP_RECOVERY_DELAY_MS = 1_500;
+const SELECTED_OUTCOME_BOOK_STABILIZE_DELAY_MS = 250;
 const TERMINAL_CHART_REFRESH_INTERVAL_MS = 60_000;
 const TERMINAL_ACCOUNT_REFRESH_INTERVAL_MS = 30_000;
 const TERMINAL_ALL_OUTCOME_PRICE_REFRESH_INTERVAL_MS = 12_000;
@@ -3033,6 +3034,7 @@ const InfraTradingTerminalInner = ({
   const [expandedOutcomeId, setExpandedOutcomeId] = useState<string | null>(null);
   const [selectedOutcomeId, setSelectedOutcomeId] = useState<string | null>(null);
   const [selectedOutcomeDisplayFallback, setSelectedOutcomeDisplayFallback] = useState<TerminalOutcomeDisplayValues | null>(null);
+  const [selectedOutcomeDisplayReady, setSelectedOutcomeDisplayReady] = useState(false);
   const [terminalOutcomes, setTerminalOutcomes] = useState<TerminalOutcomeRow[]>([]);
   const [outcomesLoading, setOutcomesLoading] = useState(false);
   const [outcomesError, setOutcomesError] = useState<string | null>(null);
@@ -3066,6 +3068,7 @@ const InfraTradingTerminalInner = ({
   const terminalLivePriceRefreshQueuedRef = React.useRef(false);
   const missingRiskProfileKeysRef = React.useRef<Set<string>>(new Set());
   const selectedOutcomeRef = React.useRef<TerminalOutcomeRow | null>(null);
+  const selectedOutcomeIdRef = React.useRef<string | null>(null);
   const terminalOutcomesRef = React.useRef<TerminalOutcomeRow[]>([]);
   const autoPolymarketClobSyncKeyRef = React.useRef<string | null>(null);
   const orchestratorPreviewSeqRef = React.useRef(0);
@@ -3246,6 +3249,9 @@ const InfraTradingTerminalInner = ({
   React.useEffect(() => {
     selectedOutcomeRef.current = selectedOutcome;
   }, [selectedOutcome]);
+  React.useEffect(() => {
+    selectedOutcomeIdRef.current = selectedOutcomeId;
+  }, [selectedOutcomeId]);
   const orderbookActive = Boolean(selectedOutcome && expandedOutcomeId === selectedOutcome.id);
   const orderbookMarketId = orderbookActive ? selectedOutcomeMarketId ?? terminalMarketId : null;
   const orderbookSideLabel = ticketOutcomeSide === 'no' ? 'No' : 'Yes';
@@ -3422,11 +3428,32 @@ const InfraTradingTerminalInner = ({
       probability: normalizedMidpoint !== null ? formatProbabilityPercent(normalizedMidpoint) : null,
     };
   }, [marketType, orderbook]);
+  const latchSelectedOutcomeDisplayFallback = useCallback((
+    outcomeId: string | null,
+    outcomeRows: TerminalOutcomeRow[] = terminalOutcomesRef.current,
+  ) => {
+    const row = outcomeId ? outcomeRows.find((outcome) => outcome.id === outcomeId) ?? null : null;
+    setSelectedOutcomeDisplayFallback(row
+      ? {
+          yesPrice: row.yesPrice,
+          noPrice: row.noPrice,
+          probability: row.prob,
+        }
+      : null);
+  }, []);
+  const selectTerminalOutcome = useCallback((
+    outcomeId: string | null,
+    outcomeRows?: TerminalOutcomeRow[],
+  ) => {
+    latchSelectedOutcomeDisplayFallback(outcomeId, outcomeRows);
+    setSelectedOutcomeDisplayReady(false);
+    setSelectedOutcomeId(outcomeId);
+  }, [latchSelectedOutcomeDisplayFallback]);
   const selectedOutcomeDisplayValues = useMemo(() => resolveSelectedOutcomeDisplayValues({
     fallback: selectedOutcomeDisplayFallback,
     live: selectedOutcomeBookDisplay,
-    liveReady: selectedOutcomeBookReady,
-  }), [selectedOutcomeBookDisplay, selectedOutcomeBookReady, selectedOutcomeDisplayFallback]);
+    liveReady: selectedOutcomeDisplayReady,
+  }), [selectedOutcomeBookDisplay, selectedOutcomeDisplayFallback, selectedOutcomeDisplayReady]);
   const selectedTicketUsesLatchedOutcomeDisplay = selectedTicketOutcome?.id === selectedOutcome?.id;
   const selectedTicketYesPrice = selectedTicketUsesLatchedOutcomeDisplay
     ? selectedOutcomeDisplayValues.yesPrice ?? selectedTicketOutcome?.yesPrice ?? null
@@ -3436,10 +3463,10 @@ const InfraTradingTerminalInner = ({
     : selectedTicketOutcome?.noPrice ?? null;
 
   const focusTerminalOutcomeOrderbook = useCallback((outcomeId: string) => {
-    setSelectedOutcomeId(outcomeId);
+    selectTerminalOutcome(outcomeId);
     setExpandedOutcomeId(outcomeId);
     setBottomTab('Outcomes');
-  }, []);
+  }, [selectTerminalOutcome]);
 
   const inlineOrderbookLiveVenueCount = useMemo(() => {
     return (orderbook?.venues ?? []).filter((venue) => {
@@ -3448,20 +3475,22 @@ const InfraTradingTerminalInner = ({
   }, [orderbook?.venues]);
 
   React.useEffect(() => {
-    setSelectedOutcomeDisplayFallback(selectedOutcome
-      ? {
-          yesPrice: selectedOutcome.yesPrice,
-          noPrice: selectedOutcome.noPrice,
-          probability: selectedOutcome.prob,
-        }
-      : null);
-  }, [selectedOutcomeRefreshKey]);
+    if (!selectedOutcomeBookReady) {
+      setSelectedOutcomeDisplayReady(false);
+      return;
+    }
+    const timeout = window.setTimeout(() => {
+      setSelectedOutcomeDisplayReady(true);
+    }, SELECTED_OUTCOME_BOOK_STABILIZE_DELAY_MS);
+    return () => window.clearTimeout(timeout);
+  }, [selectedOutcomeBookReady, selectedOutcomeRefreshKey]);
 
   const refreshOutcomes = useCallback(async () => {
     const fallbackRows = initialOutcomeRows(terminalMarket);
     if (!terminalMarketId) {
       setTerminalOutcomes(fallbackRows);
-      setSelectedOutcomeId((current) => current ?? fallbackRows[0]?.id ?? null);
+      const nextSelectedOutcomeId = selectedOutcomeIdRef.current ?? fallbackRows[0]?.id ?? null;
+      selectTerminalOutcome(nextSelectedOutcomeId, fallbackRows);
       return;
     }
 
@@ -3559,27 +3588,31 @@ const InfraTradingTerminalInner = ({
       });
 
       setTerminalOutcomes(rows);
-      setSelectedOutcomeId((current) => {
-        if (current && rows.some((row) => row.id === current)) return current;
+      const currentSelectedOutcomeId = selectedOutcomeIdRef.current;
+      const nextSelectedOutcomeId = (() => {
+        if (currentSelectedOutcomeId && rows.some((row) => row.id === currentSelectedOutcomeId)) return currentSelectedOutcomeId;
         if (terminalMarket.initialOutcomeId && rows.some((row) => row.id === terminalMarket.initialOutcomeId)) {
           return terminalMarket.initialOutcomeId;
         }
         return rows[0]?.id ?? null;
-      });
+      })();
+      selectTerminalOutcome(nextSelectedOutcomeId, rows);
     } catch (error) {
       setTerminalOutcomes(fallbackRows);
-      setSelectedOutcomeId((current) => {
-        if (current) return current;
+      const currentSelectedOutcomeId = selectedOutcomeIdRef.current;
+      const nextSelectedOutcomeId = (() => {
+        if (currentSelectedOutcomeId) return currentSelectedOutcomeId;
         if (terminalMarket.initialOutcomeId && fallbackRows.some((row) => row.id === terminalMarket.initialOutcomeId)) {
           return terminalMarket.initialOutcomeId;
         }
         return fallbackRows[0]?.id ?? null;
-      });
+      })();
+      selectTerminalOutcome(nextSelectedOutcomeId, fallbackRows);
       setOutcomesError(error instanceof Error ? error.message : 'Unable to load market outcomes');
     } finally {
       setOutcomesLoading(false);
     }
-  }, [marketVenueList, terminalMarket, terminalMarketId]);
+  }, [marketVenueList, selectTerminalOutcome, terminalMarket, terminalMarketId]);
 
   const refreshAllOutcomePrices = useCallback(async () => {
     if (terminalLivePriceRefreshInFlightRef.current) {
@@ -3672,7 +3705,7 @@ const InfraTradingTerminalInner = ({
 
   React.useEffect(() => {
     setShowAllOutcomes(false);
-    setSelectedOutcomeId(terminalMarket.initialOutcomeId ?? null);
+    selectTerminalOutcome(terminalMarket.initialOutcomeId ?? null);
     setExpandedOutcomeId(null);
     setTicketOutcomeSide(terminalMarket.initialOutcomeSide ?? 'yes');
     setTicketAmount('');
@@ -3686,7 +3719,7 @@ const InfraTradingTerminalInner = ({
     setTicketOrchestratorAutoRenewFailed(false);
     setTicketStatusMessage(null);
     setTicketError(null);
-  }, [terminalMarket.initialOutcomeId, terminalMarket.initialOutcomeSide, terminalMarketId]);
+  }, [selectTerminalOutcome, terminalMarket.initialOutcomeId, terminalMarket.initialOutcomeSide, terminalMarketId]);
 
   const selectTicketOutcome = useCallback((nextSide: TicketOutcomeSide, fallbackOutcomeId?: string | null) => {
     setTicketOutcomeSide(nextSide);
@@ -3701,9 +3734,9 @@ const InfraTradingTerminalInner = ({
     setTicketStatusMessage(null);
     setTicketError(null);
     if (fallbackOutcomeId) {
-      setSelectedOutcomeId(fallbackOutcomeId);
+      selectTerminalOutcome(fallbackOutcomeId);
     }
-  }, []);
+  }, [selectTerminalOutcome]);
 
   const resetTicketPreviewState = useCallback(() => {
     setTicketLiveCandidates(null);
@@ -6236,7 +6269,7 @@ const InfraTradingTerminalInner = ({
                                 initialOutcomeId: outcome.id,
                                 initialOutcomeSide: side,
                               });
-                              setSelectedOutcomeId(outcome.id);
+                              selectTerminalOutcome(outcome.id);
                               selectTicketOutcome(side, outcome.id);
                               setShowMarketSelector(false);
                             };
@@ -6794,7 +6827,7 @@ const InfraTradingTerminalInner = ({
                                               event.stopPropagation();
                                               setExpandedOutcomeId((current) => {
                                                 if (current === m.id) return null;
-                                                setSelectedOutcomeId(m.id);
+                                                selectTerminalOutcome(m.id);
                                                 return m.id;
                                               });
                                             }}
