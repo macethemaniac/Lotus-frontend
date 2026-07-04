@@ -745,7 +745,7 @@ const formatBookLevelSize = (level: MarketOrderbookLevel): string =>
 const formatBookLevelNotional = (level: MarketOrderbookLevel): string =>
   formatBookNotional(level.cumulativeNotional);
 
-const ISO_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/i;
+const ISO_TIMESTAMP_PATTERN = /^\d{4}(?:[- ]\d{2}){2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?$/i;
 
 const isIsoTimestampLike = (value: string | null | undefined): boolean =>
   Boolean(value && ISO_TIMESTAMP_PATTERN.test(value.trim()));
@@ -1037,7 +1037,7 @@ const mergeOrderbookStreamUpdate = (
     toBackendVenueId(venue.venue) === toBackendVenueId(venueBook.venue);
   const existingVenues = current?.venues ?? [];
   const venues = [...existingVenues.filter((venue) => !sameVenue(venue)), venueBook];
-  const activeVenues = venues.filter((venue) => venue.blockers.length === 0 && (venue.bids.length > 0 || venue.asks.length > 0));
+  const activeVenues = venues.filter(venueHasRenderableDepth);
   const bids = sortAndCumulativeLevels(
     activeVenues.flatMap((venue) => venue.bids),
     'bid',
@@ -1154,6 +1154,65 @@ const filterOrderbookForVenue = (
     spread: stats.spread,
     status: hasLevels ? 'live' : 'unavailable',
     blockers: orderbook.blockers.filter((blocker) => toBackendVenueId(blocker.venue) === backendVenue),
+  };
+};
+
+const venueHasRenderableDepth = (venue: MarketOrderbookVenue): boolean =>
+  venue.blockers.length === 0 && (venue.bids.length > 0 || venue.asks.length > 0 || Boolean(venue.bestBid || venue.bestAsk));
+
+const venueBookStrength = (venue: MarketOrderbookVenue): number => {
+  const blockerPenalty = venue.blockers.length > 0 ? -1_000 : 0;
+  const renderedLevels = venue.bids.length + venue.asks.length;
+  const topOfBook = venue.bestBid || venue.bestAsk ? 25 : 0;
+  const liveDepth = venueHasRenderableDepth(venue) ? 500 : 0;
+  const streamBonus = venue.source === 'STREAM' ? 2 : 0;
+  return blockerPenalty + liveDepth + renderedLevels * 5 + topOfBook + streamBonus;
+};
+
+const mergeOrderbookSnapshots = (
+  current: MarketOrderbookResponse | null,
+  next: MarketOrderbookResponse,
+): MarketOrderbookResponse => {
+  if (!current) return next;
+
+  const mergedVenueMap = new Map<string, MarketOrderbookVenue>();
+  for (const venue of current.venues) {
+    mergedVenueMap.set(toBackendVenueId(venue.venue), venue);
+  }
+  for (const venue of next.venues) {
+    const key = toBackendVenueId(venue.venue);
+    const existing = mergedVenueMap.get(key);
+    if (!existing || venueBookStrength(venue) >= venueBookStrength(existing)) {
+      mergedVenueMap.set(key, venue);
+    }
+  }
+
+  const venues = [...mergedVenueMap.values()];
+  const activeVenues = venues.filter(venueHasRenderableDepth);
+  const bids = sortAndCumulativeLevels(activeVenues.flatMap((venue) => venue.bids), 'bid', next.depth);
+  const asks = sortAndCumulativeLevels(activeVenues.flatMap((venue) => venue.asks), 'ask', next.depth);
+  const stats = bookStats(bids, asks);
+  const blockerByKey = new Map<string, MarketOrderbookResponse['blockers'][number]>();
+  for (const blocker of [...current.blockers, ...next.blockers]) {
+    blockerByKey.set(`${toBackendVenueId(blocker.venue)}:${blocker.reason}:${blocker.venueMarketId ?? ''}:${blocker.venueOutcomeId ?? ''}`, blocker);
+  }
+
+  const liveVenueCount = activeVenues.length;
+  const nextLiveVenueCount = next.venues.filter(venueHasRenderableDepth).length;
+  const currentLiveVenueCount = current.venues.filter(venueHasRenderableDepth).length;
+  const preferCurrentStatus = liveVenueCount > nextLiveVenueCount && currentLiveVenueCount >= liveVenueCount;
+
+  return {
+    ...next,
+    status: preferCurrentStatus ? current.status : next.status,
+    venues,
+    bids,
+    asks,
+    bestBid: stats.bestBid,
+    bestAsk: stats.bestAsk,
+    midpoint: stats.midpoint,
+    spread: stats.spread,
+    blockers: [...blockerByKey.values()],
   };
 };
 
@@ -3109,6 +3168,8 @@ const InfraTradingTerminalInner = ({
   const selectedOutcomeRef = React.useRef<TerminalOutcomeRow | null>(null);
   const selectedOutcomeIdRef = React.useRef<string | null>(null);
   const terminalOutcomesRef = React.useRef<TerminalOutcomeRow[]>([]);
+  const orderbookCacheRef = React.useRef<Map<string, MarketOrderbookResponse>>(new Map());
+  const outcomeDisplayCacheRef = React.useRef<Map<string, TerminalOutcomeDisplayValues>>(new Map());
   const autoPolymarketClobSyncKeyRef = React.useRef<string | null>(null);
   const orchestratorPreviewSeqRef = React.useRef(0);
   const publicQuotePreviewSeqRef = React.useRef(0);
@@ -3435,6 +3496,7 @@ const InfraTradingTerminalInner = ({
       ? rawDisplayOrderbook?.status ?? 'pending'
       : 'updating';
   const unavailableOrderbookVenueRows = useMemo(() => {
+    if (!marketDiagnosticsEnabled) return [];
     const rows = new Map<string, { venue: string; reason: string; status: 'syncing' | 'unavailable' }>();
     for (const blocker of rawDisplayOrderbook?.blockers ?? []) {
       const backendVenue = toBackendVenueId(blocker.venue);
@@ -3459,7 +3521,7 @@ const InfraTradingTerminalInner = ({
       });
     }
     return [...rows.values()];
-  }, [rawDisplayOrderbook?.blockers]);
+  }, [marketDiagnosticsEnabled, rawDisplayOrderbook?.blockers]);
   const selectedOutcomeSyncingVenueCount = useMemo(
     () => unavailableOrderbookVenueRows.filter((row) => row.status === 'syncing').length,
     [unavailableOrderbookVenueRows],
@@ -3527,14 +3589,30 @@ const InfraTradingTerminalInner = ({
     setSelectedOutcomeDisplayFallback(nextDisplayValues);
     setSelectedOutcomeDisplayValues(nextDisplayValues);
   }, []);
+  const cacheKeyForOutcome = useCallback((
+    outcomeId: string | null,
+    outcomeRows: TerminalOutcomeRow[] = terminalOutcomesRef.current,
+  ): string | null => {
+    const row = outcomeId ? outcomeRows.find((outcome) => outcome.id === outcomeId) ?? null : null;
+    if (!row) return null;
+    const marketId = row.marketId ?? executionMarketId(terminalMarket);
+    const outcomeKey = row.quoteOutcomeId ?? row.id;
+    if (!marketId || !outcomeKey) return null;
+    return `${row.id}:${marketId}:${outcomeKey}`;
+  }, [terminalMarket]);
   const selectTerminalOutcome = useCallback((
     outcomeId: string | null,
     outcomeRows?: TerminalOutcomeRow[],
   ) => {
     latchSelectedOutcomeDisplayFallback(outcomeId, outcomeRows);
-    setVisibleSelectedOutcomeOrderbook(null);
+    const cacheKey = cacheKeyForOutcome(outcomeId, outcomeRows);
+    setVisibleSelectedOutcomeOrderbook(cacheKey ? orderbookCacheRef.current.get(cacheKey) ?? null : null);
+    if (cacheKey) {
+      const cachedDisplay = outcomeDisplayCacheRef.current.get(cacheKey) ?? null;
+      if (cachedDisplay) setSelectedOutcomeDisplayValues(cachedDisplay);
+    }
     setSelectedOutcomeId(outcomeId);
-  }, [latchSelectedOutcomeDisplayFallback]);
+  }, [cacheKeyForOutcome, latchSelectedOutcomeDisplayFallback]);
   const selectedTicketUsesLatchedOutcomeDisplay = selectedTicketOutcome?.id === selectedOutcome?.id;
   const selectedTicketYesPrice = selectedTicketUsesLatchedOutcomeDisplay
     ? selectedOutcomeDisplayValues?.yesPrice ?? selectedTicketOutcome?.yesPrice ?? null
@@ -3561,13 +3639,17 @@ const InfraTradingTerminalInner = ({
       current,
       next: orderbook,
       nextReady: selectedOutcomeBookReady,
-      nextUsable: true,
+      nextUsable: current === null,
     }));
   }, [orderbook, selectedOutcomeBookReady, selectedOutcomeBookUsable]);
 
   React.useEffect(() => {
     if (!selectedOutcomeBookReady) return;
     const timeout = window.setTimeout(() => {
+      if (orderbook && selectedOutcomeRefreshKey && !selectedOutcomeRefreshKey.startsWith('none:')) {
+        orderbookCacheRef.current.set(selectedOutcomeRefreshKey, orderbook);
+        outcomeDisplayCacheRef.current.set(selectedOutcomeRefreshKey, selectedOutcomeBookDisplay);
+      }
       setVisibleSelectedOutcomeOrderbook((current) => resolveVisibleSelectedOutcomeOrderbook({
         current,
         next: orderbook,
@@ -5041,11 +5123,12 @@ const InfraTradingTerminalInner = ({
           canonicalMarketIds: orderbookStreamMarketIds,
           ...(options.snapshotOnly ? { snapshotOnly: true } : {}),
         });
+        const mergedResponse = mergeOrderbookSnapshots(orderbookRef.current, response);
         if (!cancelled) {
-          if (hasUsableOrderbookDepth(response) || !options.snapshotOnly) {
-            orderbookRef.current = response;
+          if (hasUsableOrderbookDepth(mergedResponse) || !options.snapshotOnly) {
+            orderbookRef.current = mergedResponse;
           }
-          setOrderbook(response);
+          setOrderbook(mergedResponse);
           const nextTopics = mergeOrderbookStreamTopics(localTopics, normalizeOrderbookStreamTopics(response.stream?.topics));
           setOrderbookStreamTopics((current) => sameTopicList(current, nextTopics) ? current : nextTopics);
           setOrderbookNotFoundKey(null);
@@ -5148,8 +5231,9 @@ const InfraTradingTerminalInner = ({
           canonicalMarketIds: orderbookStreamMarketIds,
         });
         if (!active) return;
-        orderbookRef.current = response;
-        setOrderbook(response);
+        const mergedResponse = mergeOrderbookSnapshots(orderbookRef.current, response);
+        orderbookRef.current = mergedResponse;
+        setOrderbook(mergedResponse);
         const nextTopics = mergeOrderbookStreamTopics(localTopics, normalizeOrderbookStreamTopics(response.stream?.topics));
         setOrderbookStreamTopics((current) => sameTopicList(current, nextTopics) ? current : nextTopics);
         setOrderbookError(null);
@@ -5306,11 +5390,14 @@ const InfraTradingTerminalInner = ({
 
           if (event.type === 'MARKET_ORDERBOOK_UPDATE') {
             if (isOrderbookInitialSnapshotPayload(payload)) {
-              const nextOrderbook = normalizeOrderbookInitialSnapshot(
-                payload,
+              const nextOrderbook = mergeOrderbookSnapshots(
                 orderbookRef.current,
-                expectedMarketId,
-                expectedOutcomeId
+                normalizeOrderbookInitialSnapshot(
+                  payload,
+                  orderbookRef.current,
+                  expectedMarketId,
+                  expectedOutcomeId
+                ),
               );
               orderbookRef.current = nextOrderbook;
               setOrderbook(nextOrderbook);
