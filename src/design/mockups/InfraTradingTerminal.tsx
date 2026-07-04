@@ -36,6 +36,7 @@ import {
 import {
   getCanonicalResolutionRisk,
   getEventMarkets,
+  getMarket,
   getMarketBatchQuotes,
   getMarketChart,
   getMarketLivePrices,
@@ -3634,9 +3635,15 @@ const InfraTradingTerminalInner = ({
       const seededEventOutcomes = fallbackRows.length > 0 && fallbackRows.some((row) =>
         row.marketId !== terminalMarketId || !isGenericBinaryOutcome(row.name)
       );
-      const eventMarketsResponse = terminalMarket.marketType === 'multi' && terminalEventId
-        ? await getEventMarkets(terminalEventId)
-        : null;
+      let eventMarketsResponse: Awaited<ReturnType<typeof getEventMarkets>> | null = null;
+      if (terminalMarket.marketType === 'multi') {
+        const resolvedEventId = terminalEventId ?? (terminalMarketId
+          ? ((await getMarket(terminalMarketId)).market.eventId ?? null)
+          : null);
+        if (resolvedEventId) {
+          eventMarketsResponse = await getEventMarkets(resolvedEventId);
+        }
+      }
       const seededOutcomes = fallbackRows.map((row) => ({
         id: row.id,
         label: row.name,
