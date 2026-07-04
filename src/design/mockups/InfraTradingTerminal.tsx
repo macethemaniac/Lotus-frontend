@@ -11,6 +11,11 @@ import { JsonRpcProvider, Transaction } from 'ethers';
 import { CryptoLogo, VenueLogo, resolveTopicAssetLogoId } from '@/components/icons/asset-logo';
 import { LotusLogo } from '@/components/icons/lotus-icons';
 import { FundingDeposit } from '@/design/mockups/FundingDeposit';
+import {
+  isSelectedOutcomeBookReady,
+  resolveSelectedOutcomeDisplayValues,
+  type TerminalOutcomeDisplayValues,
+} from '@/design/mockups/terminal-outcome-display';
 import { isTurnkeyProviderConfigured } from '@/app/turnkey-provider';
 import { env, lotusMarketDiagnosticsEnabled } from '@/config/env';
 import type { AuthSession } from '@/features/auth/types';
@@ -3027,6 +3032,7 @@ const InfraTradingTerminalInner = ({
   const [showAllOutcomes, setShowAllOutcomes] = useState(false);
   const [expandedOutcomeId, setExpandedOutcomeId] = useState<string | null>(null);
   const [selectedOutcomeId, setSelectedOutcomeId] = useState<string | null>(null);
+  const [selectedOutcomeDisplayFallback, setSelectedOutcomeDisplayFallback] = useState<TerminalOutcomeDisplayValues | null>(null);
   const [terminalOutcomes, setTerminalOutcomes] = useState<TerminalOutcomeRow[]>([]);
   const [outcomesLoading, setOutcomesLoading] = useState(false);
   const [outcomesError, setOutcomesError] = useState<string | null>(null);
@@ -3380,6 +3386,25 @@ const InfraTradingTerminalInner = ({
     }
     return [...rows.values()];
   }, [displayOrderbook?.blockers]);
+  const selectedOutcomeSyncingVenueCount = useMemo(
+    () => unavailableOrderbookVenueRows.filter((row) => row.status === 'syncing').length,
+    [unavailableOrderbookVenueRows],
+  );
+  const selectedOutcomeBookReady = useMemo(() => isSelectedOutcomeBookReady({
+    orderbook,
+    orderbookMarketId,
+    orderbookOutcomeId: orderbookQuoteOutcomeId,
+    snapshotStatus: orderbookSnapshotStatus,
+    liveVenueCount: orderbookLiveVenueCount,
+    syncingVenueCount: selectedOutcomeSyncingVenueCount,
+  }), [
+    orderbook,
+    orderbookLiveVenueCount,
+    orderbookMarketId,
+    orderbookQuoteOutcomeId,
+    orderbookSnapshotStatus,
+    selectedOutcomeSyncingVenueCount,
+  ]);
   const selectedOutcomeBookDisplay = useMemo(() => {
     if (!orderbook) {
       return {
@@ -3397,6 +3422,18 @@ const InfraTradingTerminalInner = ({
       probability: normalizedMidpoint !== null ? formatProbabilityPercent(normalizedMidpoint) : null,
     };
   }, [marketType, orderbook]);
+  const selectedOutcomeDisplayValues = useMemo(() => resolveSelectedOutcomeDisplayValues({
+    fallback: selectedOutcomeDisplayFallback,
+    live: selectedOutcomeBookDisplay,
+    liveReady: selectedOutcomeBookReady,
+  }), [selectedOutcomeBookDisplay, selectedOutcomeBookReady, selectedOutcomeDisplayFallback]);
+  const selectedTicketUsesLatchedOutcomeDisplay = selectedTicketOutcome?.id === selectedOutcome?.id;
+  const selectedTicketYesPrice = selectedTicketUsesLatchedOutcomeDisplay
+    ? selectedOutcomeDisplayValues.yesPrice ?? selectedTicketOutcome?.yesPrice ?? null
+    : selectedTicketOutcome?.yesPrice ?? null;
+  const selectedTicketNoPrice = selectedTicketUsesLatchedOutcomeDisplay
+    ? selectedOutcomeDisplayValues.noPrice ?? selectedTicketOutcome?.noPrice ?? null
+    : selectedTicketOutcome?.noPrice ?? null;
 
   const focusTerminalOutcomeOrderbook = useCallback((outcomeId: string) => {
     setSelectedOutcomeId(outcomeId);
@@ -3409,6 +3446,16 @@ const InfraTradingTerminalInner = ({
       return venue.blockers.length === 0 && (venue.bids.length > 0 || venue.asks.length > 0 || Boolean(venue.bestBid || venue.bestAsk));
     }).length;
   }, [orderbook?.venues]);
+
+  React.useEffect(() => {
+    setSelectedOutcomeDisplayFallback(selectedOutcome
+      ? {
+          yesPrice: selectedOutcome.yesPrice,
+          noPrice: selectedOutcome.noPrice,
+          probability: selectedOutcome.prob,
+        }
+      : null);
+  }, [selectedOutcomeRefreshKey]);
 
   const refreshOutcomes = useCallback(async () => {
     const fallbackRows = initialOutcomeRows(terminalMarket);
@@ -5604,7 +5651,7 @@ const InfraTradingTerminalInner = ({
     }`
     : null;
   const ticketSpotMidPrice = normalizedOrderbookProbability(displayOrderbook?.midpoint)
-    ?? parseProbabilityLabel(selectedOutcomeBookDisplay.probability)
+    ?? parseProbabilityLabel(selectedOutcomeDisplayValues.probability)
     ?? ticketPriceForSide(selectedTicketOutcome, ticketOutcomeSide);
   const ticketExecutionPriceForImpact = executionOrchestratorEnabled && ticketOrchestratorOrder
     ? orderEffectivePrice(ticketOrchestratorOrder)
@@ -6542,9 +6589,9 @@ const InfraTradingTerminalInner = ({
                            const venues = m.venues.length ? m.venues : marketVenueList;
                            const primaryVenue = m.primaryVenue ?? venues[0] ?? 'lotus';
                            const isSelectedOutcome = selectedOutcomeId ? selectedOutcomeId === m.id : m.active;
-                           const rowYesPrice = isSelectedOutcome ? selectedOutcomeBookDisplay.yesPrice ?? m.yesPrice : m.yesPrice;
-                           const rowNoPrice = isSelectedOutcome ? selectedOutcomeBookDisplay.noPrice ?? m.noPrice : m.noPrice;
-                           const rowProbability = isSelectedOutcome ? selectedOutcomeBookDisplay.probability ?? m.prob : m.prob;
+                           const rowYesPrice = isSelectedOutcome ? selectedOutcomeDisplayValues.yesPrice ?? m.yesPrice : m.yesPrice;
+                           const rowNoPrice = isSelectedOutcome ? selectedOutcomeDisplayValues.noPrice ?? m.noPrice : m.noPrice;
+                           const rowProbability = isSelectedOutcome ? selectedOutcomeDisplayValues.probability ?? m.prob : m.prob;
                            const rowYesVenue = primaryVenue;
                            const rowNoVenue = primaryVenue;
                            const rowYesSelected = isSelectedOutcome && ticketOutcomeSide === 'yes';
@@ -7470,10 +7517,10 @@ const InfraTradingTerminalInner = ({
               <div className="flex flex-col gap-3 p-3 animate-in fade-in duration-300 2xl:p-4 xl:min-h-0 xl:flex-none xl:overflow-visible">
                   <div className="grid grid-cols-2 gap-3">
                       <button type="button" onClick={() => selectTicketOutcome('yes')} className={`font-bold py-3 rounded-lg flex items-center justify-center gap-2 shadow-sm transition-colors text-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${ticketOutcomeSide === 'yes' ? 'bg-emerald-500 text-white hover:bg-emerald-400' : 'bg-transparent border border-emerald-500/30 text-emerald-500 hover:bg-emerald-500/10'}`}>
-                          YES {displayPriceLabel(selectedTicketOutcome?.yesPrice, marketDiagnosticsEnabled)}
+                          YES {displayPriceLabel(selectedTicketYesPrice, marketDiagnosticsEnabled)}
                       </button>
                       <button type="button" onClick={() => selectTicketOutcome('no')} className={`font-bold py-3 rounded-lg flex items-center justify-center gap-2 shadow-sm transition-colors text-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${ticketOutcomeSide === 'no' ? 'bg-[#E52B50] text-white hover:bg-[#ff3366]' : 'bg-transparent border border-red-500/30 text-red-500 hover:bg-red-500/10'}`}>
-                          NO {displayPriceLabel(selectedTicketOutcome?.noPrice, marketDiagnosticsEnabled)}
+                          NO {displayPriceLabel(selectedTicketNoPrice, marketDiagnosticsEnabled)}
                       </button>
                   </div>
 
@@ -7855,10 +7902,10 @@ const InfraTradingTerminalInner = ({
                  <div className="p-4 flex flex-col gap-4 animate-in fade-in duration-300">
                      <div className="grid grid-cols-2 gap-3">
                          <button type="button" onClick={() => selectTicketOutcome('yes')} className={`font-bold py-3 rounded-lg flex items-center justify-center gap-2 shadow-sm transition-colors text-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${ticketOutcomeSide === 'yes' ? 'bg-emerald-500 text-white hover:bg-emerald-400' : 'bg-transparent border border-emerald-500/30 text-emerald-500 hover:bg-emerald-500/10'}`}>
-                             YES {displayPriceLabel(selectedTicketOutcome?.yesPrice, marketDiagnosticsEnabled)}
+                             YES {displayPriceLabel(selectedTicketYesPrice, marketDiagnosticsEnabled)}
                          </button>
                          <button type="button" onClick={() => selectTicketOutcome('no')} className={`font-bold py-3 rounded-lg flex items-center justify-center gap-2 shadow-sm transition-colors text-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${ticketOutcomeSide === 'no' ? 'bg-[#E52B50] text-white hover:bg-[#ff3366]' : 'bg-transparent border border-red-500/30 text-red-500 hover:bg-red-500/10'}`}>
-                             NO {displayPriceLabel(selectedTicketOutcome?.noPrice, marketDiagnosticsEnabled)}
+                             NO {displayPriceLabel(selectedTicketNoPrice, marketDiagnosticsEnabled)}
                          </button>
                      </div>
 
