@@ -3155,6 +3155,9 @@ const InfraTradingTerminalInner = ({
     () => relatedMarkets.filter((market) => sameTerminalEvent(market, terminalMarket)),
     [relatedMarkets, terminalMarket],
   );
+  const hasCompoundEventOutcomes = terminalMarket.marketType === 'multi'
+    || (terminalMarket.outcomes?.length ?? 0) > 1
+    || relatedEventMarkets.length > 1;
   const selectorSummary = useMemo(() => ({
     marketCount: selectorMarkets.length,
     bestRoute: bestRouteLabel(selectorMarkets),
@@ -3582,7 +3585,7 @@ const InfraTradingTerminalInner = ({
   }, [orderbook, selectedOutcomeBookDisplay, selectedOutcomeBookReady, selectedOutcomeDisplayFallback, selectedOutcomeRefreshKey]);
 
   const refreshOutcomes = useCallback(async () => {
-    const relatedEventOutcomeRows = terminalMarket.marketType === 'multi'
+    const relatedEventOutcomeRows = hasCompoundEventOutcomes
       ? relatedEventMarkets.map((market) => ({
         id: market.initialOutcomeId ?? market.marketId ?? market.id ?? market.title,
         marketId: market.marketId ?? executionMarketId(market),
@@ -3636,7 +3639,7 @@ const InfraTradingTerminalInner = ({
         row.marketId !== terminalMarketId || !isGenericBinaryOutcome(row.name)
       );
       let eventMarketsResponse: Awaited<ReturnType<typeof getEventMarkets>> | null = null;
-      if (terminalMarket.marketType === 'multi') {
+      if (hasCompoundEventOutcomes) {
         const resolvedEventId = terminalEventId ?? (terminalMarketId
           ? ((await getMarket(terminalMarketId)).market.eventId ?? null)
           : null);
@@ -3654,7 +3657,7 @@ const InfraTradingTerminalInner = ({
         volume: null as string | null,
         volume24h: null as string | null,
       }));
-      const shouldFetchCanonicalOutcomes = !seededEventOutcomes && terminalMarket.marketType !== 'multi';
+      const shouldFetchCanonicalOutcomes = !seededEventOutcomes && !hasCompoundEventOutcomes;
       const outcomeResponse = shouldFetchCanonicalOutcomes ? await getMarketOutcomes(terminalMarketId) : null;
       const baseOutcomes = eventMarketsResponse && eventMarketsResponse.markets.length > 0
         ? eventMarketsResponse.markets.map(terminalOutcomeSeedForEventMarket)
@@ -3673,21 +3676,7 @@ const InfraTradingTerminalInner = ({
           }))
           : seededOutcomes;
 
-      const livePriceResponse = await getMarketLivePrices({
-        items: baseOutcomes.map((outcome) => ({
-          marketId: outcome.marketId ?? terminalMarketId,
-          canonicalMarketIds: canonicalIdsForTerminalOutcome(
-            outcome.marketId ?? terminalMarketId,
-            outcome.canonicalMarketIds,
-            terminalMarket.canonicalMarketIds,
-            baseOutcomes.length,
-          ),
-          outcomeId: outcome.quoteOutcomeId ?? canonicalQuoteOutcomeId(outcome.label),
-        })),
-      });
-      const livePriceByKey = new Map(livePriceResponse.prices.map((price) => [`${price.marketId}:${price.outcomeId ?? ''}`, price]));
-
-      const rows = baseOutcomes.map((outcome, index): TerminalOutcomeRow => {
+      const seedRows = baseOutcomes.map((outcome, index): TerminalOutcomeRow => {
         const outcomeMarketId = outcome.marketId ?? terminalMarketId;
         const quoteOutcomeId = outcome.quoteOutcomeId ?? canonicalQuoteOutcomeId(outcome.label);
         const canonicalMarketIds = canonicalIdsForTerminalOutcome(
@@ -3697,18 +3686,6 @@ const InfraTradingTerminalInner = ({
           baseOutcomes.length,
         );
         const venues = outcome.venues.length ? outcome.venues : marketVenueList;
-        const livePrice = livePriceByKey.get(`${outcomeMarketId}:${quoteOutcomeId}`);
-        const parsedPrice = orderbookNumericValue(livePrice?.price ?? livePrice?.bestAsk ?? livePrice?.midpoint ?? livePrice?.bestBid);
-        const yesPrice = parsedPrice !== null ? formatProbabilityPrice(parsedPrice) : '-';
-        const noPrice = parsedPrice !== null && terminalMarket.marketType === 'binary' ? formatProbabilityPrice(1 - parsedPrice) : '-';
-        const quoteVenues = livePrice?.linkedVenues?.length
-          ? livePrice.linkedVenues
-          : livePrice?.venues?.length
-            ? livePrice.venues
-            : venues;
-        const liveQuoteVenues = livePrice?.liveVenues?.length
-          ? livePrice.liveVenues
-          : livePrice?.venues ?? [];
         const outcomeVolume = formatMoneyMetric(outcome.volume) ?? outcome.volume ?? '';
         return {
           id: outcome.id,
@@ -3717,33 +3694,78 @@ const InfraTradingTerminalInner = ({
           quoteOutcomeId,
           name: outcome.label,
           vol: outcomeVolume ? `${outcomeVolume} Vol.` : '',
-          platforms: quoteVenues.length || terminalMarket.venueCount,
-          prob: parsedPrice !== null ? formatProbabilityPercent(parsedPrice) : '-',
-          yesPrice,
-          noPrice,
-          primaryVenue: livePrice?.bestVenue ?? quoteVenues[0] ?? null,
-          venueQuotes: livePrice?.venueBreakdown?.length
-            ? venueQuotesFromBreakdown(livePrice.venueBreakdown, terminalMarket.marketType)
-            : livePrice?.bestVenue && parsedPrice !== null
-              ? placeholderVenueQuotes(quoteVenues.length ? quoteVenues : [livePrice.bestVenue], yesPrice, noPrice, null)
-              : placeholderVenueQuotes(quoteVenues, '-', '-', null),
+          platforms: venues.length || terminalMarket.venueCount,
+          prob: '-',
+          yesPrice: '-',
+          noPrice: '-',
+          primaryVenue: venues[0] ?? null,
+          venueQuotes: placeholderVenueQuotes(venues, '-', '-', null),
           active: index === 0,
-          venues: quoteVenues,
-          status: parsedPrice !== null ? 'live' : 'pending',
+          venues,
+          status: 'pending',
           blocker: null,
         };
       });
 
-      setTerminalOutcomes(rows);
+      setTerminalOutcomes(seedRows);
       const currentSelectedOutcomeId = selectedOutcomeIdRef.current;
       const nextSelectedOutcomeId = (() => {
-        if (currentSelectedOutcomeId && rows.some((row) => row.id === currentSelectedOutcomeId)) return currentSelectedOutcomeId;
-        if (terminalMarket.initialOutcomeId && rows.some((row) => row.id === terminalMarket.initialOutcomeId)) {
+        if (currentSelectedOutcomeId && seedRows.some((row) => row.id === currentSelectedOutcomeId)) return currentSelectedOutcomeId;
+        if (terminalMarket.initialOutcomeId && seedRows.some((row) => row.id === terminalMarket.initialOutcomeId)) {
           return terminalMarket.initialOutcomeId;
         }
-        return rows[0]?.id ?? null;
+        return seedRows[0]?.id ?? null;
       })();
-      selectTerminalOutcome(nextSelectedOutcomeId, rows);
+      selectTerminalOutcome(nextSelectedOutcomeId, seedRows);
+
+      try {
+        const livePriceResponse = await getMarketLivePrices({
+          items: baseOutcomes.map((outcome) => ({
+            marketId: outcome.marketId ?? terminalMarketId,
+            canonicalMarketIds: canonicalIdsForTerminalOutcome(
+              outcome.marketId ?? terminalMarketId,
+              outcome.canonicalMarketIds,
+              terminalMarket.canonicalMarketIds,
+              baseOutcomes.length,
+            ),
+            outcomeId: outcome.quoteOutcomeId ?? canonicalQuoteOutcomeId(outcome.label),
+          })),
+        });
+        const livePriceByKey = new Map(livePriceResponse.prices.map((price) => [`${price.marketId}:${price.outcomeId ?? ''}`, price]));
+
+        const rows = seedRows.map((row) => {
+          const livePrice = livePriceByKey.get(`${row.marketId ?? terminalMarketId}:${row.quoteOutcomeId}`);
+          const parsedPrice = orderbookNumericValue(livePrice?.price ?? livePrice?.bestAsk ?? livePrice?.midpoint ?? livePrice?.bestBid);
+          if (parsedPrice === null) return row;
+          const yesPrice = formatProbabilityPrice(parsedPrice);
+          const noPrice = terminalMarket.marketType === 'binary' ? formatProbabilityPrice(1 - parsedPrice) : '-';
+          const quoteVenues = livePrice?.linkedVenues?.length
+            ? livePrice.linkedVenues
+            : livePrice?.venues?.length
+              ? livePrice.venues
+              : row.venues;
+          return {
+            ...row,
+            platforms: quoteVenues.length || row.platforms,
+            prob: formatProbabilityPercent(parsedPrice),
+            yesPrice,
+            noPrice,
+            primaryVenue: livePrice?.bestVenue ?? row.primaryVenue ?? quoteVenues[0] ?? null,
+            venueQuotes: livePrice?.venueBreakdown?.length
+              ? venueQuotesFromBreakdown(livePrice.venueBreakdown, terminalMarket.marketType)
+              : livePrice?.bestVenue
+                ? placeholderVenueQuotes(quoteVenues.length ? quoteVenues : [livePrice.bestVenue], yesPrice, noPrice, null)
+                : row.venueQuotes,
+            venues: quoteVenues.length ? quoteVenues : row.venues,
+            status: 'live',
+          };
+        });
+
+        setTerminalOutcomes(rows);
+        selectTerminalOutcome(nextSelectedOutcomeId, rows);
+      } catch (livePriceError) {
+        setOutcomesError(livePriceError instanceof Error ? livePriceError.message : 'Unable to refresh live outcome quotes');
+      }
     } catch (error) {
       setTerminalOutcomes(fallbackRows);
       const currentSelectedOutcomeId = selectedOutcomeIdRef.current;
@@ -3759,7 +3781,7 @@ const InfraTradingTerminalInner = ({
     } finally {
       setOutcomesLoading(false);
     }
-  }, [marketVenueList, selectTerminalOutcome, terminalEventId, terminalMarket, terminalMarketId]);
+  }, [hasCompoundEventOutcomes, marketVenueList, relatedEventMarkets, selectTerminalOutcome, terminalEventId, terminalMarket, terminalMarketId]);
 
   const refreshAllOutcomePrices = useCallback(async () => {
     if (terminalLivePriceRefreshInFlightRef.current) {
@@ -3851,7 +3873,7 @@ const InfraTradingTerminalInner = ({
   }, [terminalMarket.canonicalMarketIds, terminalMarket.marketType, terminalMarketId]);
 
   React.useEffect(() => {
-    setShowAllOutcomes(terminalMarket.marketType === 'multi');
+    setShowAllOutcomes(hasCompoundEventOutcomes);
     selectTerminalOutcome(terminalMarket.initialOutcomeId ?? null);
     setExpandedOutcomeId(null);
     setTicketOutcomeSide(terminalMarket.initialOutcomeSide ?? 'yes');
@@ -3866,7 +3888,7 @@ const InfraTradingTerminalInner = ({
     setTicketOrchestratorAutoRenewFailed(false);
     setTicketStatusMessage(null);
     setTicketError(null);
-  }, [selectTerminalOutcome, terminalMarket.initialOutcomeId, terminalMarket.initialOutcomeSide, terminalMarketId]);
+  }, [hasCompoundEventOutcomes, selectTerminalOutcome, terminalMarket.initialOutcomeId, terminalMarket.initialOutcomeSide, terminalMarketId]);
 
   const selectTicketOutcome = useCallback((nextSide: TicketOutcomeSide, fallbackOutcomeId?: string | null) => {
     setTicketOutcomeSide(nextSide);
