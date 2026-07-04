@@ -45,9 +45,11 @@ export const isSelectedOutcomeBookReady = (input: SelectedOutcomeBookReadinessIn
 };
 
 export const resolveSelectedOutcomeDisplayValues = (input: {
+  current: TerminalOutcomeDisplayValues | null;
   fallback: TerminalOutcomeDisplayValues | null;
   live: TerminalOutcomeDisplayValues;
   liveReady: boolean;
 }): TerminalOutcomeDisplayValues => {
-  return input.liveReady ? input.live : (input.fallback ?? input.live);
+  if (input.liveReady) return input.live;
+  return input.current ?? input.fallback ?? input.live;
 };

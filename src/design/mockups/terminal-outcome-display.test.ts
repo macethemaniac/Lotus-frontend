@@ -108,6 +108,7 @@ describe('isSelectedOutcomeBookReady', () => {
 describe('resolveSelectedOutcomeDisplayValues', () => {
   it('keeps the latched fallback values while the selected orderbook is warming up', () => {
     expect(resolveSelectedOutcomeDisplayValues({
+      current: null,
       fallback,
       live,
       liveReady: false,
@@ -116,9 +117,23 @@ describe('resolveSelectedOutcomeDisplayValues', () => {
 
   it('switches to the selected outcome live orderbook values once they are ready', () => {
     expect(resolveSelectedOutcomeDisplayValues({
+      current: fallback,
       fallback,
       live,
       liveReady: true,
+    })).toEqual(live);
+  });
+
+  it('keeps the current stable display during a later resync instead of falling back again', () => {
+    expect(resolveSelectedOutcomeDisplayValues({
+      current: live,
+      fallback,
+      live: {
+        yesPrice: '19c',
+        noPrice: '81c',
+        probability: '19%',
+      },
+      liveReady: false,
     })).toEqual(live);
   });
 });

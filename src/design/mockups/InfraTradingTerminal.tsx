@@ -3034,7 +3034,7 @@ const InfraTradingTerminalInner = ({
   const [expandedOutcomeId, setExpandedOutcomeId] = useState<string | null>(null);
   const [selectedOutcomeId, setSelectedOutcomeId] = useState<string | null>(null);
   const [selectedOutcomeDisplayFallback, setSelectedOutcomeDisplayFallback] = useState<TerminalOutcomeDisplayValues | null>(null);
-  const [selectedOutcomeDisplayReady, setSelectedOutcomeDisplayReady] = useState(false);
+  const [selectedOutcomeDisplayValues, setSelectedOutcomeDisplayValues] = useState<TerminalOutcomeDisplayValues | null>(null);
   const [terminalOutcomes, setTerminalOutcomes] = useState<TerminalOutcomeRow[]>([]);
   const [outcomesLoading, setOutcomesLoading] = useState(false);
   const [outcomesError, setOutcomesError] = useState<string | null>(null);
@@ -3433,33 +3433,29 @@ const InfraTradingTerminalInner = ({
     outcomeRows: TerminalOutcomeRow[] = terminalOutcomesRef.current,
   ) => {
     const row = outcomeId ? outcomeRows.find((outcome) => outcome.id === outcomeId) ?? null : null;
-    setSelectedOutcomeDisplayFallback(row
+    const nextDisplayValues = row
       ? {
           yesPrice: row.yesPrice,
           noPrice: row.noPrice,
           probability: row.prob,
         }
-      : null);
+      : null;
+    setSelectedOutcomeDisplayFallback(nextDisplayValues);
+    setSelectedOutcomeDisplayValues(nextDisplayValues);
   }, []);
   const selectTerminalOutcome = useCallback((
     outcomeId: string | null,
     outcomeRows?: TerminalOutcomeRow[],
   ) => {
     latchSelectedOutcomeDisplayFallback(outcomeId, outcomeRows);
-    setSelectedOutcomeDisplayReady(false);
     setSelectedOutcomeId(outcomeId);
   }, [latchSelectedOutcomeDisplayFallback]);
-  const selectedOutcomeDisplayValues = useMemo(() => resolveSelectedOutcomeDisplayValues({
-    fallback: selectedOutcomeDisplayFallback,
-    live: selectedOutcomeBookDisplay,
-    liveReady: selectedOutcomeDisplayReady,
-  }), [selectedOutcomeBookDisplay, selectedOutcomeDisplayFallback, selectedOutcomeDisplayReady]);
   const selectedTicketUsesLatchedOutcomeDisplay = selectedTicketOutcome?.id === selectedOutcome?.id;
   const selectedTicketYesPrice = selectedTicketUsesLatchedOutcomeDisplay
-    ? selectedOutcomeDisplayValues.yesPrice ?? selectedTicketOutcome?.yesPrice ?? null
+    ? selectedOutcomeDisplayValues?.yesPrice ?? selectedTicketOutcome?.yesPrice ?? null
     : selectedTicketOutcome?.yesPrice ?? null;
   const selectedTicketNoPrice = selectedTicketUsesLatchedOutcomeDisplay
-    ? selectedOutcomeDisplayValues.noPrice ?? selectedTicketOutcome?.noPrice ?? null
+    ? selectedOutcomeDisplayValues?.noPrice ?? selectedTicketOutcome?.noPrice ?? null
     : selectedTicketOutcome?.noPrice ?? null;
 
   const focusTerminalOutcomeOrderbook = useCallback((outcomeId: string) => {
@@ -3475,15 +3471,17 @@ const InfraTradingTerminalInner = ({
   }, [orderbook?.venues]);
 
   React.useEffect(() => {
-    if (!selectedOutcomeBookReady) {
-      setSelectedOutcomeDisplayReady(false);
-      return;
-    }
+    if (!selectedOutcomeBookReady) return;
     const timeout = window.setTimeout(() => {
-      setSelectedOutcomeDisplayReady(true);
+      setSelectedOutcomeDisplayValues((current) => resolveSelectedOutcomeDisplayValues({
+        current,
+        fallback: selectedOutcomeDisplayFallback,
+        live: selectedOutcomeBookDisplay,
+        liveReady: true,
+      }));
     }, SELECTED_OUTCOME_BOOK_STABILIZE_DELAY_MS);
     return () => window.clearTimeout(timeout);
-  }, [selectedOutcomeBookReady, selectedOutcomeRefreshKey]);
+  }, [selectedOutcomeBookDisplay, selectedOutcomeBookReady, selectedOutcomeDisplayFallback, selectedOutcomeRefreshKey]);
 
   const refreshOutcomes = useCallback(async () => {
     const fallbackRows = initialOutcomeRows(terminalMarket);
@@ -5684,7 +5682,7 @@ const InfraTradingTerminalInner = ({
     }`
     : null;
   const ticketSpotMidPrice = normalizedOrderbookProbability(displayOrderbook?.midpoint)
-    ?? parseProbabilityLabel(selectedOutcomeDisplayValues.probability)
+    ?? parseProbabilityLabel(selectedOutcomeDisplayValues?.probability)
     ?? ticketPriceForSide(selectedTicketOutcome, ticketOutcomeSide);
   const ticketExecutionPriceForImpact = executionOrchestratorEnabled && ticketOrchestratorOrder
     ? orderEffectivePrice(ticketOrchestratorOrder)
@@ -6622,9 +6620,9 @@ const InfraTradingTerminalInner = ({
                            const venues = m.venues.length ? m.venues : marketVenueList;
                            const primaryVenue = m.primaryVenue ?? venues[0] ?? 'lotus';
                            const isSelectedOutcome = selectedOutcomeId ? selectedOutcomeId === m.id : m.active;
-                           const rowYesPrice = isSelectedOutcome ? selectedOutcomeDisplayValues.yesPrice ?? m.yesPrice : m.yesPrice;
-                           const rowNoPrice = isSelectedOutcome ? selectedOutcomeDisplayValues.noPrice ?? m.noPrice : m.noPrice;
-                           const rowProbability = isSelectedOutcome ? selectedOutcomeDisplayValues.probability ?? m.prob : m.prob;
+                           const rowYesPrice = isSelectedOutcome ? selectedOutcomeDisplayValues?.yesPrice ?? m.yesPrice : m.yesPrice;
+                           const rowNoPrice = isSelectedOutcome ? selectedOutcomeDisplayValues?.noPrice ?? m.noPrice : m.noPrice;
+                           const rowProbability = isSelectedOutcome ? selectedOutcomeDisplayValues?.probability ?? m.prob : m.prob;
                            const rowYesVenue = primaryVenue;
                            const rowNoVenue = primaryVenue;
                            const rowYesSelected = isSelectedOutcome && ticketOutcomeSide === 'yes';
