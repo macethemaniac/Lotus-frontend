@@ -638,7 +638,9 @@ const displayPriceLabel = (label: string | null | undefined, diagnosticsEnabled 
 
 const readableQuoteBlocker = (reason: string | null | undefined): string | null => {
   if (!reason) return null;
+  if (isIsoTimestampLike(reason)) return null;
   const normalized = reason.toUpperCase();
+  if (normalized.includes('LAST_GOOD_ORDERBOOK_USED')) return 'Using last good orderbook';
   if (normalized.includes('LIVE_ORDERBOOK_REQUIRED')) return 'Live orderbook syncing';
   if (normalized.includes('OPINION_TOKEN_ID_MISSING')) return 'Opinion token mapping missing';
   if (normalized.includes('VENUE_OUTCOME_ID_MISSING')) return 'Outcome token mapping missing';
@@ -719,6 +721,11 @@ const formatBookLevelSize = (level: MarketOrderbookLevel): string =>
 const formatBookLevelNotional = (level: MarketOrderbookLevel): string =>
   formatBookNotional(level.cumulativeNotional);
 
+const ISO_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/i;
+
+const isIsoTimestampLike = (value: string | null | undefined): boolean =>
+  Boolean(value && ISO_TIMESTAMP_PATTERN.test(value.trim()));
+
 const orderbookNumberString = (value: string | number | null | undefined): string | null => {
   if (value === null || typeof value === 'undefined') return null;
   const parsed = typeof value === 'number' ? value : Number(String(value).replace(/[$,\s]/g, ''));
@@ -741,7 +748,12 @@ const normalizeStreamBlocker = (blocker: unknown): string | null => {
   if (typeof blocker === 'string') return readableQuoteBlocker(blocker) ?? blocker;
   if (!blocker || typeof blocker !== 'object') return null;
   const record = blocker as Record<string, unknown>;
-  const reason = [record.reason, record.message, record.detailsCode, record.code].find((value) => typeof value === 'string');
+  const reason = [
+    record.reason,
+    record.message,
+    typeof record.detailsCode === 'string' && !isIsoTimestampLike(record.detailsCode) ? record.detailsCode : null,
+    record.code,
+  ].find((value) => typeof value === 'string');
   return typeof reason === 'string' ? readableQuoteBlocker(reason) ?? reason : null;
 };
 
@@ -3385,12 +3397,21 @@ const InfraTradingTerminalInner = ({
   const unavailableOrderbookVenueRows = useMemo(() => {
     const rows = new Map<string, { venue: string; reason: string; status: 'syncing' | 'unavailable' }>();
     for (const blocker of rawDisplayOrderbook?.blockers ?? []) {
-      const rawReason = blocker.detailsCode ?? blocker.reason;
-      const normalizedReason = readableQuoteBlocker(rawReason) ?? readableQuoteBlocker(blocker.reason) ?? blocker.reason;
-      const status = /LIVE_ORDERBOOK_REQUIRED|QUOTE_SNAPSHOT/i.test(rawReason ?? blocker.reason)
+      const backendVenue = toBackendVenueId(blocker.venue);
+      if (backendVenue === 'LOTUS' || backendVenue === 'UNKNOWN') continue;
+      const preferredReason = typeof blocker.reason === 'string' && blocker.reason.trim()
+        ? blocker.reason
+        : typeof blocker.detailsCode === 'string' && !isIsoTimestampLike(blocker.detailsCode)
+          ? blocker.detailsCode
+          : null;
+      const fallbackReason = typeof blocker.detailsCode === 'string' && !isIsoTimestampLike(blocker.detailsCode)
+        ? blocker.detailsCode
+        : blocker.reason;
+      const normalizedReason = readableQuoteBlocker(preferredReason) ?? readableQuoteBlocker(fallbackReason) ?? 'Venue quote unavailable';
+      const status = /LIVE_ORDERBOOK_REQUIRED|QUOTE_SNAPSHOT/i.test(`${blocker.reason ?? ''} ${blocker.detailsCode ?? ''}`)
         ? 'syncing'
         : 'unavailable';
-      const key = `${toBackendVenueId(blocker.venue)}:${normalizedReason}`;
+      const key = `${backendVenue}:${normalizedReason}`;
       rows.set(key, {
         venue: blocker.venue,
         reason: normalizedReason,
