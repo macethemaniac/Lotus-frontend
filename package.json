@@ -3,6 +3,10 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "packageManager": "npm@11.17.0",
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -11,6 +15,14 @@
     "cf:dev": "wrangler dev",
     "cf:deploy:staging": "npm run build && wrangler deploy --env staging",
     "cf:deploy:production": "npm run build && wrangler deploy --env production"
+  },
+  "overrides": {
+    "@walletconnect/jsonrpc-ws-connection": {
+      "ws": "7.5.11"
+    },
+    "isows": {
+      "ws": "7.5.11"
+    }
   },
   "dependencies": {
     "@turnkey/react-wallet-kit": "^2.0.0",
@@ -33,5 +45,12 @@
     "typescript": "~5.8.2",
     "vite": "^6.2.0",
     "wrangler": "^4.52.4"
+  },
+  "allowScripts": {
+    "esbuild@0.25.12": true,
+    "esbuild@0.28.1": true,
+    "fsevents@2.3.3": true,
+    "sharp@0.34.5": true,
+    "workerd@1.20260625.1": true
   }
 }
