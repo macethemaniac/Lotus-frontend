@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  isSelectedOutcomeBookUsable,
   isSelectedOutcomeBookReady,
   resolveSelectedOutcomeDisplayValues,
   resolveVisibleSelectedOutcomeOrderbook,
@@ -110,6 +111,60 @@ describe('isSelectedOutcomeBookReady', () => {
   });
 });
 
+describe('isSelectedOutcomeBookUsable', () => {
+  it('accepts the first matching partial orderbook with usable depth', () => {
+    expect(isSelectedOutcomeBookUsable({
+      orderbook: {
+        marketId: 'market-1',
+        outcomeId: 'YES',
+        generatedAt: new Date().toISOString(),
+        depth: 20,
+        venues: [],
+        bids: [],
+        asks: [{ venue: 'POLYMARKET', price: '0.18', size: '100' }],
+        bestBid: null,
+        bestAsk: '0.18',
+        midpoint: '0.18',
+        spread: null,
+        status: 'partial',
+        blockers: [],
+        stream: null,
+      },
+      orderbookMarketId: 'market-1',
+      orderbookOutcomeId: 'YES',
+      snapshotStatus: 'stale',
+      liveVenueCount: 0,
+      syncingVenueCount: 1,
+    })).toBe(true);
+  });
+
+  it('rejects a resyncing book even if it has depth', () => {
+    expect(isSelectedOutcomeBookUsable({
+      orderbook: {
+        marketId: 'market-1',
+        outcomeId: 'YES',
+        generatedAt: new Date().toISOString(),
+        depth: 20,
+        venues: [],
+        bids: [{ venue: 'LIMITLESS', price: '0.17', size: '100' }],
+        asks: [{ venue: 'POLYMARKET', price: '0.18', size: '100' }],
+        bestBid: '0.17',
+        bestAsk: '0.18',
+        midpoint: '0.175',
+        spread: '0.01',
+        status: 'partial',
+        blockers: [],
+        stream: null,
+      },
+      orderbookMarketId: 'market-1',
+      orderbookOutcomeId: 'YES',
+      snapshotStatus: 'resyncing',
+      liveVenueCount: 0,
+      syncingVenueCount: 1,
+    })).toBe(false);
+  });
+});
+
 describe('resolveSelectedOutcomeDisplayValues', () => {
   it('keeps the latched fallback values while the selected orderbook is warming up', () => {
     expect(resolveSelectedOutcomeDisplayValues({
@@ -166,7 +221,17 @@ describe('resolveVisibleSelectedOutcomeOrderbook', () => {
       current: null,
       next: readyOrderbook,
       nextReady: false,
+      nextUsable: false,
     })).toBeNull();
+  });
+
+  it('publishes the first usable selected orderbook immediately', () => {
+    expect(resolveVisibleSelectedOutcomeOrderbook({
+      current: null,
+      next: readyOrderbook,
+      nextReady: false,
+      nextUsable: true,
+    })).toEqual(readyOrderbook);
   });
 
   it('keeps the current visible orderbook during a temporary resync', () => {
@@ -177,6 +242,7 @@ describe('resolveVisibleSelectedOutcomeOrderbook', () => {
         bestAsk: '0.19',
       },
       nextReady: false,
+      nextUsable: false,
     })).toEqual(readyOrderbook);
   });
 
@@ -190,6 +256,7 @@ describe('resolveVisibleSelectedOutcomeOrderbook', () => {
       current: readyOrderbook,
       next: nextReadyOrderbook,
       nextReady: true,
+      nextUsable: true,
     })).toEqual(nextReadyOrderbook);
   });
 });

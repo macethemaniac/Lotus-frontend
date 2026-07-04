@@ -13,6 +13,7 @@ import { LotusLogo } from '@/components/icons/lotus-icons';
 import { FundingDeposit } from '@/design/mockups/FundingDeposit';
 import {
   isSelectedOutcomeBookReady,
+  isSelectedOutcomeBookUsable,
   resolveSelectedOutcomeDisplayValues,
   resolveVisibleSelectedOutcomeOrderbook,
   type TerminalOutcomeDisplayValues,
@@ -3417,6 +3418,21 @@ const InfraTradingTerminalInner = ({
     orderbookSnapshotStatus,
     selectedOutcomeSyncingVenueCount,
   ]);
+  const selectedOutcomeBookUsable = useMemo(() => isSelectedOutcomeBookUsable({
+    orderbook,
+    orderbookMarketId,
+    orderbookOutcomeId: orderbookQuoteOutcomeId,
+    snapshotStatus: orderbookSnapshotStatus,
+    liveVenueCount: orderbookLiveVenueCount,
+    syncingVenueCount: selectedOutcomeSyncingVenueCount,
+  }), [
+    orderbook,
+    orderbookLiveVenueCount,
+    orderbookMarketId,
+    orderbookQuoteOutcomeId,
+    orderbookSnapshotStatus,
+    selectedOutcomeSyncingVenueCount,
+  ]);
   const selectedOutcomeBookDisplay = useMemo(() => {
     const sourceOrderbook = visibleSelectedOutcomeOrderbook ?? orderbook;
     if (!sourceOrderbook) {
@@ -3479,12 +3495,23 @@ const InfraTradingTerminalInner = ({
   }, [orderbook?.venues]);
 
   React.useEffect(() => {
+    if (!selectedOutcomeBookUsable) return;
+    setVisibleSelectedOutcomeOrderbook((current) => resolveVisibleSelectedOutcomeOrderbook({
+      current,
+      next: orderbook,
+      nextReady: selectedOutcomeBookReady,
+      nextUsable: true,
+    }));
+  }, [orderbook, selectedOutcomeBookReady, selectedOutcomeBookUsable]);
+
+  React.useEffect(() => {
     if (!selectedOutcomeBookReady) return;
     const timeout = window.setTimeout(() => {
       setVisibleSelectedOutcomeOrderbook((current) => resolveVisibleSelectedOutcomeOrderbook({
         current,
         next: orderbook,
         nextReady: true,
+        nextUsable: true,
       }));
       setSelectedOutcomeDisplayValues((current) => resolveSelectedOutcomeDisplayValues({
         current,

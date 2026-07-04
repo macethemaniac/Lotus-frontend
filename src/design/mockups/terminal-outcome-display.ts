@@ -44,6 +44,24 @@ export const isSelectedOutcomeBookReady = (input: SelectedOutcomeBookReadinessIn
   return true;
 };
 
+export const isSelectedOutcomeBookUsable = (input: SelectedOutcomeBookReadinessInput): boolean => {
+  if (!input.orderbook || !input.orderbookMarketId) return false;
+  if (!hasUsableOrderbookDepth(input.orderbook)) return false;
+  if (input.orderbook.marketId !== input.orderbookMarketId) return false;
+  const normalizedOrderbookOutcomeId = normalizeOutcomeId(input.orderbook.outcomeId);
+  const normalizedSelectedOutcomeId = normalizeOutcomeId(input.orderbookOutcomeId);
+  if (
+    normalizedOrderbookOutcomeId &&
+    normalizedSelectedOutcomeId &&
+    normalizedOrderbookOutcomeId !== normalizedSelectedOutcomeId
+  ) {
+    return false;
+  }
+  if (input.snapshotStatus === 'resyncing') return false;
+  if (input.orderbook.status === 'blocked' || input.orderbook.status === 'unavailable') return false;
+  return true;
+};
+
 export const resolveSelectedOutcomeDisplayValues = (input: {
   current: TerminalOutcomeDisplayValues | null;
   fallback: TerminalOutcomeDisplayValues | null;
@@ -58,7 +76,9 @@ export const resolveVisibleSelectedOutcomeOrderbook = (input: {
   current: MarketOrderbookResponse | null;
   next: MarketOrderbookResponse | null;
   nextReady: boolean;
+  nextUsable: boolean;
 }): MarketOrderbookResponse | null => {
   if (input.nextReady && input.next) return input.next;
+  if (!input.current && input.nextUsable && input.next) return input.next;
   return input.current;
 };
