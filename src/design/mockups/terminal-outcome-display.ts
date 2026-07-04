@@ -53,3 +53,12 @@ export const resolveSelectedOutcomeDisplayValues = (input: {
   if (input.liveReady) return input.live;
   return input.current ?? input.fallback ?? input.live;
 };
+
+export const resolveVisibleSelectedOutcomeOrderbook = (input: {
+  current: MarketOrderbookResponse | null;
+  next: MarketOrderbookResponse | null;
+  nextReady: boolean;
+}): MarketOrderbookResponse | null => {
+  if (input.nextReady && input.next) return input.next;
+  return input.current;
+};

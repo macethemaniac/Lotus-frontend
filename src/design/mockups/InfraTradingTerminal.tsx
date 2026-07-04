@@ -14,6 +14,7 @@ import { FundingDeposit } from '@/design/mockups/FundingDeposit';
 import {
   isSelectedOutcomeBookReady,
   resolveSelectedOutcomeDisplayValues,
+  resolveVisibleSelectedOutcomeOrderbook,
   type TerminalOutcomeDisplayValues,
 } from '@/design/mockups/terminal-outcome-display';
 import { isTurnkeyProviderConfigured } from '@/app/turnkey-provider';
@@ -3035,6 +3036,7 @@ const InfraTradingTerminalInner = ({
   const [selectedOutcomeId, setSelectedOutcomeId] = useState<string | null>(null);
   const [selectedOutcomeDisplayFallback, setSelectedOutcomeDisplayFallback] = useState<TerminalOutcomeDisplayValues | null>(null);
   const [selectedOutcomeDisplayValues, setSelectedOutcomeDisplayValues] = useState<TerminalOutcomeDisplayValues | null>(null);
+  const [visibleSelectedOutcomeOrderbook, setVisibleSelectedOutcomeOrderbook] = useState<MarketOrderbookResponse | null>(null);
   const [terminalOutcomes, setTerminalOutcomes] = useState<TerminalOutcomeRow[]>([]);
   const [outcomesLoading, setOutcomesLoading] = useState(false);
   const [outcomesError, setOutcomesError] = useState<string | null>(null);
@@ -3346,20 +3348,24 @@ const InfraTradingTerminalInner = ({
     ])].sort(),
     [marketVenueList, orderbook?.blockers, orderbook?.venues]
   );
-  const displayOrderbook = useMemo(
+  const rawDisplayOrderbook = useMemo(
     () => filterOrderbookForVenue(orderbook, orderbookVenue),
     [orderbook, orderbookVenue]
   );
+  const displayOrderbook = useMemo(
+    () => filterOrderbookForVenue(visibleSelectedOutcomeOrderbook, orderbookVenue),
+    [orderbookVenue, visibleSelectedOutcomeOrderbook]
+  );
   const orderbookLiveVenues = useMemo(() => {
-    return (displayOrderbook?.venues ?? []).filter((venue) => {
+    return (rawDisplayOrderbook?.venues ?? []).filter((venue) => {
       return venue.blockers.length === 0 && (venue.bids.length > 0 || venue.asks.length > 0 || Boolean(venue.bestBid || venue.bestAsk));
     });
-  }, [displayOrderbook?.venues]);
+  }, [rawDisplayOrderbook?.venues]);
   const orderbookLiveVenueCount = orderbookLiveVenues.length;
   const orderbookSnapshotStatus = orderbookLiveVenueCount > 0
     ? 'live'
     : latestOrderbookStream?.snapshotStatus
-      ?? (displayOrderbook?.status === 'stale' ? 'stale' : displayOrderbook?.status === 'unavailable' ? 'blocked' : displayOrderbook ? 'live' : undefined);
+      ?? (rawDisplayOrderbook?.status === 'stale' ? 'stale' : rawDisplayOrderbook?.status === 'unavailable' ? 'blocked' : rawDisplayOrderbook ? 'live' : undefined);
   const orderbookFreshness = streamFreshnessLabel(latestOrderbookStream?.freshnessMs);
   const orderbookStreamBlockers = latestOrderbookStream?.blockers
     ?.map(normalizeStreamBlocker)
@@ -3373,11 +3379,11 @@ const InfraTradingTerminalInner = ({
   const orderbookStatusDetail = orderbookLiveVenueCount > 0
     ? `${orderbookLiveVenueCount} live venue${orderbookLiveVenueCount === 1 ? '' : 's'}`
     : marketDiagnosticsEnabled
-      ? displayOrderbook?.status ?? 'pending'
+      ? rawDisplayOrderbook?.status ?? 'pending'
       : 'updating';
   const unavailableOrderbookVenueRows = useMemo(() => {
     const rows = new Map<string, { venue: string; reason: string; status: 'syncing' | 'unavailable' }>();
-    for (const blocker of displayOrderbook?.blockers ?? []) {
+    for (const blocker of rawDisplayOrderbook?.blockers ?? []) {
       const rawReason = blocker.detailsCode ?? blocker.reason;
       const normalizedReason = readableQuoteBlocker(rawReason) ?? readableQuoteBlocker(blocker.reason) ?? blocker.reason;
       const status = /LIVE_ORDERBOOK_REQUIRED|QUOTE_SNAPSHOT/i.test(rawReason ?? blocker.reason)
@@ -3391,7 +3397,7 @@ const InfraTradingTerminalInner = ({
       });
     }
     return [...rows.values()];
-  }, [displayOrderbook?.blockers]);
+  }, [rawDisplayOrderbook?.blockers]);
   const selectedOutcomeSyncingVenueCount = useMemo(
     () => unavailableOrderbookVenueRows.filter((row) => row.status === 'syncing').length,
     [unavailableOrderbookVenueRows],
@@ -3412,22 +3418,23 @@ const InfraTradingTerminalInner = ({
     selectedOutcomeSyncingVenueCount,
   ]);
   const selectedOutcomeBookDisplay = useMemo(() => {
-    if (!orderbook) {
+    const sourceOrderbook = visibleSelectedOutcomeOrderbook ?? orderbook;
+    if (!sourceOrderbook) {
       return {
         yesPrice: null as string | null,
         noPrice: null as string | null,
         probability: null as string | null,
       };
     }
-    const bestAsk = normalizedOrderbookProbability(orderbook.bestAsk);
-    const normalizedBestBid = normalizedOrderbookProbability(orderbook.bestBid);
-    const normalizedMidpoint = normalizedOrderbookProbability(orderbook.midpoint);
+    const bestAsk = normalizedOrderbookProbability(sourceOrderbook.bestAsk);
+    const normalizedBestBid = normalizedOrderbookProbability(sourceOrderbook.bestBid);
+    const normalizedMidpoint = normalizedOrderbookProbability(sourceOrderbook.midpoint);
     return {
       yesPrice: bestAsk !== null ? formatProbabilityPrice(bestAsk) : null,
       noPrice: normalizedBestBid !== null && marketType === 'binary' ? formatProbabilityPrice(1 - normalizedBestBid) : null,
       probability: normalizedMidpoint !== null ? formatProbabilityPercent(normalizedMidpoint) : null,
     };
-  }, [marketType, orderbook]);
+  }, [marketType, orderbook, visibleSelectedOutcomeOrderbook]);
   const latchSelectedOutcomeDisplayFallback = useCallback((
     outcomeId: string | null,
     outcomeRows: TerminalOutcomeRow[] = terminalOutcomesRef.current,
@@ -3448,6 +3455,7 @@ const InfraTradingTerminalInner = ({
     outcomeRows?: TerminalOutcomeRow[],
   ) => {
     latchSelectedOutcomeDisplayFallback(outcomeId, outcomeRows);
+    setVisibleSelectedOutcomeOrderbook(null);
     setSelectedOutcomeId(outcomeId);
   }, [latchSelectedOutcomeDisplayFallback]);
   const selectedTicketUsesLatchedOutcomeDisplay = selectedTicketOutcome?.id === selectedOutcome?.id;
@@ -3473,6 +3481,11 @@ const InfraTradingTerminalInner = ({
   React.useEffect(() => {
     if (!selectedOutcomeBookReady) return;
     const timeout = window.setTimeout(() => {
+      setVisibleSelectedOutcomeOrderbook((current) => resolveVisibleSelectedOutcomeOrderbook({
+        current,
+        next: orderbook,
+        nextReady: true,
+      }));
       setSelectedOutcomeDisplayValues((current) => resolveSelectedOutcomeDisplayValues({
         current,
         fallback: selectedOutcomeDisplayFallback,
@@ -3481,7 +3494,7 @@ const InfraTradingTerminalInner = ({
       }));
     }, SELECTED_OUTCOME_BOOK_STABILIZE_DELAY_MS);
     return () => window.clearTimeout(timeout);
-  }, [selectedOutcomeBookDisplay, selectedOutcomeBookReady, selectedOutcomeDisplayFallback, selectedOutcomeRefreshKey]);
+  }, [orderbook, selectedOutcomeBookDisplay, selectedOutcomeBookReady, selectedOutcomeDisplayFallback, selectedOutcomeRefreshKey]);
 
   const refreshOutcomes = useCallback(async () => {
     const fallbackRows = initialOutcomeRows(terminalMarket);
