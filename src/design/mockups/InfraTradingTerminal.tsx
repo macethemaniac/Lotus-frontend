@@ -3585,6 +3585,17 @@ const InfraTradingTerminalInner = ({
     () => filterOrderbookForVenue(visibleSelectedOutcomeOrderbook, orderbookVenue),
     [orderbookVenue, visibleSelectedOutcomeOrderbook]
   );
+  const displayOrderbookHasDepth = useMemo(
+    () => Boolean(
+      displayOrderbook
+      && (
+        displayOrderbook.asks.length > 0
+        || displayOrderbook.bids.length > 0
+        || Boolean(displayOrderbook.bestBid || displayOrderbook.bestAsk)
+      )
+    ),
+    [displayOrderbook],
+  );
   const orderbookLiveVenues = useMemo(() => {
     return (rawDisplayOrderbook?.venues ?? []).filter((venue) => {
       return venue.blockers.length === 0 && (venue.bids.length > 0 || venue.asks.length > 0 || Boolean(venue.bestBid || venue.bestAsk));
@@ -3659,10 +3670,8 @@ const InfraTradingTerminalInner = ({
     [unavailableOrderbookVenueRows],
   );
   const visibleUnavailableOrderbookVenueRows = useMemo(
-    () => marketDiagnosticsEnabled || orderbookLiveVenueCount === 0
-      ? unavailableOrderbookVenueRows
-      : [],
-    [marketDiagnosticsEnabled, orderbookLiveVenueCount, unavailableOrderbookVenueRows],
+    () => marketDiagnosticsEnabled ? unavailableOrderbookVenueRows : [],
+    [marketDiagnosticsEnabled, unavailableOrderbookVenueRows],
   );
   const selectedOutcomeBookReady = useMemo(() => isSelectedOutcomeBookReady({
     orderbook,
@@ -6893,19 +6902,12 @@ const InfraTradingTerminalInner = ({
                        {formatVenueLabel(latestOrderbookStream?.venue ?? 'Venue')} unavailable: {orderbookStreamBlockers[0]}
                      </div>
                    )}
-                   {orderbookLiveVenueCount === 0 && (orderbookSnapshotStatus === 'stale' || orderbookSnapshotStatus === 'resyncing') && (
+                   {marketDiagnosticsEnabled && !displayOrderbookHasDepth && orderbookLiveVenueCount === 0 && (orderbookSnapshotStatus === 'stale' || orderbookSnapshotStatus === 'resyncing') && (
                      <div className="mx-3 my-3 rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-[11px] font-semibold text-blue-100">
-                       {marketDiagnosticsEnabled
-                         ? `Live quotes reconnecting${orderbookFreshness ? ` (${orderbookFreshness})` : ''}.`
-                         : 'Updating live prices.'}
+                       {`Live quotes reconnecting${orderbookFreshness ? ` (${orderbookFreshness})` : ''}.`}
                      </div>
                    )}
-                   {!marketDiagnosticsEnabled && !orderbookLoading && orderbookLiveVenueCount === 0 && orderbookSnapshotStatus !== 'stale' && orderbookSnapshotStatus !== 'resyncing' && ((displayOrderbook?.asks.length ?? 0) === 0 && (displayOrderbook?.bids.length ?? 0) === 0) && (
-                     <div className="px-4 py-6 text-center text-[11px] font-semibold text-zinc-500">
-                       Updating live prices.
-                     </div>
-                   )}
-                   {marketDiagnosticsEnabled && !orderbookLoading && !orderbookError && displayOrderbook !== null && (displayOrderbook?.asks.length ?? 0) === 0 && (displayOrderbook?.bids.length ?? 0) === 0 && (
+                   {marketDiagnosticsEnabled && !orderbookLoading && !orderbookError && displayOrderbook !== null && !displayOrderbookHasDepth && (
                      <div className="px-4 py-6 text-center text-[11px] font-semibold text-zinc-500">
                        Live quotes reconnecting...
                      </div>
@@ -7105,9 +7107,6 @@ const InfraTradingTerminalInner = ({
                                    )}
                                    {marketDiagnosticsEnabled && orderbookError && inlineOrderbookLiveVenueCount === 0 && (
                                      <div className="mx-4 my-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] font-semibold text-amber-200">{orderbookError}</div>
-                                   )}
-                                   {!marketDiagnosticsEnabled && !orderbookLoading && inlineOrderbookLiveVenueCount === 0 && (!displayOrderbook || (displayOrderbook.asks.length === 0 && displayOrderbook.bids.length === 0)) && (
-                                     <div className="px-4 py-8 text-center text-[11px] font-semibold text-zinc-500">Updating live prices.</div>
                                    )}
                                    {visibleUnavailableOrderbookVenueRows.map((row, i) => (
                                      <div key={`inline-card-blocked-${row.venue}-${row.reason}-${i}`} className="mx-4 my-2 flex items-center justify-between rounded-lg border border-zinc-800 bg-[#0c0c0e] px-3 py-2 text-[11px] font-bold text-zinc-300">
