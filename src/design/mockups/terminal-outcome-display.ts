@@ -25,6 +25,12 @@ const normalizeOutcomeId = (value: string | null | undefined): string | null => 
   return trimmed.toUpperCase();
 };
 
+const normalizeVenueKey = (value: string | null | undefined): string => (
+  typeof value === 'string'
+    ? value.trim().replace(/[\s.-]+/g, '_').toUpperCase()
+    : ''
+);
+
 const hasUsableOrderbookDepth = (orderbook: MarketOrderbookResponse | null): boolean =>
   Boolean(orderbook && (orderbook.bids.length > 0 || orderbook.asks.length > 0 || orderbook.bestBid || orderbook.bestAsk));
 
@@ -91,6 +97,22 @@ export const resolveSelectedOutcomeOrderbookDisplaySource = (input: {
   live: MarketOrderbookResponse | null;
   visible: MarketOrderbookResponse | null;
 }): MarketOrderbookResponse | null => input.live ?? input.visible;
+
+export const orderSelectedOutcomeVisibleVenues = (
+  venues: readonly string[],
+  preferredOrder: readonly string[] = [],
+): string[] => {
+  const preferredRank = new Map<string, number>();
+  preferredOrder.forEach((venue, index) => {
+    preferredRank.set(normalizeVenueKey(venue), index);
+  });
+  return [...venues].sort((left, right) => {
+    const leftRank = preferredRank.get(normalizeVenueKey(left)) ?? Number.MAX_SAFE_INTEGER;
+    const rightRank = preferredRank.get(normalizeVenueKey(right)) ?? Number.MAX_SAFE_INTEGER;
+    if (leftRank !== rightRank) return leftRank - rightRank;
+    return left.localeCompare(right);
+  });
+};
 
 export const shouldResetExpandedOutcomeForMarketChange = (
   previousMarketResetKey: string | null,

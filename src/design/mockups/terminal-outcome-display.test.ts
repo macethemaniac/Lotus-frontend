@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   isSelectedOutcomeBookUsable,
   isSelectedOutcomeBookReady,
+  orderSelectedOutcomeVisibleVenues,
   resolveOutcomeSummaryVenueCount,
   resolveOutcomeSummaryVenues,
   resolveSelectedOutcomeOrderbookDisplaySource,
@@ -301,6 +302,22 @@ describe('resolveSelectedOutcomeOrderbookDisplaySource', () => {
       live: null,
       visible: visibleOrderbook,
     })).toEqual(visibleOrderbook);
+  });
+});
+
+describe('orderSelectedOutcomeVisibleVenues', () => {
+  it('keeps the expanded outcome venue order stable according to the market venue list', () => {
+    expect(orderSelectedOutcomeVisibleVenues(
+      ['KALSHI', 'POLYMARKET', 'MANIFOLD'],
+      ['POLYMARKET', 'KALSHI', 'MANIFOLD'],
+    )).toEqual(['POLYMARKET', 'KALSHI', 'MANIFOLD']);
+  });
+
+  it('falls back to alphabetical ordering for venues outside the preferred list', () => {
+    expect(orderSelectedOutcomeVisibleVenues(
+      ['ZETA', 'ALPHA', 'POLYMARKET'],
+      ['POLYMARKET'],
+    )).toEqual(['POLYMARKET', 'ALPHA', 'ZETA']);
   });
 });
 

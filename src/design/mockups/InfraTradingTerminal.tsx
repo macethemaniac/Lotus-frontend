@@ -14,6 +14,7 @@ import { FundingDeposit } from '@/design/mockups/FundingDeposit';
 import {
   isSelectedOutcomeBookReady,
   isSelectedOutcomeBookUsable,
+  orderSelectedOutcomeVisibleVenues,
   resolveOutcomeSummaryVenueCount,
   resolveOutcomeSummaryVenues,
   resolveSelectedOutcomeOrderbookDisplaySource,
@@ -3708,8 +3709,8 @@ const InfraTradingTerminalInner = ({
     }
     for (const level of displayOrderbook?.asks ?? []) addVenue(level.venue);
     for (const level of displayOrderbook?.bids ?? []) addVenue(level.venue);
-    return [...venues.values()];
-  }, [displayOrderbook]);
+    return orderSelectedOutcomeVisibleVenues([...venues.values()], marketVenueList);
+  }, [displayOrderbook, marketVenueList]);
   const orderbookLiveVenues = useMemo(() => {
     return (rawDisplayOrderbook?.venues ?? []).filter((venue) => {
       return venue.blockers.length === 0 && (venue.bids.length > 0 || venue.asks.length > 0 || Boolean(venue.bestBid || venue.bestAsk));
