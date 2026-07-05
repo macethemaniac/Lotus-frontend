@@ -310,6 +310,8 @@ export type TerminalMarketSelection = {
     name: string;
     prob: string;
     venues?: string[];
+    quoteReadyVenueCount?: number;
+    quoteReadyVenues?: string[];
     venueMarkets?: MarketCatalogVenueMarket[];
     marketType?: 'binary' | 'multi';
     marketTitle?: string;
@@ -628,10 +630,13 @@ const terminalOutcomeNameForEventMarket = (market: MarketCatalogMarket): string 
 
 const terminalOutcomeSeedForEventMarket = (market: MarketCatalogMarket) => {
   const marketId = market.canonicalMarketIds[0] ?? market.canonicalEventId;
+  const tradableVenues = market.quoteReadyVenues?.length ? market.quoteReadyVenues : market.venues;
   return {
     id: marketId,
     label: terminalOutcomeNameForEventMarket(market),
-    venues: market.venues,
+    venues: tradableVenues,
+    quoteReadyVenueCount: market.quoteReadyVenueCount,
+    quoteReadyVenues: market.quoteReadyVenues,
     marketId,
     canonicalMarketIds: market.canonicalMarketIds,
     quoteOutcomeId: 'YES',
@@ -1397,20 +1402,6 @@ const quoteVenueListFromLivePrice = (
       : livePrice.venues?.length
         ? livePrice.venues
         : []
-    : fallbackVenues;
-  return [...new Set(source
-    .map((venue) => typeof venue === 'string' ? venue.trim() : '')
-    .filter(Boolean))];
-};
-
-const linkedVenueListFromLivePrice = (
-  livePrice: MarketLivePriceItem | null | undefined,
-  fallbackVenues: readonly string[] = [],
-): string[] => {
-  const source = livePrice
-    ? livePrice.linkedVenues?.length
-      ? livePrice.linkedVenues
-      : fallbackVenues
     : fallbackVenues;
   return [...new Set(source
     .map((venue) => typeof venue === 'string' ? venue.trim() : '')
@@ -4006,7 +3997,7 @@ const InfraTradingTerminalInner = ({
           quoteOutcomeId,
           name: outcome.label,
           vol: outcomeVolume ? `${outcomeVolume} Vol.` : '',
-          platforms: venues.length || terminalMarket.venueCount,
+          platforms: outcome.quoteReadyVenueCount ?? (venues.length || terminalMarket.venueCount),
           prob: '-',
           yesPrice: '-',
           noPrice: '-',
@@ -4048,15 +4039,14 @@ const InfraTradingTerminalInner = ({
         const rows = seedRows.map((row) => {
           const livePrice = livePriceByKey.get(`${row.marketId ?? terminalMarketId}:${row.quoteOutcomeId}`);
           const quoteVenues = quoteVenueListFromLivePrice(livePrice, row.venues);
-          const linkedVenues = linkedVenueListFromLivePrice(livePrice, row.venues);
           const parsedPrice = orderbookNumericValue(livePrice?.price ?? livePrice?.bestAsk ?? livePrice?.midpoint ?? livePrice?.bestBid);
           if (parsedPrice === null) {
             if (!livePrice) return row;
             return {
               ...row,
-              platforms: linkedVenues.length || row.platforms,
+              platforms: quoteVenues.length || row.platforms,
               primaryVenue: livePrice.bestVenue ?? quoteVenues[0] ?? row.primaryVenue ?? null,
-              venues: quoteVenues,
+              venues: quoteVenues.length > 0 ? quoteVenues : row.venues,
               venueQuotes: quoteVenues.length > 0
                 ? placeholderVenueQuotes(quoteVenues, '-', '-', null)
                 : [],
@@ -4067,7 +4057,7 @@ const InfraTradingTerminalInner = ({
           const noPrice = terminalMarket.marketType === 'binary' ? formatProbabilityPrice(1 - parsedPrice) : '-';
           return {
             ...row,
-            platforms: linkedVenues.length || row.platforms,
+            platforms: quoteVenues.length || row.platforms,
             prob: formatProbabilityPercent(parsedPrice),
             yesPrice,
             noPrice,
@@ -4077,7 +4067,7 @@ const InfraTradingTerminalInner = ({
               : livePrice?.bestVenue
                 ? placeholderVenueQuotes(quoteVenues.length ? quoteVenues : [livePrice.bestVenue], yesPrice, noPrice, null)
                 : row.venueQuotes,
-            venues: linkedVenues.length > 0 ? linkedVenues : row.venues,
+            venues: quoteVenues.length > 0 ? quoteVenues : row.venues,
             status: 'live',
           };
         });
@@ -4157,25 +4147,24 @@ const InfraTradingTerminalInner = ({
                 streamOutcomeMatches(price.outcomeId ?? quoteOutcomeId, quoteOutcomeId)
               );
             const quoteVenues = quoteVenueListFromLivePrice(livePrice, outcome.venues);
-            const linkedVenues = linkedVenueListFromLivePrice(livePrice, outcome.venues);
             const parsedPrice = orderbookNumericValue(livePrice?.price ?? livePrice?.bestAsk ?? livePrice?.midpoint ?? livePrice?.bestBid);
             if (parsedPrice === null) {
               if (!livePrice) return outcome;
               return {
                 ...outcome,
-                platforms: linkedVenues.length || outcome.platforms,
+                platforms: quoteVenues.length || outcome.platforms,
                 primaryVenue: livePrice.bestVenue ?? quoteVenues[0] ?? outcome.primaryVenue ?? null,
                 venueQuotes: quoteVenues.length > 0
                   ? placeholderVenueQuotes(quoteVenues, '-', '-', null)
                   : [],
-                venues: linkedVenues.length > 0 ? linkedVenues : outcome.venues,
+                venues: quoteVenues.length > 0 ? quoteVenues : outcome.venues,
               };
             }
             const yesPrice = formatProbabilityPrice(parsedPrice);
             const noPrice = terminalMarket.marketType === 'binary' ? formatProbabilityPrice(1 - parsedPrice) : '-';
             return {
               ...outcome,
-              platforms: linkedVenues.length || outcome.platforms,
+              platforms: quoteVenues.length || outcome.platforms,
               prob: formatProbabilityPercent(parsedPrice),
               yesPrice,
               noPrice,
@@ -4185,7 +4174,7 @@ const InfraTradingTerminalInner = ({
                 : livePrice?.bestVenue
                   ? placeholderVenueQuotes(quoteVenues.length ? quoteVenues : [livePrice.bestVenue], yesPrice, noPrice, null)
                   : outcome.venueQuotes,
-              venues: linkedVenues.length > 0 ? linkedVenues : outcome.venues,
+              venues: quoteVenues.length > 0 ? quoteVenues : outcome.venues,
               status: 'live',
               blocker: null,
             };
