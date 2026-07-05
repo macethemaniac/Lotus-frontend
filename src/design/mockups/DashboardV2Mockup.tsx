@@ -15,11 +15,13 @@ import {
   getMarket,
   getMarketBatchQuotes,
   getMarketLivePrices,
+  listEvents,
   listMarkets,
   type MarketBatchQuoteItem,
   type MarketCatalogMarket,
   type MarketLivePriceItem,
 } from '@/features/markets/api/market-api';
+import { eventSlugFromTitle } from '@/features/markets/market-slugs';
 import { getNotifications, markNotificationRead, type UserNotification } from '@/features/notifications/api/notification-api';
 import { NotificationToast, type NotificationToastTone } from '@/features/notifications/components/notification-toast';
 import { getExecutionHistory, getPortfolioSummary, type ExecutionStatus, type LiveCandidatesResponse, type PortfolioSummary, type TradeRouteCandidate } from '@/features/trading/api/execution-api';
@@ -78,6 +80,7 @@ type DashboardMarketRow = Pick<TerminalMarketSelection, 'title' | 'category' | '
   canonicalMarketIds: string[];
   eventId?: string;
   canonicalEventId: string;
+  eventSlug: string;
   venues: string[];
   venueMarkets: MarketCatalogMarket['venueMarkets'];
   marketType: 'binary' | 'multi';
@@ -226,6 +229,9 @@ const dashboardVenueIconId = (venue: string): string => {
 
 const dashboardEventMediaKey = (market: Pick<DashboardMarketRow, 'eventId' | 'canonicalEventId'>): string | null =>
   market.eventId ?? market.canonicalEventId ?? null;
+
+const dashboardMarketEventSlug = (market: Pick<DashboardMarketRow, 'title' | 'eventSlug'>): string =>
+  market.eventSlug || eventSlugFromTitle(market.title);
 
 const shouldPreferEventMedia = (market: Pick<DashboardMarketRow, 'marketType' | 'outcomes'>): boolean =>
   shouldPreferDashboardEventMedia(market);
@@ -972,6 +978,7 @@ const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardM
     eventId: market.eventId ?? market.canonicalEventId,
     canonicalEventId: market.canonicalEventId,
     title: normalizeEventTopicTitle(market),
+    eventSlug: eventSlugFromTitle(normalizeEventTopicTitle(market)),
     category: `${category} - ${marketClass}`,
     icon: categoryIconFallback[market.category.toLowerCase()] ?? 'L',
     volume: catalogVolume ?? catalogLiquidity ?? 'Backend catalog',
@@ -1181,6 +1188,38 @@ const resolveDashboardRowsEventMedia = async (
     };
   });
 };
+
+const toTerminalMarketSelection = (market: DashboardMarketRow): TerminalMarketSelection => ({
+  id: market.id,
+  marketId: market.marketId,
+  canonicalMarketIds: market.canonicalMarketIds,
+  eventId: market.eventId,
+  canonicalEventId: market.canonicalEventId,
+  eventSlug: market.eventSlug,
+  status: market.status,
+  title: market.title,
+  category: market.category,
+  icon: market.icon,
+  volume: market.volume,
+  volume24h: market.volume24h,
+  liquidity: market.liquidity,
+  openInterest: market.openInterest,
+  resolvesAt: market.resolvesAt,
+  resolutionDateLabel: market.resolutionDateLabel,
+  venueCount: market.venueCount,
+  routeType: market.routeType,
+  venues: market.venues,
+  venueMarkets: market.venueMarkets,
+  marketType: market.marketType,
+  outcomes: market.outcomes,
+  imageUrl: market.imageUrl,
+  iconUrl: market.iconUrl,
+  priceLabel: market.priceLabel,
+  priceVenue: market.priceVenue,
+  changeLabel: market.changeLabel,
+  change24hLabel: market.change24hLabel,
+  change24hDirection: market.change24hDirection,
+});
 
 const blockedFromError = (error: unknown): LiveCandidatesResponse['blocked'] => {
   if (!(error instanceof ApiClientError) || !error.payload || typeof error.payload !== 'object') return [];
@@ -1459,11 +1498,13 @@ const fundingHistoryRows = (response: Awaited<ReturnType<typeof getFundingHistor
 export const DashboardV2Mockup = ({
   activePage = 'home',
   onNavigate,
+  routeEventSlug = null,
   session,
   onRequireLogin,
 }: {
   activePage?: LotusAppPage;
-  onNavigate?: (page: LotusAppPage) => void;
+  onNavigate?: (page: LotusAppPage, slug?: string | null) => void;
+  routeEventSlug?: string | null;
   session?: AuthSession | null;
   onRequireLogin?: () => void;
 }) => {
@@ -1538,38 +1579,45 @@ export const DashboardV2Mockup = ({
     [marketFilter, marketSortKey, quotedMarketRows, selectedCategories, selectedRouteTypes, watchlistIds],
   );
   const terminalMarketSelections = useMemo<TerminalMarketSelection[]>(
-    () => quotedMarketRows.map((market) => ({
-      id: market.id,
-      marketId: market.marketId,
-      canonicalMarketIds: market.canonicalMarketIds,
-      eventId: market.eventId,
-      canonicalEventId: market.canonicalEventId,
-      status: market.status,
-      title: market.title,
-      category: market.category,
-      icon: market.icon,
-      volume: market.volume,
-      volume24h: market.volume24h,
-      liquidity: market.liquidity,
-      openInterest: market.openInterest,
-      resolvesAt: market.resolvesAt,
-      resolutionDateLabel: market.resolutionDateLabel,
-      venueCount: market.venueCount,
-      routeType: market.routeType,
-      venues: market.venues,
-      venueMarkets: market.venueMarkets,
-      marketType: market.marketType,
-      outcomes: market.outcomes,
-      imageUrl: market.imageUrl,
-      iconUrl: market.iconUrl,
-      priceLabel: market.priceLabel,
-      priceVenue: market.priceVenue,
-      changeLabel: market.changeLabel,
-      change24hLabel: market.change24hLabel,
-      change24hDirection: market.change24hDirection,
-    })),
+    () => quotedMarketRows.map(toTerminalMarketSelection),
     [quotedMarketRows],
   );
+  useEffect(() => {
+    if (activePage !== 'terminal') return;
+    if (routeEventSlug && selectedTerminalMarket?.eventSlug === routeEventSlug) return;
+    if (!routeEventSlug && selectedTerminalMarket) return;
+
+    let cancelled = false;
+    const resolveTerminalRoute = async () => {
+      try {
+        const eventResponse = await listEvents({ limit: 250 });
+        const matchedEvent = routeEventSlug
+          ? eventResponse.events.find((event) => eventSlugFromTitle(event.title) === routeEventSlug)
+          : eventResponse.events[0];
+        if (!matchedEvent) return;
+
+        const marketResponse = await getEventMarkets(matchedEvent.eventId);
+        const rows = await resolveDashboardRowsEventMedia(
+          mapCatalogMarketsToDashboardRows(marketResponse.markets),
+          marketEventMediaCacheRef.current,
+        );
+        if (cancelled || rows.length === 0) return;
+        const matchedRow = rows.find((row) => dashboardMarketEventSlug(row) === eventSlugFromTitle(matchedEvent.title)) ?? rows[0]!;
+        const nextSelection = toTerminalMarketSelection(matchedRow);
+        setSelectedTerminalMarket(nextSelection);
+        if (!routeEventSlug) {
+          onNavigate?.('terminal', nextSelection.eventSlug ?? null);
+        }
+      } catch {
+        // Keep the terminal shell visible even when route resolution fails.
+      }
+    };
+
+    void resolveTerminalRoute();
+    return () => {
+      cancelled = true;
+    };
+  }, [activePage, onNavigate, routeEventSlug, selectedTerminalMarket?.eventSlug]);
   const displayedMarkets = activePage === 'home'
     ? filteredMarketRows.slice(0, homeVisibleMarketCount)
     : filteredMarketRows;
@@ -1696,11 +1744,13 @@ export const DashboardV2Mockup = ({
       : 'binary'
   );
   const openMarketInTerminal = (market: Pick<TerminalMarketSelection, 'title' | 'category' | 'icon' | 'volume' | 'venueCount' | 'routeType'> & Partial<TerminalMarketSelection>) => {
-    setSelectedTerminalMarket({
+    const nextSelection: TerminalMarketSelection = {
       ...market,
+      eventSlug: market.eventSlug ?? eventSlugFromTitle(market.title),
       marketType: market.marketType ?? inferTerminalMarketType(market.title),
-    });
-    onNavigate?.('terminal');
+    };
+    setSelectedTerminalMarket(nextSelection);
+    onNavigate?.('terminal', nextSelection.eventSlug ?? null);
     if ((market.venueMarkets?.length ?? 0) > 0 || !market.marketId) return;
     getMarket(market.marketId)
       .then((response) => {
@@ -1712,6 +1762,7 @@ export const DashboardV2Mockup = ({
             venueMarkets: fullMarket.venueMarkets,
             venues: venuesForCatalogMarket(fullMarket),
             marketType: fullMarket.outcomeCount > 2 ? 'multi' : 'binary',
+            eventSlug: current.eventSlug ?? eventSlugFromTitle(current.title),
             imageUrl: getSafeMediaUrl(fullMarket.imageUrl) ?? current.imageUrl,
             iconUrl: getSafeMediaUrl(fullMarket.iconUrl) ?? current.iconUrl,
           };

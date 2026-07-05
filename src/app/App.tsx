@@ -49,27 +49,42 @@ const lotusPageTitleByPage: Record<LotusAppPage, string> = {
   settings: "Lotus Settings",
 };
 
+type LotusRouteState = {
+  page: LotusAppPage;
+  slug: string | null;
+};
+
 function normalizeAppPath(pathname: string): string {
   const normalized = pathname.replace(/\/+$/, "");
   return normalized || "/";
 }
 
-function lotusPageFromPath(pathname: string): LotusAppPage {
-  switch (normalizeAppPath(pathname)) {
-    case "/":
-    case "/dashboard":
-    case "/home":
-      return "home";
-    case "/markets":
-      return "markets";
-    case "/terminal":
-      return "terminal";
-    case "/portfolio":
-      return "portfolio";
-    case "/settings":
-      return "settings";
+function lotusRouteForPage(page: LotusAppPage, slug: string | null = null): string {
+  const baseRoute = lotusPageRouteByPage[page];
+  if (page !== "terminal" || !slug) return baseRoute;
+  return `${baseRoute}/${encodeURIComponent(slug)}`;
+}
+
+function lotusRouteFromPath(pathname: string): LotusRouteState {
+  const normalized = normalizeAppPath(pathname);
+  const segments = normalized.split("/").filter(Boolean);
+  const first = segments[0] ?? "";
+
+  switch (first) {
+    case "":
+    case "dashboard":
+    case "home":
+      return { page: "home", slug: null };
+    case "markets":
+      return { page: "markets", slug: null };
+    case "terminal":
+      return { page: "terminal", slug: segments[1] ? decodeURIComponent(segments[1]) : null };
+    case "portfolio":
+      return { page: "portfolio", slug: null };
+    case "settings":
+      return { page: "settings", slug: null };
     default:
-      return "home";
+      return { page: "home", slug: null };
   }
 }
 
@@ -185,7 +200,7 @@ function AccountDropdown({
 }: {
   session: AuthSession;
   onLogout: () => void;
-  onNavigate: (page: LotusAppPage) => void;
+  onNavigate: (page: LotusAppPage, slug?: string | null) => void;
 }) {
   const { handleExportWallet, handleExportWalletAccount, refreshWallets, wallets: turnkeyWallets } = useTurnkey();
   const [open, setOpen] = useState(false);
@@ -710,7 +725,8 @@ export function App() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
-  const [activePage, setActivePage] = useState<LotusAppPage>(() => lotusPageFromPath(window.location.pathname));
+  const [routeState, setRouteState] = useState<LotusRouteState>(() => lotusRouteFromPath(window.location.pathname));
+  const activePage = routeState.page;
 
   useEffect(() => {
     setSession(loadStoredSession());
@@ -722,19 +738,20 @@ export function App() {
 
   useEffect(() => {
     const syncPageFromLocation = () => {
-      setActivePage(lotusPageFromPath(window.location.pathname));
+      setRouteState(lotusRouteFromPath(window.location.pathname));
     };
 
     window.addEventListener("popstate", syncPageFromLocation);
     return () => window.removeEventListener("popstate", syncPageFromLocation);
   }, []);
 
-  const navigateToPage = useCallback((page: LotusAppPage) => {
-    setActivePage(page);
-    const nextPath = lotusPageRouteByPage[page];
+  const navigateToPage = useCallback((page: LotusAppPage, slug: string | null = null) => {
+    const nextRoute = { page, slug: page === "terminal" ? slug : null };
+    setRouteState(nextRoute);
+    const nextPath = lotusRouteForPage(nextRoute.page, nextRoute.slug);
     const currentPath = normalizeAppPath(window.location.pathname);
     if (currentPath !== nextPath) {
-      window.history.pushState({ lotusPage: page }, "", nextPath);
+      window.history.pushState({ lotusPage: page, lotusSlug: nextRoute.slug }, "", nextPath);
     }
   }, []);
 
@@ -804,6 +821,7 @@ export function App() {
           <DashboardV2Mockup
             activePage={activePage}
             onNavigate={navigateToPage}
+            routeEventSlug={routeState.slug}
             session={session}
             onRequireLogin={() => setAuthModalOpen(true)}
           />

@@ -295,6 +295,7 @@ export type TerminalMarketSelection = {
   canonicalMarketIds?: string[];
   eventId?: string;
   canonicalEventId?: string;
+  eventSlug?: string;
   status?: MarketCatalogMarket["status"];
   title: string;
   category: string;
@@ -4065,10 +4066,15 @@ const InfraTradingTerminalInner = ({
           if (eventMarketsResponse.imageUrl || eventMarketsResponse.iconUrl) {
             setLocalSelectedMarket((current) => {
               const source = current ?? terminalMarket;
+              const nextImageUrl = eventMarketsResponse?.imageUrl ?? source.imageUrl;
+              const nextIconUrl = eventMarketsResponse?.iconUrl ?? source.iconUrl;
+              if (nextImageUrl === source.imageUrl && nextIconUrl === source.iconUrl) {
+                return current;
+              }
               return {
                 ...source,
-                imageUrl: eventMarketsResponse?.imageUrl ?? source.imageUrl,
-                iconUrl: eventMarketsResponse?.iconUrl ?? source.iconUrl,
+                imageUrl: nextImageUrl,
+                iconUrl: nextIconUrl,
               };
             });
           }
@@ -6899,6 +6905,7 @@ const InfraTradingTerminalInner = ({
                                 canonicalMarketIds: outcome.canonicalMarketIds ?? market.canonicalMarketIds,
                                 eventId: outcome.eventId ?? market.eventId,
                                 canonicalEventId: outcome.canonicalEventId ?? market.canonicalEventId,
+                                eventSlug: market.eventSlug,
                                 venues: outcome.venues ?? market.venues,
                                 venueMarkets: outcome.venueMarkets ?? market.venueMarkets,
                                 marketType: outcome.marketType ?? market.marketType,
