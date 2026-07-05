@@ -701,11 +701,16 @@ const COUNTRY_FLAG_EMOJI_BY_NAME: Record<string, string> = {
 const normalizeCountryFlagKey = (value: string): string =>
   value.toLowerCase().replace(/[^a-z]/g, '');
 
+const titleOutcomeLabel = (title: string): string => {
+  const trimmed = title.trim();
+  return trimmed.match(/:\s*(.+)$/)?.[1]?.trim() ?? trimmed;
+};
+
 const countryFlagEmojiForTitle = (title: string): string | null => {
   const trimmed = title.trim();
   if (!trimmed) return null;
-  const suffix = trimmed.match(/:\s*(.+)$/)?.[1]?.trim() ?? null;
-  const candidates = [suffix, trimmed]
+  const outcome = titleOutcomeLabel(trimmed);
+  const candidates = [outcome, trimmed]
     .filter((value): value is string => Boolean(value))
     .map(normalizeCountryFlagKey);
   for (const candidate of candidates) {
@@ -713,6 +718,62 @@ const countryFlagEmojiForTitle = (title: string): string | null => {
     if (emoji) return emoji;
   }
   return null;
+};
+
+const normalizeOutcomeMediaToken = (value: string): string =>
+  value
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+
+const outcomeMediaLooksSpecific = (title: string, mediaUrl: string | null | undefined): boolean => {
+  if (!mediaUrl) return false;
+  try {
+    const parsed = new URL(mediaUrl);
+    const mediaKey = normalizeOutcomeMediaToken(`${parsed.hostname} ${decodeURIComponent(parsed.pathname)}`);
+    const outcome = titleOutcomeLabel(title);
+    const outcomeKey = normalizeOutcomeMediaToken(outcome);
+    if (!outcomeKey) return false;
+    const denseOutcomeKey = outcomeKey.replace(/\s+/g, '');
+    if (denseOutcomeKey.length >= 4 && mediaKey.includes(denseOutcomeKey)) {
+      return true;
+    }
+    const tokens = outcomeKey
+      .split(/\s+/)
+      .filter((token) => token.length >= 4);
+    return tokens.some((token) => mediaKey.includes(token));
+  } catch {
+    return false;
+  }
+};
+
+const outcomeAvatarInitials = (title: string): string => {
+  const outcome = titleOutcomeLabel(title);
+  const tokens = outcome
+    .split(/[\s/-]+/)
+    .map((token) => token.trim())
+    .filter(Boolean);
+  if (tokens.length === 0) return title.slice(0, 2).toUpperCase();
+  return tokens
+    .slice(0, 2)
+    .map((token) => token[0]?.toUpperCase() ?? '')
+    .join('')
+    .slice(0, 2);
+};
+
+const outcomeAvatarPalette = (title: string): { background: string; border: string; color: string } => {
+  const palettes = [
+    { background: 'linear-gradient(135deg, #1f2937 0%, #111827 100%)', border: 'rgba(96,165,250,0.35)', color: '#dbeafe' },
+    { background: 'linear-gradient(135deg, #3f1d24 0%, #111827 100%)', border: 'rgba(248,113,113,0.35)', color: '#fecaca' },
+    { background: 'linear-gradient(135deg, #123524 0%, #111827 100%)', border: 'rgba(74,222,128,0.35)', color: '#dcfce7' },
+    { background: 'linear-gradient(135deg, #312e81 0%, #111827 100%)', border: 'rgba(129,140,248,0.4)', color: '#e0e7ff' },
+    { background: 'linear-gradient(135deg, #4a2f14 0%, #111827 100%)', border: 'rgba(251,191,36,0.35)', color: '#fef3c7' },
+  ] as const;
+  const key = normalizeOutcomeMediaToken(title).replace(/\s+/g, '');
+  const hash = [...key].reduce((sum, char) => sum + char.charCodeAt(0), 0);
+  return palettes[hash % palettes.length]!;
 };
 
 const TerminalMarketThumb = ({
@@ -733,6 +794,9 @@ const TerminalMarketThumb = ({
   const rawMediaUrl = imageUrl ?? iconUrl;
   React.useEffect(() => setFailed(false), [rawMediaUrl]);
   const mediaUrl = !failed ? rawMediaUrl : null;
+  const shouldUseOutcomeAvatar = !countryFlagEmoji && title.includes(':') && !outcomeMediaLooksSpecific(title, mediaUrl);
+  const outcomeInitials = outcomeAvatarInitials(title);
+  const outcomePalette = outcomeAvatarPalette(title);
   const topicLogoId = resolveTopicAssetLogoId(title);
   const useTopicFallback = Boolean(topicLogoId) || icon === 'L' || !icon;
 
@@ -741,6 +805,18 @@ const TerminalMarketThumb = ({
       {countryFlagEmoji ? (
         <span aria-hidden="true" className="flex h-full w-full items-center justify-center text-[1.35em] leading-none">
           {countryFlagEmoji}
+        </span>
+      ) : shouldUseOutcomeAvatar ? (
+        <span
+          aria-hidden="true"
+          className="flex h-full w-full items-center justify-center rounded-full text-[0.72em] font-black tracking-[0.08em]"
+          style={{
+            background: outcomePalette.background,
+            borderColor: outcomePalette.border,
+            color: outcomePalette.color,
+          }}
+        >
+          {outcomeInitials}
         </span>
       ) : mediaUrl ? (
         <img
@@ -3581,6 +3657,12 @@ const InfraTradingTerminalInner = ({
   const selectedOutcomeSyncingVenueCount = useMemo(
     () => unavailableOrderbookVenueRows.filter((row) => row.status === 'syncing').length,
     [unavailableOrderbookVenueRows],
+  );
+  const visibleUnavailableOrderbookVenueRows = useMemo(
+    () => marketDiagnosticsEnabled || orderbookLiveVenueCount === 0
+      ? unavailableOrderbookVenueRows
+      : [],
+    [marketDiagnosticsEnabled, orderbookLiveVenueCount, unavailableOrderbookVenueRows],
   );
   const selectedOutcomeBookReady = useMemo(() => isSelectedOutcomeBookReady({
     orderbook,
@@ -6828,7 +6910,7 @@ const InfraTradingTerminalInner = ({
                        Live quotes reconnecting...
                      </div>
                    )}
-                   {unavailableOrderbookVenueRows.map((row, i) => (
+                   {visibleUnavailableOrderbookVenueRows.map((row, i) => (
                      <div key={`blocked-book-${row.venue}-${row.reason}-${i}`} className="mx-3 my-1 flex items-center justify-between rounded border border-zinc-800 bg-[#0c0c0e] px-3 py-1.5 text-[10px] font-bold text-zinc-300">
                        <span className="flex min-w-0 items-center gap-1.5">
                          <VenueLogo id={normalizeVenueId(row.venue)} label={formatVenueLabel(row.venue)} className={tinyVenueClass} />
@@ -7027,7 +7109,7 @@ const InfraTradingTerminalInner = ({
                                    {!marketDiagnosticsEnabled && !orderbookLoading && inlineOrderbookLiveVenueCount === 0 && (!displayOrderbook || (displayOrderbook.asks.length === 0 && displayOrderbook.bids.length === 0)) && (
                                      <div className="px-4 py-8 text-center text-[11px] font-semibold text-zinc-500">Updating live prices.</div>
                                    )}
-                                   {unavailableOrderbookVenueRows.map((row, i) => (
+                                   {visibleUnavailableOrderbookVenueRows.map((row, i) => (
                                      <div key={`inline-card-blocked-${row.venue}-${row.reason}-${i}`} className="mx-4 my-2 flex items-center justify-between rounded-lg border border-zinc-800 bg-[#0c0c0e] px-3 py-2 text-[11px] font-bold text-zinc-300">
                                        <span className="flex min-w-0 items-center gap-2">
                                          <VenueLogo id={normalizeVenueId(row.venue)} label={formatVenueLabel(row.venue)} className="h-4 w-4 rounded-full" />
