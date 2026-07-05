@@ -1382,6 +1382,11 @@ const compareOutcomeRowsByProbability = (
   return left.name.localeCompare(right.name);
 };
 
+const terminalOutcomeHasUsableQuote = (outcome: Pick<TerminalOutcomeRow, 'prob' | 'yesPrice' | 'noPrice'>): boolean =>
+  normalizeTerminalDisplayValue(outcome.prob) !== null
+  || normalizeTerminalDisplayValue(outcome.yesPrice) !== null
+  || normalizeTerminalDisplayValue(outcome.noPrice) !== null;
+
 const streamStatusLabel = (
   status: MarketOrderbookStreamPayload['snapshotStatus'] | undefined,
   diagnosticsEnabled = lotusMarketDiagnosticsEnabled()
@@ -3479,16 +3484,24 @@ const InfraTradingTerminalInner = ({
     () => [...terminalOutcomes].sort(compareOutcomeRowsByProbability),
     [terminalOutcomes],
   );
-  const selectedOutcome = terminalOutcomes.find((outcome) => outcome.id === selectedOutcomeId) ?? sortedTerminalOutcomes[0] ?? null;
+  const quoteableTerminalOutcomes = useMemo(() => {
+    const quoted = sortedTerminalOutcomes.filter(terminalOutcomeHasUsableQuote);
+    return quoted.length > 0 ? quoted : sortedTerminalOutcomes;
+  }, [sortedTerminalOutcomes]);
+  const selectedOutcome = quoteableTerminalOutcomes.find((outcome) => outcome.id === selectedOutcomeId)
+    ?? quoteableTerminalOutcomes[0]
+    ?? terminalOutcomes.find((outcome) => outcome.id === selectedOutcomeId)
+    ?? sortedTerminalOutcomes[0]
+    ?? null;
   const visibleOutcomeRows = useMemo(() => {
-    if (showAllOutcomes || sortedTerminalOutcomes.length <= 5) return sortedTerminalOutcomes;
-    const defaultRows = sortedTerminalOutcomes.slice(0, 5);
+    if (showAllOutcomes || quoteableTerminalOutcomes.length <= 5) return quoteableTerminalOutcomes;
+    const defaultRows = quoteableTerminalOutcomes.slice(0, 5);
     const pinnedOutcomeId = selectedOutcomeId ?? terminalMarket.initialOutcomeId ?? null;
     if (!pinnedOutcomeId) return defaultRows;
-    const pinnedIndex = sortedTerminalOutcomes.findIndex((outcome) => outcome.id === pinnedOutcomeId);
+    const pinnedIndex = quoteableTerminalOutcomes.findIndex((outcome) => outcome.id === pinnedOutcomeId);
     if (pinnedIndex < 0 || pinnedIndex < 5) return defaultRows;
-    return [...sortedTerminalOutcomes.slice(0, 4), sortedTerminalOutcomes[pinnedIndex]!];
-  }, [selectedOutcomeId, showAllOutcomes, sortedTerminalOutcomes, terminalMarket.initialOutcomeId]);
+    return [...quoteableTerminalOutcomes.slice(0, 4), quoteableTerminalOutcomes[pinnedIndex]!];
+  }, [quoteableTerminalOutcomes, selectedOutcomeId, showAllOutcomes, terminalMarket.initialOutcomeId]);
   const selectedOutcomeMarketId = selectedOutcome?.marketId ?? terminalMarketId;
   const selectedQuoteOutcomeId = selectedOutcome?.quoteOutcomeId ?? selectedOutcomeId;
   const selectedOutcomeRefreshKey = `${selectedOutcome?.id ?? 'none'}:${selectedOutcomeMarketId ?? 'none'}:${selectedQuoteOutcomeId ?? 'none'}`;
@@ -7304,7 +7317,7 @@ const InfraTradingTerminalInner = ({
                             </div>
                            );
                          })}
-                        {terminalOutcomes.length > 5 && (
+                        {quoteableTerminalOutcomes.length > 5 && (
                           <div className="flex justify-center pt-1">
                               <button
                                 type="button"
