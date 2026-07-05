@@ -65,6 +65,8 @@ type DashboardOutcomeRow = {
   quoteOutcomeId: string;
   name: string;
   prob: string;
+  volume?: string | null;
+  volume24h?: string | null;
   liveStatus?: 'live' | 'partial' | 'stale' | 'unavailable' | 'not_requested';
   venues?: string[];
   venueMarkets?: MarketCatalogMarket['venueMarkets'];
@@ -862,6 +864,8 @@ const compactFallbackOutcome = (market: MarketCatalogMarket): DashboardOutcomeRo
     quoteOutcomeId: canonicalQuoteOutcomeId(label),
     name: normalizeMarketOutcomeLabel(market.title, label),
     prob: pendingPricePlaceholder(),
+    volume: market.volume ?? null,
+    volume24h: market.volume24h ?? null,
     liveStatus: 'not_requested',
     venues: venuesForCatalogMarket(market),
     venueMarkets: [],
@@ -883,6 +887,8 @@ const binaryCandidateOutcomeRow = (market: MarketCatalogMarket): DashboardOutcom
     quoteOutcomeId: 'YES',
     name: deriveCandidateOutcomeLabel(market),
     prob: pendingPricePlaceholder(),
+    volume: market.volume ?? null,
+    volume24h: market.volume24h ?? null,
     liveStatus: 'not_requested',
     venues: venuesForCatalogMarket(market),
     venueMarkets: market.venueMarkets,
@@ -940,6 +946,8 @@ const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardM
         quoteOutcomeId: canonicalQuoteOutcomeId(label),
         name: normalizeMarketOutcomeLabel(market.title, label),
         prob: pendingPricePlaceholder(),
+        volume: market.volume ?? null,
+        volume24h: market.volume24h ?? null,
         liveStatus: 'not_requested',
         venues,
         venueMarkets: market.venueMarkets,

@@ -322,6 +322,8 @@ export type TerminalMarketSelection = {
     quoteOutcomeId?: string;
     name: string;
     prob: string;
+    volume?: string | null;
+    volume24h?: string | null;
     venues?: string[];
     quoteReadyVenueCount?: number;
     quoteReadyVenues?: string[];
@@ -2471,7 +2473,10 @@ const initialOutcomeRows = (market: TerminalMarketSelection): TerminalOutcomeRow
       fallbackImageUrl: market.imageUrl,
       fallbackIconUrl: market.iconUrl,
     }),
-    vol: market.volume,
+    vol: (() => {
+      const formattedOutcomeVolume = formatMoneyMetric(outcome.volume) ?? outcome.volume ?? '';
+      return formattedOutcomeVolume ? `${formattedOutcomeVolume} Vol.` : market.volume;
+    })(),
     platforms: market.venueCount,
     prob: outcome.prob,
     yesPrice: outcome.prob,
@@ -4164,40 +4169,60 @@ const InfraTradingTerminalInner = ({
       );
       let eventMarketsResponse: Awaited<ReturnType<typeof getEventMarkets>> | null = null;
       if (hasCompoundEventOutcomes) {
-        const resolvedEventId = terminalEventId ?? (terminalMarketId
-          ? ((await getMarket(terminalMarketId)).market.eventId ?? null)
-          : null);
-        if (resolvedEventId) {
-          eventMarketsResponse = await getEventMarkets(resolvedEventId);
-          if (eventMarketsResponse.imageUrl || eventMarketsResponse.iconUrl) {
-            setLocalSelectedMarket((current) => {
-              const source = current ?? terminalMarket;
-              const nextImageUrl = eventMarketsResponse?.imageUrl ?? source.imageUrl;
-              const nextIconUrl = eventMarketsResponse?.iconUrl ?? source.iconUrl;
-              if (nextImageUrl === source.imageUrl && nextIconUrl === source.iconUrl) {
-                return current;
-              }
-              return {
-                ...source,
-                imageUrl: nextImageUrl,
-                iconUrl: nextIconUrl,
-              };
-            });
+        try {
+          const resolvedEventId = terminalEventId ?? (terminalMarketId
+            ? ((await getMarket(terminalMarketId)).market.eventId ?? null)
+            : null);
+          if (resolvedEventId) {
+            eventMarketsResponse = await getEventMarkets(resolvedEventId);
+            if (eventMarketsResponse.imageUrl || eventMarketsResponse.iconUrl) {
+              setLocalSelectedMarket((current) => {
+                const source = current ?? terminalMarket;
+                const nextImageUrl = eventMarketsResponse?.imageUrl ?? source.imageUrl;
+                const nextIconUrl = eventMarketsResponse?.iconUrl ?? source.iconUrl;
+                if (nextImageUrl === source.imageUrl && nextIconUrl === source.iconUrl) {
+                  return current;
+                }
+                return {
+                  ...source,
+                  imageUrl: nextImageUrl,
+                  iconUrl: nextIconUrl,
+                };
+              });
+            }
           }
+        } catch {
+          // Keep the terminal usable with the locally selected candidate rows even if
+          // event-level hydration fails for a grouped event selection.
         }
       }
-      const seededOutcomes: TerminalOutcomeSeed[] = fallbackRows.map((row) => ({
-        id: row.id,
-        label: row.name,
-        venues: row.venues,
-        marketId: row.marketId,
-        canonicalMarketIds: row.canonicalMarketIds,
-        quoteOutcomeId: row.quoteOutcomeId,
-        imageUrl: row.imageUrl,
-        iconUrl: row.iconUrl,
-        volume: null as string | null,
-        volume24h: null as string | null,
-      }));
+      const seededOutcomes: TerminalOutcomeSeed[] = (terminalMarket.outcomes?.length
+        ? terminalMarket.outcomes.map((outcome) => ({
+            id: outcome.id,
+            label: outcome.name,
+            venues: outcome.venues ?? marketVenueList,
+            marketId: outcome.marketId ?? terminalMarketId,
+            canonicalMarketIds: outcome.canonicalMarketIds ?? [],
+            quoteOutcomeId: outcome.quoteOutcomeId ?? canonicalQuoteOutcomeId(outcome.name),
+            imageUrl: outcome.imageUrl ?? null,
+            iconUrl: outcome.iconUrl ?? null,
+            volume: outcome.volume ?? null,
+            volume24h: outcome.volume24h ?? null,
+            quoteReadyVenueCount: outcome.quoteReadyVenueCount,
+            quoteReadyVenues: outcome.quoteReadyVenues,
+          }))
+        : fallbackRows.map((row) => ({
+            id: row.id,
+            label: row.name,
+            venues: row.venues,
+            marketId: row.marketId,
+            canonicalMarketIds: row.canonicalMarketIds,
+            quoteOutcomeId: row.quoteOutcomeId,
+            imageUrl: row.imageUrl,
+            iconUrl: row.iconUrl,
+            volume: null as string | null,
+            volume24h: null as string | null,
+          })));
       const shouldFetchCanonicalOutcomes = !seededEventOutcomes && !hasCompoundEventOutcomes;
       const outcomeResponse = shouldFetchCanonicalOutcomes ? await getMarketOutcomes(terminalMarketId) : null;
       const unresolvedEventMarkets = eventMarketsResponse?.markets.filter(isUnresolvedCatalogMarket) ?? [];
