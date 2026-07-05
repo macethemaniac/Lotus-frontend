@@ -7504,7 +7504,7 @@ const InfraTradingTerminalInner = ({
                                      <span className="min-w-0">
                                        <span className="block truncate text-lg font-black tracking-tight text-white">{m.name}</span>
                                        <span className="mt-0.5 block truncate text-xs font-medium text-zinc-500">
-                                         {m.vol}
+                                         {rowVenueCount} venue{rowVenueCount === 1 ? '' : 's'}
                                        </span>
                                      </span>
                                    </button>
@@ -7641,7 +7641,7 @@ const InfraTradingTerminalInner = ({
                                      <div className="min-w-0">
                                          <span className="block truncate text-zinc-100 font-bold text-base tracking-wide leading-tight">{m.name}</span>
                                          <span className="block truncate text-zinc-500 text-xs mt-0.5 font-medium">
-                                           {m.vol && <>{m.vol} <span className="mx-1">-</span></>} {rowVenueCount} venue{rowVenueCount === 1 ? '' : 's'}
+                                           {rowVenueCount} venue{rowVenueCount === 1 ? '' : 's'}
                                            {marketDiagnosticsEnabled && m.blocker && <span className="ml-2 text-amber-300">{m.blocker}</span>}
                                          </span>
                                      </div>
