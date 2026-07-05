@@ -22,6 +22,7 @@ import {
   type MarketCatalogMarket,
   type MarketLivePriceItem,
 } from '@/features/markets/api/market-api';
+import { hydrateCatalogMarketsWithAggregateVolumes } from '@/features/markets/catalog-volume';
 import { eventSlugFromTitle } from '@/features/markets/market-slugs';
 import { getNotifications, markNotificationRead, type UserNotification } from '@/features/notifications/api/notification-api';
 import { NotificationToast, type NotificationToastTone } from '@/features/notifications/components/notification-toast';
@@ -1663,8 +1664,9 @@ export const DashboardV2Mockup = ({
         if (!matchedEvent) return;
 
         const marketResponse = await getEventMarkets(matchedEvent.eventId);
+        const hydratedMarkets = await hydrateCatalogMarketsWithAggregateVolumes(marketResponse.markets).catch(() => marketResponse.markets);
         const rows = await resolveDashboardRowsEventMedia(
-          mapCatalogMarketsToDashboardRows(marketResponse.markets),
+          mapCatalogMarketsToDashboardRows(hydratedMarkets),
           marketEventMediaCacheRef.current,
         );
         if (cancelled || rows.length === 0) return;

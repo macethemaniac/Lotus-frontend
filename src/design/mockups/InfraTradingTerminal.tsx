@@ -69,6 +69,7 @@ import {
   type ResolutionRiskAssessment,
   type ResolutionRiskProfile,
 } from '@/features/markets/api/market-api';
+import { hydrateCatalogMarketsWithAggregateVolumes } from '@/features/markets/catalog-volume';
 import {
   createExecutionQuote,
   getExecutionHistory,
@@ -2481,9 +2482,9 @@ const initialOutcomeRows = (market: TerminalMarketSelection): TerminalOutcomeRow
     platforms: market.venueCount,
     prob: outcome.prob,
     yesPrice: outcome.prob,
-    noPrice: 'Quote',
+    noPrice: inverseOutcomePriceLabel(outcome.prob),
     primaryVenue: outcome.priceVenue ?? outcome.venues?.[0] ?? market.venues?.[0] ?? null,
-    venueQuotes: placeholderVenueQuotes(outcome.venues ?? market.venues ?? [], outcome.prob, 'Quote'),
+    venueQuotes: placeholderVenueQuotes(outcome.venues ?? market.venues ?? [], outcome.prob, inverseOutcomePriceLabel(outcome.prob)),
     active: index === 0,
     venues: outcome.venues ?? market.venues ?? [],
     status: 'pending',
@@ -2543,9 +2544,9 @@ const buildTerminalFallbackRows = (input: {
       platforms: outcome.venues?.length ?? terminalMarket.venueCount,
       prob: outcome.prob,
       yesPrice: outcome.prob,
-      noPrice: 'Quote',
+      noPrice: inverseOutcomePriceLabel(outcome.prob),
       primaryVenue: outcome.venues?.[0] ?? terminalMarket.venues?.[0] ?? null,
-      venueQuotes: placeholderVenueQuotes(outcome.venues ?? terminalMarket.venues ?? [], outcome.prob, 'Quote'),
+      venueQuotes: placeholderVenueQuotes(outcome.venues ?? terminalMarket.venues ?? [], outcome.prob, inverseOutcomePriceLabel(outcome.prob)),
       active: index === 0,
       venues: outcome.venues ?? terminalMarket.venues ?? [],
       status: 'pending',
@@ -4204,6 +4205,10 @@ const InfraTradingTerminalInner = ({
             : null);
           if (resolvedEventId) {
             eventMarketsResponse = await getEventMarkets(resolvedEventId);
+            eventMarketsResponse = {
+              ...eventMarketsResponse,
+              markets: await hydrateCatalogMarketsWithAggregateVolumes(eventMarketsResponse.markets).catch(() => eventMarketsResponse?.markets ?? []),
+            };
             if (eventMarketsResponse.imageUrl || eventMarketsResponse.iconUrl) {
               setLocalSelectedMarket((current) => {
                 const source = current ?? terminalMarket;

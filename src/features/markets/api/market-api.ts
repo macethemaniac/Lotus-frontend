@@ -302,6 +302,17 @@ export type MarketLivePricesResponse = {
   prices: MarketLivePriceItem[];
 };
 
+export type PolymarketMarketSnapshot = {
+  slug: string;
+  question: string;
+  volume?: string | number | null;
+  volumeClob?: string | number | null;
+  volume24hr?: string | number | null;
+  volume24hrClob?: string | number | null;
+  liquidity?: string | number | null;
+  liquidityClob?: string | number | null;
+};
+
 export type ResolutionRiskAssessment = {
   label: string;
   riskScore: string;
@@ -472,6 +483,16 @@ export function getMarketLivePrices(input: { items: MarketLivePriceRequestItem[]
     }),
     { ttlMs: 2_000, maxStaleMs: 15_000 }
   );
+}
+
+export function getPolymarketMarketBySlug(slug: string) {
+  return staleWhileRevalidate(`polymarket-market:${slug}`, async () => {
+    const response = await fetch(`https://gamma-api.polymarket.com/markets/slug/${encodeURIComponent(slug)}`);
+    if (!response.ok) {
+      throw new Error(`Unable to load Polymarket market ${slug}`);
+    }
+    return response.json() as Promise<PolymarketMarketSnapshot>;
+  }, { ttlMs: 60_000, maxStaleMs: 15 * 60_000 });
 }
 
 export function getCanonicalResolutionRisk(eventId: string) {
