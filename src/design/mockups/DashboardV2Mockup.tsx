@@ -1408,6 +1408,63 @@ const applyLiveQuoteToMarket = (market: DashboardMarketRow, quote: DashboardMark
   };
 };
 
+const hydrateMarketRowsWithLiveQuotes = async (
+  rows: DashboardMarketRow[],
+): Promise<DashboardMarketRow[]> => {
+  const marketsToQuote = rows
+    .map((market) => ({
+      market,
+      outcomes: market.outcomes,
+    }))
+    .filter((item) => item.outcomes.length > 0);
+
+  if (marketsToQuote.length === 0) return rows;
+
+  const requestItems = marketsToQuote.flatMap(({ market, outcomes }) =>
+    outcomes.map((outcome) => ({
+      parentMarketId: market.id,
+      outcomeId: outcome.id,
+      marketId: outcome.marketId ?? market.marketId,
+      canonicalMarketIds: outcome.canonicalMarketIds?.length
+        ? outcome.canonicalMarketIds
+        : market.canonicalMarketIds.length > 0
+          ? market.canonicalMarketIds
+          : [outcome.marketId ?? market.marketId].filter((value): value is string => Boolean(value)),
+      quoteOutcomeId: outcome.quoteOutcomeId,
+    }))
+  ).filter((item) => Boolean(item.marketId));
+
+  if (requestItems.length === 0) return rows;
+
+  const quoteByMarketId = new Map<string, DashboardMarketQuote>();
+  const chunks = chunkArray(requestItems, MARKET_LIVE_PRICE_CHUNK_SIZE);
+
+  await Promise.all(chunks.map(async (chunk) => {
+    const response = await getMarketLivePrices({
+      items: chunk.map((item) => ({
+        marketId: item.marketId!,
+        canonicalMarketIds: item.canonicalMarketIds,
+        outcomeId: item.quoteOutcomeId,
+      })),
+    });
+    const priceByKey = new Map(response.prices.map((price) => [`${price.marketId}:${price.outcomeId ?? ''}`, price]));
+    for (const item of chunk) {
+      const price =
+        priceByKey.get(`${item.marketId}:${item.quoteOutcomeId}`) ??
+        priceByKey.get(`${item.marketId}:${normalizeOutcomeId(item.quoteOutcomeId)}`) ??
+        (item.quoteOutcomeId === 'YES' ? priceByKey.get(`${item.marketId}:`) : undefined);
+      const marketQuote = quoteByMarketId.get(item.parentMarketId) ?? {
+        marketId: item.marketId!,
+        outcomes: {} as Record<string, DashboardOutcomeQuote>,
+      };
+      marketQuote.outcomes[item.outcomeId] = toOutcomeQuoteFromLivePrice(item.outcomeId, price);
+      quoteByMarketId.set(item.parentMarketId, marketQuote);
+    }
+  }));
+
+  return rows.map((market) => applyLiveQuoteToMarket(market, quoteByMarketId.get(market.id)));
+};
+
 const toSafeErrorMessage = (error: unknown, fallback: string): string => {
   if (error instanceof ApiClientError) {
     return error.message || fallback;
@@ -1611,7 +1668,9 @@ export const DashboardV2Mockup = ({
           marketEventMediaCacheRef.current,
         );
         if (cancelled || rows.length === 0) return;
-        const matchedRow = rows.find((row) => dashboardMarketEventSlug(row) === eventSlugFromTitle(matchedEvent.title)) ?? rows[0]!;
+        const quotedRows = await hydrateMarketRowsWithLiveQuotes(rows).catch(() => rows);
+        if (cancelled || quotedRows.length === 0) return;
+        const matchedRow = quotedRows.find((row) => dashboardMarketEventSlug(row) === eventSlugFromTitle(matchedEvent.title)) ?? quotedRows[0]!;
         const nextSelection = toTerminalMarketSelection(matchedRow);
         setSelectedTerminalMarket(nextSelection);
         if (!routeEventSlug) {
