@@ -15,6 +15,7 @@ import {
   isSelectedOutcomeBookReady,
   isSelectedOutcomeBookUsable,
   orderSelectedOutcomeVisibleVenues,
+  resolveLivePriceForTerminalOutcome,
   resolveOutcomeSummaryVenueCount,
   resolveOutcomeSummaryVenues,
   resolveOutcomeSeedMedia,
@@ -4277,7 +4278,14 @@ const InfraTradingTerminalInner = ({
         const livePriceByKey = new Map(livePriceResponse.prices.map((price) => [`${price.marketId}:${price.outcomeId ?? ''}`, price]));
 
         const rows: TerminalOutcomeRow[] = seedRows.map((row) => {
-          const livePrice = livePriceByKey.get(`${row.marketId ?? terminalMarketId}:${row.quoteOutcomeId}`);
+          const livePrice =
+            livePriceByKey.get(`${row.marketId ?? terminalMarketId}:${row.quoteOutcomeId}`) ??
+            resolveLivePriceForTerminalOutcome({
+              prices: livePriceResponse.prices,
+              marketId: row.marketId ?? terminalMarketId,
+              canonicalMarketIds: row.canonicalMarketIds,
+              outcomeId: row.quoteOutcomeId,
+            });
           const quoteVenues = quoteVenueListFromLivePrice(livePrice, row.venues);
           const summaryVenues = resolveOutcomeSummaryVenues(livePrice, row.venues);
           const summaryVenueCount = resolveOutcomeSummaryVenueCount(livePrice, row.venues);
@@ -4380,11 +4388,17 @@ const InfraTradingTerminalInner = ({
             const quoteOutcomeId = outcome.quoteOutcomeId ?? canonicalQuoteOutcomeId(outcome.name);
             const livePrice =
               priceByKey.get(`${outcomeMarketId}:${quoteOutcomeId}`) ??
-              prices.find((price) =>
-                canonicalIdsForTerminalOutcome(outcomeMarketId, outcome.canonicalMarketIds, terminalMarket.canonicalMarketIds, current.length)
-                  .includes(price.marketId) &&
-                streamOutcomeMatches(price.outcomeId ?? quoteOutcomeId, quoteOutcomeId)
-              );
+              resolveLivePriceForTerminalOutcome({
+                prices,
+                marketId: outcomeMarketId,
+                canonicalMarketIds: canonicalIdsForTerminalOutcome(
+                  outcomeMarketId,
+                  outcome.canonicalMarketIds,
+                  terminalMarket.canonicalMarketIds,
+                  current.length,
+                ),
+                outcomeId: quoteOutcomeId,
+              });
             const quoteVenues = quoteVenueListFromLivePrice(livePrice, outcome.venues);
             const summaryVenues = resolveOutcomeSummaryVenues(livePrice, outcome.venues);
             const summaryVenueCount = resolveOutcomeSummaryVenueCount(livePrice, outcome.venues);

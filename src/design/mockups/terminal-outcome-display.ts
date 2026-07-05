@@ -201,3 +201,29 @@ export const resolveOutcomeSummaryVenueCount = (
   if (livePrice?.linkedVenueCount && livePrice.linkedVenueCount > 0) return livePrice.linkedVenueCount;
   return resolveOutcomeSummaryVenues(livePrice, fallbackVenues).length;
 };
+
+export const resolveLivePriceForTerminalOutcome = (input: {
+  prices: readonly MarketLivePriceItem[];
+  marketId: string | null | undefined;
+  canonicalMarketIds?: readonly string[] | null | undefined;
+  outcomeId: string | null | undefined;
+}): MarketLivePriceItem | null => {
+  const candidateMarketIds = new Set<string>();
+  if (input.marketId) candidateMarketIds.add(input.marketId);
+  for (const canonicalMarketId of input.canonicalMarketIds ?? []) {
+    if (canonicalMarketId) candidateMarketIds.add(canonicalMarketId);
+  }
+
+  if (candidateMarketIds.size === 0) return null;
+  const normalizedOutcomeId = normalizeOutcomeId(input.outcomeId);
+  const directMatch = input.prices.find((price) =>
+    candidateMarketIds.has(price.marketId) &&
+    normalizeOutcomeId(price.outcomeId) === normalizedOutcomeId
+  );
+  if (directMatch) return directMatch;
+
+  return input.prices.find((price) =>
+    candidateMarketIds.has(price.marketId) &&
+    (normalizedOutcomeId === null || normalizeOutcomeId(price.outcomeId) === normalizedOutcomeId)
+  ) ?? null;
+};

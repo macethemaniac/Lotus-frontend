@@ -4,6 +4,7 @@ import {
   isSelectedOutcomeBookUsable,
   isSelectedOutcomeBookReady,
   orderSelectedOutcomeVisibleVenues,
+  resolveLivePriceForTerminalOutcome,
   resolveOutcomeSummaryVenueCount,
   resolveOutcomeSummaryVenues,
   resolveOutcomeSeedMedia,
@@ -230,6 +231,54 @@ describe('resolveOutcomeSeedMedia', () => {
       imageUrl: 'https://cdn.example.com/events/world-cup.png',
       iconUrl: 'https://cdn.example.com/events/world-cup-icon.png',
     });
+  });
+});
+
+describe('resolveLivePriceForTerminalOutcome', () => {
+  it('matches a live price directly by market id and outcome id', () => {
+    expect(resolveLivePriceForTerminalOutcome({
+      prices: [{
+        marketId: 'market-1',
+        outcomeId: 'ARGENTINA',
+        generatedAt: new Date().toISOString(),
+        status: 'live',
+        price: '0.18',
+        bestBid: '0.17',
+        bestAsk: '0.19',
+        midpoint: '0.18',
+        spread: '0.02',
+        bestVenue: 'POLYMARKET',
+        venueCount: 1,
+        venues: ['POLYMARKET'],
+        freshnessMs: 1000,
+      }],
+      marketId: 'market-1',
+      canonicalMarketIds: ['market-1'],
+      outcomeId: 'ARGENTINA',
+    })?.price).toBe('0.18');
+  });
+
+  it('falls back to outcome-specific canonical market ids when the response market id differs from the row market id', () => {
+    expect(resolveLivePriceForTerminalOutcome({
+      prices: [{
+        marketId: 'market-argentina',
+        outcomeId: 'ARGENTINA',
+        generatedAt: new Date().toISOString(),
+        status: 'live',
+        price: '0.18',
+        bestBid: '0.17',
+        bestAsk: '0.19',
+        midpoint: '0.18',
+        spread: '0.02',
+        bestVenue: 'POLYMARKET',
+        venueCount: 1,
+        venues: ['POLYMARKET'],
+        freshnessMs: 1000,
+      }],
+      marketId: 'event-world-cup',
+      canonicalMarketIds: ['market-argentina'],
+      outcomeId: 'ARGENTINA',
+    })?.marketId).toBe('market-argentina');
   });
 });
 
