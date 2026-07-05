@@ -10,6 +10,7 @@ import {
   resolveSelectedOutcomeDisplayValues,
   resolveVisibleSelectedOutcomeOrderbook,
   shouldResetOrderbookForRequestChange,
+  shouldReuseSelectedOutcomeState,
   shouldResetExpandedOutcomeForMarketChange,
   type TerminalOutcomeDisplayValues,
 } from './terminal-outcome-display';
@@ -329,6 +330,26 @@ describe('shouldResetOrderbookForRequestChange', () => {
 
   it('keeps the current orderbook visible when the request effect reruns for the same selection', () => {
     expect(shouldResetOrderbookForRequestChange('market-1:YES:alias-a|alias-b', 'market-1:YES:alias-a|alias-b')).toBe(false);
+  });
+});
+
+describe('shouldReuseSelectedOutcomeState', () => {
+  it('reuses the current state when the same outcome is reselected with the same refresh key', () => {
+    expect(shouldReuseSelectedOutcomeState({
+      currentOutcomeId: 'france',
+      nextOutcomeId: 'france',
+      currentRefreshKey: 'france:market-1:YES',
+      nextRefreshKey: 'france:market-1:YES',
+    })).toBe(true);
+  });
+
+  it('does not reuse the current state when the cache key changes', () => {
+    expect(shouldReuseSelectedOutcomeState({
+      currentOutcomeId: 'france',
+      nextOutcomeId: 'france',
+      currentRefreshKey: 'france:market-1:YES',
+      nextRefreshKey: 'france:market-1:NO',
+    })).toBe(false);
   });
 });
 

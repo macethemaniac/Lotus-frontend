@@ -21,6 +21,7 @@ import {
   resolveSelectedOutcomeDisplayValues,
   resolveVisibleSelectedOutcomeOrderbook,
   shouldResetOrderbookForRequestChange,
+  shouldReuseSelectedOutcomeState,
   shouldResetExpandedOutcomeForMarketChange,
   type TerminalOutcomeDisplayValues,
 } from '@/design/mockups/terminal-outcome-display';
@@ -3867,17 +3868,25 @@ const InfraTradingTerminalInner = ({
   ): string | null => {
     const row = outcomeId ? outcomeRows.find((outcome) => outcome.id === outcomeId) ?? null : null;
     if (!row) return null;
-    const marketId = row.marketId ?? executionMarketId(terminalMarket);
+    const marketId = row.marketId ?? terminalMarketId;
     const outcomeKey = row.quoteOutcomeId ?? row.id;
     if (!marketId || !outcomeKey) return null;
     return `${row.id}:${marketId}:${outcomeKey}`;
-  }, [terminalMarket]);
+  }, [terminalMarketId]);
   const selectTerminalOutcome = useCallback((
     outcomeId: string | null,
     outcomeRows?: TerminalOutcomeRow[],
   ) => {
-    latchSelectedOutcomeDisplayFallback(outcomeId, outcomeRows);
     const cacheKey = cacheKeyForOutcome(outcomeId, outcomeRows);
+    if (shouldReuseSelectedOutcomeState({
+      currentOutcomeId: selectedOutcomeIdRef.current,
+      nextOutcomeId: outcomeId,
+      currentRefreshKey: selectedOutcomeRefreshKeyRef.current,
+      nextRefreshKey: cacheKey,
+    })) {
+      return;
+    }
+    latchSelectedOutcomeDisplayFallback(outcomeId, outcomeRows);
     setVisibleSelectedOutcomeOrderbook(cacheKey ? orderbookCacheRef.current.get(cacheKey) ?? null : null);
     if (cacheKey) {
       const cachedDisplay = outcomeDisplayCacheRef.current.get(cacheKey) ?? null;

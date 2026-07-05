@@ -119,6 +119,16 @@ export const shouldResetOrderbookForRequestChange = (
   nextRequestKey: string,
 ): boolean => previousRequestKey !== nextRequestKey;
 
+export const shouldReuseSelectedOutcomeState = (input: {
+  currentOutcomeId: string | null;
+  nextOutcomeId: string | null;
+  currentRefreshKey: string | null;
+  nextRefreshKey: string | null;
+}): boolean => (
+  input.currentOutcomeId === input.nextOutcomeId &&
+  input.currentRefreshKey === input.nextRefreshKey
+);
+
 export const shouldResetExpandedOutcomeForMarketChange = (
   previousMarketResetKey: string | null,
   nextMarketResetKey: string,
