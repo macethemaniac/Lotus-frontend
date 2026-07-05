@@ -1387,6 +1387,22 @@ const terminalOutcomeHasUsableQuote = (outcome: Pick<TerminalOutcomeRow, 'prob' 
   || normalizeTerminalDisplayValue(outcome.yesPrice) !== null
   || normalizeTerminalDisplayValue(outcome.noPrice) !== null;
 
+const quoteVenueListFromLivePrice = (
+  livePrice: MarketLivePriceItem | null | undefined,
+  fallbackVenues: readonly string[] = [],
+): string[] => {
+  const source = livePrice
+    ? livePrice.liveVenues?.length
+      ? livePrice.liveVenues
+      : livePrice.venues?.length
+        ? livePrice.venues
+        : []
+    : fallbackVenues;
+  return [...new Set(source
+    .map((venue) => typeof venue === 'string' ? venue.trim() : '')
+    .filter(Boolean))];
+};
+
 const streamStatusLabel = (
   status: MarketOrderbookStreamPayload['snapshotStatus'] | undefined,
   diagnosticsEnabled = lotusMarketDiagnosticsEnabled()
@@ -3486,8 +3502,11 @@ const InfraTradingTerminalInner = ({
   );
   const quoteableTerminalOutcomes = useMemo(() => {
     const quoted = sortedTerminalOutcomes.filter(terminalOutcomeHasUsableQuote);
+    if (quoted.length === 0 && outcomesLoading) {
+      return [];
+    }
     return quoted.length > 0 ? quoted : sortedTerminalOutcomes;
-  }, [sortedTerminalOutcomes]);
+  }, [outcomesLoading, sortedTerminalOutcomes]);
   const selectedOutcome = quoteableTerminalOutcomes.find((outcome) => outcome.id === selectedOutcomeId)
     ?? quoteableTerminalOutcomes[0]
     ?? terminalOutcomes.find((outcome) => outcome.id === selectedOutcomeId)
@@ -3676,7 +3695,6 @@ const InfraTradingTerminalInner = ({
       : 'updating';
   const unavailableOrderbookVenueRows = useMemo(() => {
     const rows = new Map<string, { venue: string; reason: string; status: 'syncing' | 'unavailable' }>();
-    const expectedVenues = selectedOutcome?.venues?.length ? selectedOutcome.venues : marketVenueList;
     const coveredVenues = new Set<string>((rawDisplayOrderbook?.venues ?? []).map((venue) => toBackendVenueId(venue.venue)));
     for (const blocker of rawDisplayOrderbook?.blockers ?? []) {
       const backendVenue = toBackendVenueId(blocker.venue);
@@ -3706,24 +3724,14 @@ const InfraTradingTerminalInner = ({
         status,
       });
     }
-    for (const venue of expectedVenues) {
-      const backendVenue = toBackendVenueId(venue);
-      if (backendVenue === 'UNKNOWN' || coveredVenues.has(backendVenue)) continue;
-      const reason = marketDiagnosticsEnabled ? 'Quote snapshot syncing' : 'Updating live prices';
-      rows.set(`${backendVenue}:${reason}`, {
-        venue,
-        reason,
-        status: 'syncing',
-      });
-    }
     return [...rows.values()];
-  }, [marketDiagnosticsEnabled, marketVenueList, rawDisplayOrderbook?.blockers, rawDisplayOrderbook?.venues, selectedOutcome?.venues]);
+  }, [marketDiagnosticsEnabled, rawDisplayOrderbook?.blockers, rawDisplayOrderbook?.venues]);
   const selectedOutcomeSyncingVenueCount = useMemo(
     () => unavailableOrderbookVenueRows.filter((row) => row.status === 'syncing').length,
     [unavailableOrderbookVenueRows],
   );
   const visibleUnavailableOrderbookVenueRows = useMemo(
-    () => marketDiagnosticsEnabled ? unavailableOrderbookVenueRows : [],
+    () => marketDiagnosticsEnabled ? unavailableOrderbookVenueRows.filter((row) => row.status === 'unavailable') : [],
     [marketDiagnosticsEnabled, unavailableOrderbookVenueRows],
   );
   const selectedOutcomeBookReady = useMemo(() => isSelectedOutcomeBookReady({
@@ -4025,18 +4033,26 @@ const InfraTradingTerminalInner = ({
 
         const rows = seedRows.map((row) => {
           const livePrice = livePriceByKey.get(`${row.marketId ?? terminalMarketId}:${row.quoteOutcomeId}`);
+          const quoteVenues = quoteVenueListFromLivePrice(livePrice, row.venues);
           const parsedPrice = orderbookNumericValue(livePrice?.price ?? livePrice?.bestAsk ?? livePrice?.midpoint ?? livePrice?.bestBid);
-          if (parsedPrice === null) return row;
+          if (parsedPrice === null) {
+            if (!livePrice) return row;
+            return {
+              ...row,
+              platforms: quoteVenues.length,
+              primaryVenue: livePrice.bestVenue ?? quoteVenues[0] ?? row.primaryVenue ?? null,
+              venues: quoteVenues,
+              venueQuotes: quoteVenues.length > 0
+                ? placeholderVenueQuotes(quoteVenues, '-', '-', null)
+                : [],
+              status: livePrice.status === 'live' ? 'live' : 'pending',
+            };
+          }
           const yesPrice = formatProbabilityPrice(parsedPrice);
           const noPrice = terminalMarket.marketType === 'binary' ? formatProbabilityPrice(1 - parsedPrice) : '-';
-          const quoteVenues = livePrice?.linkedVenues?.length
-            ? livePrice.linkedVenues
-            : livePrice?.venues?.length
-              ? livePrice.venues
-              : row.venues;
           return {
             ...row,
-            platforms: quoteVenues.length || row.platforms,
+            platforms: quoteVenues.length,
             prob: formatProbabilityPercent(parsedPrice),
             yesPrice,
             noPrice,
@@ -4046,7 +4062,7 @@ const InfraTradingTerminalInner = ({
               : livePrice?.bestVenue
                 ? placeholderVenueQuotes(quoteVenues.length ? quoteVenues : [livePrice.bestVenue], yesPrice, noPrice, null)
                 : row.venueQuotes,
-            venues: quoteVenues.length ? quoteVenues : row.venues,
+            venues: quoteVenues,
             status: 'live',
           };
         });
@@ -4125,20 +4141,25 @@ const InfraTradingTerminalInner = ({
                   .includes(price.marketId) &&
                 streamOutcomeMatches(price.outcomeId ?? quoteOutcomeId, quoteOutcomeId)
               );
+            const quoteVenues = quoteVenueListFromLivePrice(livePrice, outcome.venues);
             const parsedPrice = orderbookNumericValue(livePrice?.price ?? livePrice?.bestAsk ?? livePrice?.midpoint ?? livePrice?.bestBid);
-            if (parsedPrice === null) return outcome;
+            if (parsedPrice === null) {
+              if (!livePrice) return outcome;
+              return {
+                ...outcome,
+                platforms: quoteVenues.length,
+                primaryVenue: livePrice.bestVenue ?? quoteVenues[0] ?? outcome.primaryVenue ?? null,
+                venueQuotes: quoteVenues.length > 0
+                  ? placeholderVenueQuotes(quoteVenues, '-', '-', null)
+                  : [],
+                venues: quoteVenues,
+              };
+            }
             const yesPrice = formatProbabilityPrice(parsedPrice);
             const noPrice = terminalMarket.marketType === 'binary' ? formatProbabilityPrice(1 - parsedPrice) : '-';
-            const quoteVenues = livePrice?.linkedVenues?.length
-              ? livePrice.linkedVenues
-              : livePrice?.venues?.length
-                ? livePrice.venues
-                : outcome.venues;
-            const liveQuoteVenues = livePrice?.liveVenues?.length
-              ? livePrice.liveVenues
-              : livePrice?.venues ?? [];
             return {
               ...outcome,
+              platforms: quoteVenues.length,
               prob: formatProbabilityPercent(parsedPrice),
               yesPrice,
               noPrice,
@@ -4148,7 +4169,7 @@ const InfraTradingTerminalInner = ({
                 : livePrice?.bestVenue
                   ? placeholderVenueQuotes(quoteVenues.length ? quoteVenues : [livePrice.bestVenue], yesPrice, noPrice, null)
                   : outcome.venueQuotes,
-              venues: quoteVenues.length ? quoteVenues : outcome.venues,
+              venues: quoteVenues,
               status: 'live',
               blocker: null,
             };
