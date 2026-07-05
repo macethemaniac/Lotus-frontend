@@ -418,15 +418,17 @@ export function listEvents(input: MarketListInput = {}) {
 }
 
 export function getEventMarkets(eventId: string) {
-  return apiRequest<{
-    eventId: string;
-    title: string;
-    imageUrl: string | null;
-    iconUrl: string | null;
-    markets: MarketCatalogMarket[];
-    count: number;
-  }>(
-    `/events/${encodeURIComponent(eventId)}/markets`
+  const path = `/events/${encodeURIComponent(eventId)}/markets`;
+  return staleWhileRevalidate(`event-markets:${path}`, () =>
+    apiRequest<{
+      eventId: string;
+      title: string;
+      imageUrl: string | null;
+      iconUrl: string | null;
+      markets: MarketCatalogMarket[];
+      count: number;
+    }>(path),
+    { ttlMs: 20_000, maxStaleMs: 5 * 60_000 }
   );
 }
 

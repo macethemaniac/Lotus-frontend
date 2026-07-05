@@ -14,6 +14,7 @@ import { FundingDeposit } from '@/design/mockups/FundingDeposit';
 import {
   isSelectedOutcomeBookReady,
   isSelectedOutcomeBookUsable,
+  mergeTerminalOutcomeRowDisplay,
   orderSelectedOutcomeVisibleVenues,
   resolveLivePriceForTerminalOutcome,
   resolveOutcomeSummaryVenueCount,
@@ -4443,7 +4444,9 @@ const InfraTradingTerminalInner = ({
             prices.push(...response.prices);
           }
           const priceByKey = new Map(prices.map((price) => [`${price.marketId}:${price.outcomeId ?? ''}`, price]));
-          setTerminalOutcomes((current) => current.map((outcome) => {
+          setTerminalOutcomes((current) => {
+            let changed = false;
+            const nextOutcomes = current.map((outcome) => {
             const outcomeMarketId = outcome.marketId ?? terminalMarketId;
             const quoteOutcomeId = outcome.quoteOutcomeId ?? canonicalQuoteOutcomeId(outcome.name);
             const livePrice =
@@ -4465,20 +4468,25 @@ const InfraTradingTerminalInner = ({
             const parsedPrice = orderbookNumericValue(livePrice?.price ?? livePrice?.bestAsk ?? livePrice?.midpoint ?? livePrice?.bestBid);
             if (parsedPrice === null) {
               if (!livePrice) return outcome;
-              return {
-                ...outcome,
+              const nextOutcome = mergeTerminalOutcomeRowDisplay(outcome, {
                 platforms: summaryVenueCount || outcome.platforms,
+                prob: outcome.prob,
+                yesPrice: outcome.yesPrice,
+                noPrice: outcome.noPrice,
                 primaryVenue: livePrice.bestVenue ?? quoteVenues[0] ?? outcome.primaryVenue ?? null,
                 venueQuotes: quoteVenues.length > 0
                   ? placeholderVenueQuotes(quoteVenues, '-', '-', null)
                   : [],
                 venues: summaryVenues.length > 0 ? summaryVenues : outcome.venues,
-              };
+                status: livePrice.status === 'live' ? 'live' : outcome.status,
+                blocker: outcome.blocker,
+              });
+              if (nextOutcome !== outcome) changed = true;
+              return nextOutcome;
             }
             const yesPrice = formatProbabilityPrice(parsedPrice);
             const noPrice = terminalMarket.marketType === 'binary' ? formatProbabilityPrice(1 - parsedPrice) : '-';
-            return {
-              ...outcome,
+            const nextOutcome = mergeTerminalOutcomeRowDisplay(outcome, {
               platforms: summaryVenueCount || outcome.platforms,
               prob: formatProbabilityPercent(parsedPrice),
               yesPrice,
@@ -4492,8 +4500,12 @@ const InfraTradingTerminalInner = ({
               venues: summaryVenues.length > 0 ? summaryVenues : outcome.venues,
               status: 'live',
               blocker: null,
-            };
-          }));
+            });
+            if (nextOutcome !== outcome) changed = true;
+            return nextOutcome;
+          });
+            return changed ? nextOutcomes : current;
+          });
         } catch {
           // Keep websocket/orderbook prices and last-good rows visible; the next active-market refresh will retry.
         }

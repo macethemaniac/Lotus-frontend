@@ -10,6 +10,25 @@ export type TerminalOutcomeDisplayValues = {
   probability: string | null;
 };
 
+export type TerminalVenueQuoteDisplay = {
+  venue: string;
+  yesPrice: string;
+  noPrice: string;
+  blocker: string | null;
+};
+
+export type TerminalOutcomeRowDisplay = {
+  platforms: number;
+  prob: string;
+  yesPrice: string;
+  noPrice: string;
+  primaryVenue: string | null;
+  venueQuotes: TerminalVenueQuoteDisplay[];
+  venues: string[];
+  status: string;
+  blocker: string | null;
+};
+
 type SelectedOutcomeBookReadinessInput = {
   orderbook: MarketOrderbookResponse | null;
   orderbookMarketId: string | null;
@@ -91,6 +110,22 @@ const sameDisplayValues = (
   left?.probability === right?.probability
 );
 
+const sameStringArray = (left: readonly string[], right: readonly string[]): boolean => (
+  left.length === right.length && left.every((value, index) => value === right[index])
+);
+
+const sameVenueQuotes = (
+  left: readonly TerminalVenueQuoteDisplay[],
+  right: readonly TerminalVenueQuoteDisplay[],
+): boolean => (
+  left.length === right.length && left.every((quote, index) => (
+    quote.venue === right[index]?.venue &&
+    quote.yesPrice === right[index]?.yesPrice &&
+    quote.noPrice === right[index]?.noPrice &&
+    quote.blocker === right[index]?.blocker
+  ))
+);
+
 export const shouldSyncSelectedOutcomeRowDisplay = (input: {
   current: TerminalOutcomeDisplayValues | null;
   next: TerminalOutcomeDisplayValues | null;
@@ -100,6 +135,30 @@ export const shouldSyncSelectedOutcomeRowDisplay = (input: {
   if (!input.next) return false;
   if (input.outcomeExpanded && input.orderbookUsable) return false;
   return !sameDisplayValues(input.current, input.next);
+};
+
+export const mergeTerminalOutcomeRowDisplay = <T extends TerminalOutcomeRowDisplay>(
+  current: T,
+  next: TerminalOutcomeRowDisplay,
+): T => {
+  if (
+    current.platforms === next.platforms &&
+    current.prob === next.prob &&
+    current.yesPrice === next.yesPrice &&
+    current.noPrice === next.noPrice &&
+    current.primaryVenue === next.primaryVenue &&
+    current.status === next.status &&
+    current.blocker === next.blocker &&
+    sameStringArray(current.venues, next.venues) &&
+    sameVenueQuotes(current.venueQuotes, next.venueQuotes)
+  ) {
+    return current;
+  }
+
+  return {
+    ...current,
+    ...next,
+  };
 };
 
 export const resolveVisibleSelectedOutcomeOrderbook = (input: {

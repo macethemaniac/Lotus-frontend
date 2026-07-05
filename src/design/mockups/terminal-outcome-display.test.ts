@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   isSelectedOutcomeBookUsable,
   isSelectedOutcomeBookReady,
+  mergeTerminalOutcomeRowDisplay,
   orderSelectedOutcomeVisibleVenues,
   resolveLivePriceForTerminalOutcome,
   resolveOutcomeSummaryVenueCount,
@@ -244,6 +245,77 @@ describe('shouldSyncSelectedOutcomeRowDisplay', () => {
       outcomeExpanded: true,
       orderbookUsable: true,
     })).toBe(false);
+  });
+});
+
+describe('mergeTerminalOutcomeRowDisplay', () => {
+  it('reuses the current row object when the visible display is unchanged', () => {
+    const current = {
+      platforms: 4,
+      prob: '35%',
+      yesPrice: '35c',
+      noPrice: '65c',
+      primaryVenue: 'POLYMARKET',
+      venueQuotes: [
+        { venue: 'POLYMARKET', yesPrice: '35c', noPrice: '65c', blocker: null },
+      ],
+      venues: ['POLYMARKET'],
+      status: 'live',
+      blocker: null,
+    };
+
+    expect(mergeTerminalOutcomeRowDisplay(current, {
+      platforms: 4,
+      prob: '35%',
+      yesPrice: '35c',
+      noPrice: '65c',
+      primaryVenue: 'POLYMARKET',
+      venueQuotes: [
+        { venue: 'POLYMARKET', yesPrice: '35c', noPrice: '65c', blocker: null },
+      ],
+      venues: ['POLYMARKET'],
+      status: 'live',
+      blocker: null,
+    })).toBe(current);
+  });
+
+  it('returns a new row object when any visible quote changes', () => {
+    const current = {
+      platforms: 4,
+      prob: '35%',
+      yesPrice: '35c',
+      noPrice: '65c',
+      primaryVenue: 'POLYMARKET',
+      venueQuotes: [
+        { venue: 'POLYMARKET', yesPrice: '35c', noPrice: '65c', blocker: null },
+      ],
+      venues: ['POLYMARKET'],
+      status: 'live',
+      blocker: null,
+      marker: 'keep-me',
+    };
+
+    expect(mergeTerminalOutcomeRowDisplay(current, {
+      platforms: 4,
+      prob: '36%',
+      yesPrice: '36c',
+      noPrice: '64c',
+      primaryVenue: 'POLYMARKET',
+      venueQuotes: [
+        { venue: 'POLYMARKET', yesPrice: '36c', noPrice: '64c', blocker: null },
+      ],
+      venues: ['POLYMARKET'],
+      status: 'live',
+      blocker: null,
+    })).toEqual({
+      ...current,
+      prob: '36%',
+      yesPrice: '36c',
+      noPrice: '64c',
+      venueQuotes: [
+        { venue: 'POLYMARKET', yesPrice: '36c', noPrice: '64c', blocker: null },
+      ],
+    });
   });
 });
 
