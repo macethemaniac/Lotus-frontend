@@ -7,6 +7,7 @@ import {
   resolveOutcomeSummaryVenueCount,
   resolveOutcomeSummaryVenues,
   resolveOutcomeSeedMedia,
+  resolveSelectedMarketHydratedMedia,
   resolveSelectedMarketSeedMedia,
   resolveInitialSelectedOutcomeId,
   resolveSelectedOutcomeOrderbookDisplaySource,
@@ -251,6 +252,32 @@ describe('resolveSelectedMarketSeedMedia', () => {
       marketIconUrl: null,
       outcomeImageUrl: 'https://cdn.example.com/outcomes/argentina.png',
       outcomeIconUrl: 'https://cdn.example.com/outcomes/argentina-icon.png',
+    })).toEqual({
+      imageUrl: 'https://cdn.example.com/outcomes/argentina.png',
+      iconUrl: 'https://cdn.example.com/outcomes/argentina-icon.png',
+    });
+  });
+});
+
+describe('resolveSelectedMarketHydratedMedia', () => {
+  it('preserves an existing event header image during market hydration', () => {
+    expect(resolveSelectedMarketHydratedMedia({
+      currentImageUrl: 'https://cdn.example.com/events/world-cup.png',
+      currentIconUrl: 'https://cdn.example.com/events/world-cup-icon.png',
+      hydratedImageUrl: 'https://cdn.example.com/outcomes/argentina.png',
+      hydratedIconUrl: 'https://cdn.example.com/outcomes/argentina-icon.png',
+    })).toEqual({
+      imageUrl: 'https://cdn.example.com/events/world-cup.png',
+      iconUrl: 'https://cdn.example.com/events/world-cup-icon.png',
+    });
+  });
+
+  it('fills missing media from the hydrated market when needed', () => {
+    expect(resolveSelectedMarketHydratedMedia({
+      currentImageUrl: null,
+      currentIconUrl: null,
+      hydratedImageUrl: 'https://cdn.example.com/outcomes/argentina.png',
+      hydratedIconUrl: 'https://cdn.example.com/outcomes/argentina-icon.png',
     })).toEqual({
       imageUrl: 'https://cdn.example.com/outcomes/argentina.png',
       iconUrl: 'https://cdn.example.com/outcomes/argentina-icon.png',

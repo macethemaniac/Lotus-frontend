@@ -8,7 +8,7 @@ import { InfraTradingTerminal, type TerminalMarketSelection } from '@/design/moc
 import { PortfolioMockupV2 } from '@/design/mockups/PortfolioMockupV2';
 import { FundingDeposit } from '@/design/mockups/FundingDeposit';
 import { resolveDashboardCardMedia, shouldPreferDashboardEventMedia } from '@/design/mockups/dashboard-market-media';
-import { resolveSelectedMarketSeedMedia } from '@/design/mockups/terminal-outcome-display';
+import { resolveSelectedMarketHydratedMedia, resolveSelectedMarketSeedMedia } from '@/design/mockups/terminal-outcome-display';
 import { isTurnkeyProviderConfigured } from '@/app/turnkey-provider';
 import type { AuthSession } from '@/features/auth/types';
 import {
@@ -1758,14 +1758,20 @@ export const DashboardV2Mockup = ({
         const fullMarket = response.market;
         setSelectedTerminalMarket((current) => {
           if (!current || current.marketId !== market.marketId) return current;
+          const hydratedMedia = resolveSelectedMarketHydratedMedia({
+            currentImageUrl: current.imageUrl,
+            currentIconUrl: current.iconUrl,
+            hydratedImageUrl: getSafeMediaUrl(fullMarket.imageUrl),
+            hydratedIconUrl: getSafeMediaUrl(fullMarket.iconUrl),
+          });
           return {
             ...current,
             venueMarkets: fullMarket.venueMarkets,
             venues: venuesForCatalogMarket(fullMarket),
             marketType: fullMarket.outcomeCount > 2 ? 'multi' : 'binary',
             eventSlug: current.eventSlug ?? eventSlugFromTitle(current.title),
-            imageUrl: getSafeMediaUrl(fullMarket.imageUrl) ?? current.imageUrl,
-            iconUrl: getSafeMediaUrl(fullMarket.iconUrl) ?? current.iconUrl,
+            imageUrl: hydratedMedia.imageUrl,
+            iconUrl: hydratedMedia.iconUrl,
           };
         });
       })
