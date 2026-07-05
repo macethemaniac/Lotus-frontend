@@ -1942,7 +1942,8 @@ const formatReadinessTime = (value: string | number | null | undefined): string 
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 };
 
-const shouldLoadVenueRiskProfile = (marketId: string): boolean => {
+const shouldLoadVenueRiskProfile = (venue: string, marketId: string): boolean => {
+  if (toBackendVenueId(venue) === 'PREDICT_FUN') return false;
   const normalized = marketId.trim().toUpperCase();
   return normalized.length > 0 &&
     !normalized.includes('|') &&
@@ -6074,7 +6075,7 @@ const InfraTradingTerminalInner = ({
           : Promise.resolve(null);
         const profileRequests = selectedVenueMarkets
           .filter((venueMarket) => venueMarket.venue && venueMarket.venueMarketId)
-          .filter((venueMarket) => shouldLoadVenueRiskProfile(venueMarket.venueMarketId))
+          .filter((venueMarket) => shouldLoadVenueRiskProfile(venueMarket.venue, venueMarket.venueMarketId))
           .slice(0, 6)
           .map((venueMarket) => ({
             key: `${venueMarket.venue}:${venueMarket.venueMarketId}`,
