@@ -1403,6 +1403,20 @@ const quoteVenueListFromLivePrice = (
     .filter(Boolean))];
 };
 
+const linkedVenueListFromLivePrice = (
+  livePrice: MarketLivePriceItem | null | undefined,
+  fallbackVenues: readonly string[] = [],
+): string[] => {
+  const source = livePrice
+    ? livePrice.linkedVenues?.length
+      ? livePrice.linkedVenues
+      : fallbackVenues
+    : fallbackVenues;
+  return [...new Set(source
+    .map((venue) => typeof venue === 'string' ? venue.trim() : '')
+    .filter(Boolean))];
+};
+
 const streamStatusLabel = (
   status: MarketOrderbookStreamPayload['snapshotStatus'] | undefined,
   diagnosticsEnabled = lotusMarketDiagnosticsEnabled()
@@ -4034,12 +4048,13 @@ const InfraTradingTerminalInner = ({
         const rows = seedRows.map((row) => {
           const livePrice = livePriceByKey.get(`${row.marketId ?? terminalMarketId}:${row.quoteOutcomeId}`);
           const quoteVenues = quoteVenueListFromLivePrice(livePrice, row.venues);
+          const linkedVenues = linkedVenueListFromLivePrice(livePrice, row.venues);
           const parsedPrice = orderbookNumericValue(livePrice?.price ?? livePrice?.bestAsk ?? livePrice?.midpoint ?? livePrice?.bestBid);
           if (parsedPrice === null) {
             if (!livePrice) return row;
             return {
               ...row,
-              platforms: quoteVenues.length,
+              platforms: linkedVenues.length || row.platforms,
               primaryVenue: livePrice.bestVenue ?? quoteVenues[0] ?? row.primaryVenue ?? null,
               venues: quoteVenues,
               venueQuotes: quoteVenues.length > 0
@@ -4052,7 +4067,7 @@ const InfraTradingTerminalInner = ({
           const noPrice = terminalMarket.marketType === 'binary' ? formatProbabilityPrice(1 - parsedPrice) : '-';
           return {
             ...row,
-            platforms: quoteVenues.length,
+            platforms: linkedVenues.length || row.platforms,
             prob: formatProbabilityPercent(parsedPrice),
             yesPrice,
             noPrice,
@@ -4062,7 +4077,7 @@ const InfraTradingTerminalInner = ({
               : livePrice?.bestVenue
                 ? placeholderVenueQuotes(quoteVenues.length ? quoteVenues : [livePrice.bestVenue], yesPrice, noPrice, null)
                 : row.venueQuotes,
-            venues: quoteVenues,
+            venues: linkedVenues.length > 0 ? linkedVenues : row.venues,
             status: 'live',
           };
         });
@@ -4142,24 +4157,25 @@ const InfraTradingTerminalInner = ({
                 streamOutcomeMatches(price.outcomeId ?? quoteOutcomeId, quoteOutcomeId)
               );
             const quoteVenues = quoteVenueListFromLivePrice(livePrice, outcome.venues);
+            const linkedVenues = linkedVenueListFromLivePrice(livePrice, outcome.venues);
             const parsedPrice = orderbookNumericValue(livePrice?.price ?? livePrice?.bestAsk ?? livePrice?.midpoint ?? livePrice?.bestBid);
             if (parsedPrice === null) {
               if (!livePrice) return outcome;
               return {
                 ...outcome,
-                platforms: quoteVenues.length,
+                platforms: linkedVenues.length || outcome.platforms,
                 primaryVenue: livePrice.bestVenue ?? quoteVenues[0] ?? outcome.primaryVenue ?? null,
                 venueQuotes: quoteVenues.length > 0
                   ? placeholderVenueQuotes(quoteVenues, '-', '-', null)
                   : [],
-                venues: quoteVenues,
+                venues: linkedVenues.length > 0 ? linkedVenues : outcome.venues,
               };
             }
             const yesPrice = formatProbabilityPrice(parsedPrice);
             const noPrice = terminalMarket.marketType === 'binary' ? formatProbabilityPrice(1 - parsedPrice) : '-';
             return {
               ...outcome,
-              platforms: quoteVenues.length,
+              platforms: linkedVenues.length || outcome.platforms,
               prob: formatProbabilityPercent(parsedPrice),
               yesPrice,
               noPrice,
@@ -4169,7 +4185,7 @@ const InfraTradingTerminalInner = ({
                 : livePrice?.bestVenue
                   ? placeholderVenueQuotes(quoteVenues.length ? quoteVenues : [livePrice.bestVenue], yesPrice, noPrice, null)
                   : outcome.venueQuotes,
-              venues: quoteVenues,
+              venues: linkedVenues.length > 0 ? linkedVenues : outcome.venues,
               status: 'live',
               blocker: null,
             };
