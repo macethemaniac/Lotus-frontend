@@ -641,7 +641,7 @@ const sameTerminalEvent = (market: TerminalMarketSelection, selected: TerminalMa
   return selectedEventIds.length > 0 && marketEventIds.some((id) => selectedEventIds.includes(id));
 };
 
-const terminalOutcomeNameForEventMarket = (market: MarketCatalogMarket): string => {
+const terminalOutcomeNameForEventMarket = (market: { title: string; displayOutcome?: string | null }): string => {
   const displayOutcome = market.displayOutcome?.trim();
   if (displayOutcome) return displayOutcome;
   const suffix = market.title.match(/:\s*(.+)$/)?.[1]?.trim();
@@ -3348,6 +3348,7 @@ const InfraTradingTerminalInner = ({
   const missingRiskProfileKeysRef = React.useRef<Set<string>>(new Set());
   const selectedOutcomeRef = React.useRef<TerminalOutcomeRow | null>(null);
   const selectedOutcomeIdRef = React.useRef<string | null>(null);
+  const selectedOutcomeRefreshKeyRef = React.useRef('none:none:none');
   const terminalOutcomesRef = React.useRef<TerminalOutcomeRow[]>([]);
   const orderbookCacheRef = React.useRef<Map<string, MarketOrderbookResponse>>(new Map());
   const outcomeDisplayCacheRef = React.useRef<Map<string, TerminalOutcomeDisplayValues>>(new Map());
@@ -3563,6 +3564,9 @@ const InfraTradingTerminalInner = ({
   React.useEffect(() => {
     selectedOutcomeIdRef.current = selectedOutcomeId;
   }, [selectedOutcomeId]);
+  React.useEffect(() => {
+    selectedOutcomeRefreshKeyRef.current = selectedOutcomeRefreshKey;
+  }, [selectedOutcomeRefreshKey]);
   // Keep the selected outcome's orderbook warm even while collapsed so the row can
   // render the same venue set/count immediately instead of only after expansion.
   const orderbookActive = Boolean(selectedOutcome);
@@ -3887,7 +3891,9 @@ const InfraTradingTerminalInner = ({
 
   React.useEffect(() => {
     if (!selectedOutcomeBookReady) return;
+    const refreshKey = selectedOutcomeRefreshKey;
     const timeout = window.setTimeout(() => {
+      if (selectedOutcomeRefreshKeyRef.current !== refreshKey) return;
       if (orderbook && selectedOutcomeRefreshKey && !selectedOutcomeRefreshKey.startsWith('none:')) {
         orderbookCacheRef.current.set(selectedOutcomeRefreshKey, orderbook);
         outcomeDisplayCacheRef.current.set(selectedOutcomeRefreshKey, selectedOutcomeBookDisplay);
@@ -3910,25 +3916,23 @@ const InfraTradingTerminalInner = ({
 
   const refreshOutcomes = useCallback(async () => {
     const relatedEventOutcomeRows = hasCompoundEventOutcomes
-      ? relatedEventMarkets.map((market) => ({
-        id: market.initialOutcomeId ?? market.marketId ?? market.id ?? market.title,
-        marketId: market.marketId ?? executionMarketId(market),
-        canonicalMarketIds: market.canonicalMarketIds,
-        quoteOutcomeId: market.initialOutcomeId ?? canonicalQuoteOutcomeId(market.title),
-        name: market.outcomes?.find((outcome) => outcome.id === market.initialOutcomeId)?.name
-          ?? market.outcomes?.[0]?.name
-          ?? market.title,
-        prob: market.priceLabel ?? market.outcomes?.find((outcome) => outcome.id === market.initialOutcomeId)?.prob ?? 'Quote',
-        imageUrl: market.outcomes?.find((outcome) => outcome.id === market.initialOutcomeId)?.imageUrl
-          ?? market.outcomes?.[0]?.imageUrl
-          ?? market.imageUrl,
-        iconUrl: market.outcomes?.find((outcome) => outcome.id === market.initialOutcomeId)?.iconUrl
-          ?? market.outcomes?.[0]?.iconUrl
-          ?? market.iconUrl,
-        venues: market.venues,
-        volume: null as string | null,
-        volume24h: null as string | null,
-      }))
+      ? relatedEventMarkets.map((market) => {
+        const marketId = executionMarketId(market) ?? market.canonicalMarketIds?.[0] ?? market.id ?? market.title;
+        const initialOutcome = market.outcomes?.find((outcome) => outcome.id === market.initialOutcomeId) ?? market.outcomes?.[0] ?? null;
+        return {
+          id: marketId,
+          marketId,
+          canonicalMarketIds: market.canonicalMarketIds ?? [],
+          quoteOutcomeId: 'YES',
+          name: terminalOutcomeNameForEventMarket(market),
+          prob: market.priceLabel ?? initialOutcome?.prob ?? 'Quote',
+          imageUrl: initialOutcome?.imageUrl ?? market.imageUrl,
+          iconUrl: initialOutcome?.iconUrl ?? market.iconUrl,
+          venues: market.venues ?? [],
+          volume: null as string | null,
+          volume24h: null as string | null,
+        };
+      })
       : [];
       const fallbackRows = relatedEventOutcomeRows.length > 0
       ? relatedEventOutcomeRows.map((outcome, index): TerminalOutcomeRow => ({
@@ -3960,7 +3964,9 @@ const InfraTradingTerminalInner = ({
     if (!terminalMarketId) {
       setTerminalOutcomes(fallbackRows);
       const nextSelectedOutcomeId = selectedOutcomeIdRef.current ?? fallbackRows[0]?.id ?? null;
-      selectTerminalOutcome(nextSelectedOutcomeId, fallbackRows);
+      if (nextSelectedOutcomeId !== selectedOutcomeIdRef.current) {
+        selectTerminalOutcome(nextSelectedOutcomeId, fallbackRows);
+      }
       return;
     }
 
@@ -4065,7 +4071,9 @@ const InfraTradingTerminalInner = ({
         }
         return seedRows[0]?.id ?? null;
       })();
-      selectTerminalOutcome(nextSelectedOutcomeId, seedRows);
+      if (nextSelectedOutcomeId !== currentSelectedOutcomeId) {
+        selectTerminalOutcome(nextSelectedOutcomeId, seedRows);
+      }
 
       try {
         const livePriceResponse = await getMarketLivePrices({
@@ -4121,7 +4129,6 @@ const InfraTradingTerminalInner = ({
         });
 
         setTerminalOutcomes(rows);
-        selectTerminalOutcome(nextSelectedOutcomeId, rows);
       } catch (livePriceError) {
         setOutcomesError(livePriceError instanceof Error ? livePriceError.message : 'Unable to refresh live outcome quotes');
       }
@@ -4135,7 +4142,9 @@ const InfraTradingTerminalInner = ({
         }
         return fallbackRows[0]?.id ?? null;
       })();
-      selectTerminalOutcome(nextSelectedOutcomeId, fallbackRows);
+      if (nextSelectedOutcomeId !== currentSelectedOutcomeId) {
+        selectTerminalOutcome(nextSelectedOutcomeId, fallbackRows);
+      }
       setOutcomesError(error instanceof Error ? error.message : 'Unable to load market outcomes');
     } finally {
       setOutcomesLoading(false);
@@ -7371,11 +7380,11 @@ const InfraTradingTerminalInner = ({
                                             type="button"
                                             onClick={(event) => {
                                               event.stopPropagation();
-                                              const nextExpandedOutcomeId = expandedOutcomeId === m.id ? null : m.id;
-                                              if (nextExpandedOutcomeId) {
-                                                selectTerminalOutcome(m.id);
+                                              if (expandedOutcomeId === m.id) {
+                                                setExpandedOutcomeId(null);
+                                                return;
                                               }
-                                              setExpandedOutcomeId(nextExpandedOutcomeId);
+                                              focusTerminalOutcomeOrderbook(m.id);
                                             }}
                                             aria-label={`Open ${m.name} outcome details`}
                                             className="ml-1 flex h-8 w-8 items-center justify-center rounded-lg text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
