@@ -7087,11 +7087,6 @@ const InfraTradingTerminalInner = ({
              <div className="flex-1 overflow-y-auto w-full custom-scrollbar bg-[#121214] p-4">
                 {bottomTab === 'Outcomes' && (
                     <div className="flex w-full flex-col gap-2">
-                         {outcomesLoading && (
-                           <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 px-4 py-2 text-xs font-semibold text-zinc-400">
-                             Refreshing live outcome quotes...
-                           </div>
-                         )}
                          {marketDiagnosticsEnabled && outcomesError && (
                            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-xs font-semibold text-amber-200">
                              {outcomesError}
@@ -7153,7 +7148,7 @@ const InfraTradingTerminalInner = ({
                                      <span className="min-w-0">
                                        <span className="block truncate text-lg font-black tracking-tight text-white">{m.name}</span>
                                        <span className="mt-0.5 block truncate text-xs font-medium text-zinc-500">
-                                         {m.platforms} Venue{m.platforms === 1 ? '' : 's'} <span className="mx-1">·</span> {m.vol}
+                                         {m.vol}
                                        </span>
                                      </span>
                                    </button>
