@@ -31,6 +31,7 @@ import {
   shouldResetExpandedOutcomeForMarketChange,
   type TerminalOutcomeDisplayValues,
 } from '@/design/mockups/terminal-outcome-display';
+import { downsampleChartRows, maxChartPointsForTimeframe } from '@/design/mockups/terminal-chart-sampling';
 import { isTurnkeyProviderConfigured } from '@/app/turnkey-provider';
 import { env, lotusMarketDiagnosticsEnabled } from '@/config/env';
 import type { AuthSession } from '@/features/auth/types';
@@ -2969,7 +2970,11 @@ const toVenueChartModel = (
       chartPointValue(chartSeriesKind(item) === "unified" ? point.unified : point.venues[item.id])
     ]))
   }));
-  return { rows, series, historyStatus: chart.historyStatus };
+  return {
+    rows: downsampleChartRows(rows, maxChartPointsForTimeframe(timeframe)),
+    series,
+    historyStatus: chart.historyStatus,
+  };
 };
 
 const toOutcomeChartModel = (
@@ -3014,7 +3019,10 @@ const toOutcomeChartModel = (
     rowsByBucket.set(bucket, liveRow);
   }
 
-  const rows = [...rowsByBucket.values()].sort((left, right) => Number(left.timestamp ?? 0) - Number(right.timestamp ?? 0));
+  const rows = downsampleChartRows(
+    [...rowsByBucket.values()].sort((left, right) => Number(left.timestamp ?? 0) - Number(right.timestamp ?? 0)),
+    maxChartPointsForTimeframe(timeframe),
+  );
   const historyStatus = charts.some((entry) => entry.chart.historyStatus === "live")
     ? "live"
     : charts.some((entry) => entry.chart.historyStatus === "accumulating")
@@ -6086,6 +6094,7 @@ const InfraTradingTerminalInner = ({
     let cancelled = false;
 
     const loadRisk = async () => {
+      if (bottomTab !== 'Rules & Risk') return;
       if (!terminalCanonicalEventId && selectedVenueMarkets.length === 0) {
         setRiskState({ loading: false, error: null, assessments: [], profiles: [] });
         return;
@@ -6145,7 +6154,7 @@ const InfraTradingTerminalInner = ({
     return () => {
       cancelled = true;
     };
-  }, [selectedVenueMarkets, terminalCanonicalEventId]);
+  }, [bottomTab, selectedVenueMarkets, terminalCanonicalEventId]);
 
   const previewOrchestratorOrder = useCallback(async (
     options: { quiet?: boolean; allowAutoRenew?: boolean } = {},
@@ -6963,8 +6972,7 @@ const InfraTradingTerminalInner = ({
   const terminalResolutionDateLabel = terminalMarket.resolutionDateLabel
     ?? formatTerminalDate(terminalMarket.resolvesAt)
     ?? 'TBD';
-  const terminalLiquidityLabel = terminalMarket.liquidity ?? '-';
-  const terminalVolume24hLabel = terminalMarket.volume24h ?? '-';
+  const terminalTotalVolumeLabel = terminalMarket.volume ?? '-';
 
   return (
     <>
@@ -7260,11 +7268,10 @@ const InfraTradingTerminalInner = ({
                 </div>
             </div>
 
-            <div className="grid w-full shrink-0 grid-cols-2 gap-x-8 gap-y-3 text-xs sm:grid-cols-3 xl:w-[min(42vw,32rem)]">
+            <div className="grid w-full shrink-0 grid-cols-2 gap-x-8 gap-y-3 text-xs xl:w-[min(32vw,24rem)]">
                 {[
                   ['Resolution', terminalResolutionDateLabel],
-                  ['Liquidity', terminalLiquidityLabel],
-                  ['24h Volume', terminalVolume24hLabel],
+                  ['Total Volume', terminalTotalVolumeLabel],
                 ].map(([label, value]) => (
                   <div key={label} className="min-w-0">
                     <div className="text-[12px] font-medium text-zinc-500">{label}</div>

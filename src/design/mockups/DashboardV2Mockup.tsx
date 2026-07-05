@@ -914,7 +914,7 @@ const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardM
   const marketClass = formatTitleCase(market.marketClass || 'Market');
   const category = formatTitleCase(market.category || 'Market');
   const catalogVolume24h = formatMoneyMetric(market.volume24h);
-  const catalogVolume = formatMoneyMetric(market.volume24h ?? market.volume);
+  const catalogVolume = formatMoneyMetric(market.volume);
   const catalogLiquidity = formatMoneyMetric(market.liquidity);
   const buyCount = parseMetricNumber(market.buyCount);
   const sellCount = parseMetricNumber(market.sellCount);
@@ -992,8 +992,8 @@ const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardM
     eventSlug: eventSlugFromTitle(normalizeEventTopicTitle(market)),
     category: `${category} - ${marketClass}`,
     icon: categoryIconFallback[market.category.toLowerCase()] ?? 'L',
-    volume: catalogVolume ?? catalogLiquidity ?? 'Backend catalog',
-    volumeLabel: catalogVolume ? 'Vol' : catalogLiquidity ? 'Liq' : 'Vol',
+    volume: catalogVolume ?? 'Backend catalog',
+    volumeLabel: 'Vol',
     venueCount: market.venueCount,
     routeType,
     venues,
@@ -1098,7 +1098,7 @@ const mapCatalogMarketsToDashboardRows = (markets: MarketCatalogMarket[]): Dashb
     const buyVolume = metricTotal((market) => market.buyVolume);
     const sellVolume = metricTotal((market) => market.sellVolume);
     const volume24h = formatMoneyMetric(String(metricTotal((market) => market.volume24h) ?? ''));
-    const volume = formatMoneyMetric(String(metricTotal((market) => market.volume24h ?? market.volume) ?? '')) ?? base.volume;
+    const volume = formatMoneyMetric(String(metricTotal((market) => market.volume) ?? '')) ?? base.volume;
     const liquidity = formatMoneyMetric(String(metricTotal((market) => market.liquidity) ?? ''));
     const resolutionTimestamp = group
       .map((market) => dateTimestamp(market.resolvesAt))
@@ -1122,8 +1122,8 @@ const mapCatalogMarketsToDashboardRows = (markets: MarketCatalogMarket[]): Dashb
       lastQuoteAt,
       outcomes,
       badges: venues,
-      volume: volume ?? liquidity ?? base.volume,
-      volumeLabel: volume ? 'Vol' : liquidity ? 'Liq' : base.volumeLabel,
+      volume,
+      volumeLabel: 'Vol',
       volume24h,
       liquidity,
       openInterest: null,
