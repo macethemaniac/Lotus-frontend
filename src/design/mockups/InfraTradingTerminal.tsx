@@ -3596,6 +3596,22 @@ const InfraTradingTerminalInner = ({
     ),
     [displayOrderbook],
   );
+  const selectedOutcomeVisibleVenues = useMemo(() => {
+    const venues = new Map<string, string>();
+    const addVenue = (value: string | null | undefined) => {
+      const trimmed = typeof value === 'string' ? value.trim() : '';
+      if (!trimmed) return;
+      venues.set(toBackendVenueId(trimmed), trimmed);
+    };
+    for (const venue of displayOrderbook?.venues ?? []) {
+      if (venue.bids.length > 0 || venue.asks.length > 0 || Boolean(venue.bestBid || venue.bestAsk)) {
+        addVenue(venue.venue);
+      }
+    }
+    for (const level of displayOrderbook?.asks ?? []) addVenue(level.venue);
+    for (const level of displayOrderbook?.bids ?? []) addVenue(level.venue);
+    return [...venues.values()];
+  }, [displayOrderbook]);
   const orderbookLiveVenues = useMemo(() => {
     return (rawDisplayOrderbook?.venues ?? []).filter((venue) => {
       return venue.blockers.length === 0 && (venue.bids.length > 0 || venue.asks.length > 0 || Boolean(venue.bestBid || venue.bestAsk));
@@ -7016,8 +7032,14 @@ const InfraTradingTerminalInner = ({
                          )}
                          {visibleOutcomeRows.map((m) => {
                            const venues = m.venues.length ? m.venues : marketVenueList;
-                           const primaryVenue = m.primaryVenue ?? venues[0] ?? 'lotus';
                            const isSelectedOutcome = selectedOutcomeId ? selectedOutcomeId === m.id : m.active;
+                           const rowVenueList = isSelectedOutcome && selectedOutcomeVisibleVenues.length > 0
+                             ? selectedOutcomeVisibleVenues
+                             : venues;
+                           const rowVenueCount = rowVenueList.length || m.platforms;
+                           const primaryVenue = isSelectedOutcome && rowVenueList.length > 0
+                             ? rowVenueList[0]!
+                             : m.primaryVenue ?? venues[0] ?? 'lotus';
                            const rowYesPrice = isSelectedOutcome ? selectedOutcomeDisplayValues?.yesPrice ?? m.yesPrice : m.yesPrice;
                            const rowNoPrice = isSelectedOutcome ? selectedOutcomeDisplayValues?.noPrice ?? m.noPrice : m.noPrice;
                            const rowProbability = isSelectedOutcome ? selectedOutcomeDisplayValues?.probability ?? m.prob : m.prob;
@@ -7170,7 +7192,7 @@ const InfraTradingTerminalInner = ({
                                    <div className="flex min-w-0 items-center gap-5">
                                      <div className="flex items-center [&>div:first-child]:hidden">
                                          <div className="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center border-[2.5px] border-[#121214] text-white text-[11px] font-bold z-30 relative shadow-sm">L</div>
-                                         {venues.slice(0, 4).map((venue, index) => (
+                                         {rowVenueList.slice(0, 4).map((venue, index) => (
                                            <VenueLogo
                                              key={`${m.id}-${venue}`}
                                              id={normalizeVenueId(venue)}
@@ -7182,7 +7204,7 @@ const InfraTradingTerminalInner = ({
                                      <div className="min-w-0">
                                          <span className="block truncate text-zinc-100 font-bold text-base tracking-wide leading-tight">{m.name}</span>
                                          <span className="block truncate text-zinc-500 text-xs mt-0.5 font-medium">
-                                           {m.vol && <>{m.vol} <span className="mx-1">-</span></>} {m.platforms} venues
+                                           {m.vol && <>{m.vol} <span className="mx-1">-</span></>} {rowVenueCount} venue{rowVenueCount === 1 ? '' : 's'}
                                            {marketDiagnosticsEnabled && m.blocker && <span className="ml-2 text-amber-300">{m.blocker}</span>}
                                          </span>
                                      </div>
