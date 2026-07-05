@@ -1,7 +1,8 @@
 import {
+  getPolymarketEventBySlug,
   getPolymarketMarketBySlug,
   type MarketCatalogMarket,
-  type PolymarketMarketSnapshot,
+  type PolymarketEventSnapshot,
 } from '@/features/markets/api/market-api';
 
 const parsePositiveMetric = (value: string | number | null | undefined): number | null => {
@@ -29,17 +30,57 @@ const polymarketSlugForCatalogMarket = (market: MarketCatalogMarket): string | n
   )?.marketSlug?.trim() ?? null
 );
 
-const polymarketSnapshotVolume = (snapshot: PolymarketMarketSnapshot): number | null =>
-  parsePositiveMetric(snapshot.volumeClob ?? snapshot.volume);
+const polymarketSnapshotMetrics = (snapshot: {
+  volume?: string | number | null;
+  volumeClob?: string | number | null;
+  volume24hr?: string | number | null;
+  volume24hrClob?: string | number | null;
+}) => ({
+  volume: parsePositiveMetric(snapshot.volumeClob ?? snapshot.volume),
+  volume24h: parsePositiveMetric(snapshot.volume24hrClob ?? snapshot.volume24hr),
+});
 
-const polymarketSnapshotVolume24h = (snapshot: PolymarketMarketSnapshot): number | null =>
-  parsePositiveMetric(snapshot.volume24hrClob ?? snapshot.volume24hr);
+const buildPolymarketVolumeMap = (snapshot: PolymarketEventSnapshot): Map<string, { volume: number | null; volume24h: number | null }> => {
+  const bySlug = new Map<string, { volume: number | null; volume24h: number | null }>();
+  for (const market of snapshot.markets) {
+    if (!market.slug) continue;
+    bySlug.set(market.slug, polymarketSnapshotMetrics(market));
+  }
+  return bySlug;
+};
 
-const aggregateVenueMetric = async (
+const resolvePolymarketVolumeMap = async (markets: MarketCatalogMarket[]): Promise<Map<string, { volume: number | null; volume24h: number | null }>> => {
+  const firstSlug = markets.map(polymarketSlugForCatalogMarket).find((slug): slug is string => Boolean(slug));
+  if (!firstSlug) return new Map();
+
+  let firstMarket;
+  try {
+    firstMarket = await getPolymarketMarketBySlug(firstSlug);
+  } catch {
+    return new Map();
+  }
+
+  const fallback = new Map([[firstSlug, polymarketSnapshotMetrics(firstMarket)]]);
+  const eventSlug = firstMarket.events?.find((event) => typeof event.slug === 'string' && event.slug.trim().length > 0)?.slug?.trim();
+  if (!eventSlug) {
+    return fallback;
+  }
+
+  try {
+    const eventSnapshot = await getPolymarketEventBySlug(eventSlug);
+    const bySlug = buildPolymarketVolumeMap(eventSnapshot);
+    return bySlug.size > 0 ? bySlug : fallback;
+  } catch {
+    return fallback;
+  }
+};
+
+const aggregateVenueMetric = (
   market: MarketCatalogMarket,
-  selector: (market: MarketCatalogMarket['venueMarkets'][number]) => string | number | null | undefined,
-  polymarketSelector?: ((snapshot: PolymarketMarketSnapshot) => number | null) | null,
-): Promise<string | null> => {
+  selector: (venueMarket: MarketCatalogMarket['venueMarkets'][number]) => string | number | null | undefined,
+  polymarketMetricsBySlug: Map<string, { volume: number | null; volume24h: number | null }>,
+  polymarketMetricKey: 'volume' | 'volume24h',
+): string | null => {
   const metricByVenue = new Map<string, number>();
   for (const venueMarket of market.venueMarkets) {
     const venueKey = normalizeVenueKey(venueMarket.venue);
@@ -49,19 +90,10 @@ const aggregateVenueMetric = async (
     metricByVenue.set(venueKey, Math.max(metricByVenue.get(venueKey) ?? 0, parsed));
   }
 
-  if (polymarketSelector && !metricByVenue.has('POLYMARKET')) {
-    const slug = polymarketSlugForCatalogMarket(market);
-    if (slug) {
-      try {
-        const snapshot = await getPolymarketMarketBySlug(slug);
-        const parsed = polymarketSelector(snapshot);
-        if (parsed !== null) {
-          metricByVenue.set('POLYMARKET', parsed);
-        }
-      } catch {
-        // Fall back to backend catalog metrics when the venue API is unavailable.
-      }
-    }
+  const polymarketSlug = polymarketSlugForCatalogMarket(market);
+  const polymarketMetric = polymarketSlug ? polymarketMetricsBySlug.get(polymarketSlug)?.[polymarketMetricKey] ?? null : null;
+  if (polymarketMetric !== null) {
+    metricByVenue.set('POLYMARKET', Math.max(metricByVenue.get('POLYMARKET') ?? 0, polymarketMetric));
   }
 
   const total = [...metricByVenue.values()].reduce((sum, value) => sum + value, 0);
@@ -71,11 +103,21 @@ const aggregateVenueMetric = async (
 export const hydrateCatalogMarketsWithAggregateVolumes = async (
   markets: MarketCatalogMarket[],
 ): Promise<MarketCatalogMarket[]> => {
-  return Promise.all(markets.map(async (market) => {
-    const [volume, volume24h] = await Promise.all([
-      aggregateVenueMetric(market, (venueMarket) => venueMarket.volume, polymarketSnapshotVolume),
-      aggregateVenueMetric(market, (venueMarket) => venueMarket.volume24h, polymarketSnapshotVolume24h),
-    ]);
+  const polymarketMetricsBySlug = await resolvePolymarketVolumeMap(markets);
+
+  return markets.map((market) => {
+    const volume = aggregateVenueMetric(
+      market,
+      (venueMarket) => venueMarket.volume,
+      polymarketMetricsBySlug,
+      'volume',
+    );
+    const volume24h = aggregateVenueMetric(
+      market,
+      (venueMarket) => venueMarket.volume24h,
+      polymarketMetricsBySlug,
+      'volume24h',
+    );
 
     if (!volume && !volume24h) return market;
 
@@ -84,5 +126,5 @@ export const hydrateCatalogMarketsWithAggregateVolumes = async (
       volume: volume ?? market.volume,
       volume24h: volume24h ?? market.volume24h,
     };
-  }));
+  });
 };

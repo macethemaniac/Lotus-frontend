@@ -311,6 +311,26 @@ export type PolymarketMarketSnapshot = {
   volume24hrClob?: string | number | null;
   liquidity?: string | number | null;
   liquidityClob?: string | number | null;
+  events?: Array<{
+    slug?: string | null;
+    title?: string | null;
+  }>;
+};
+
+export type PolymarketEventMarketSnapshot = {
+  slug: string;
+  question: string;
+  groupItemTitle?: string | null;
+  volume?: string | number | null;
+  volumeClob?: string | number | null;
+  volume24hr?: string | number | null;
+  volume24hrClob?: string | number | null;
+};
+
+export type PolymarketEventSnapshot = {
+  slug: string;
+  title: string;
+  markets: PolymarketEventMarketSnapshot[];
 };
 
 export type ResolutionRiskAssessment = {
@@ -492,6 +512,16 @@ export function getPolymarketMarketBySlug(slug: string) {
       throw new Error(`Unable to load Polymarket market ${slug}`);
     }
     return response.json() as Promise<PolymarketMarketSnapshot>;
+  }, { ttlMs: 60_000, maxStaleMs: 15 * 60_000 });
+}
+
+export function getPolymarketEventBySlug(slug: string) {
+  return staleWhileRevalidate(`polymarket-event:${slug}`, async () => {
+    const response = await fetch(`https://gamma-api.polymarket.com/events/slug/${encodeURIComponent(slug)}`);
+    if (!response.ok) {
+      throw new Error(`Unable to load Polymarket event ${slug}`);
+    }
+    return response.json() as Promise<PolymarketEventSnapshot>;
   }, { ttlMs: 60_000, maxStaleMs: 15 * 60_000 });
 }
 
