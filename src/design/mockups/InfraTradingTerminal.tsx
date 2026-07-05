@@ -26,6 +26,7 @@ import {
   resolveVisibleSelectedOutcomeOrderbook,
   shouldResetOrderbookForRequestChange,
   shouldReuseSelectedOutcomeState,
+  shouldSyncSelectedOutcomeRowDisplay,
   shouldResetExpandedOutcomeForMarketChange,
   type TerminalOutcomeDisplayValues,
 } from '@/design/mockups/terminal-outcome-display';
@@ -4042,6 +4043,15 @@ const InfraTradingTerminalInner = ({
       probability: normalizeTerminalDisplayValue(selectedOutcomeBookDisplay.probability),
     };
   }, [selectedOutcomeBookDisplay, selectedOutcomeBookUsable]);
+  const selectedOutcomeRowDisplay = useMemo<TerminalOutcomeDisplayValues | null>(() => (
+    selectedOutcome
+      ? {
+          yesPrice: normalizeTerminalDisplayValue(selectedOutcome.yesPrice),
+          noPrice: normalizeTerminalDisplayValue(selectedOutcome.noPrice),
+          probability: normalizeTerminalDisplayValue(selectedOutcome.prob),
+        }
+      : null
+  ), [selectedOutcome]);
   const latchSelectedOutcomeDisplayFallback = useCallback((
     outcomeId: string | null,
     outcomeRows: TerminalOutcomeRow[] = terminalOutcomesRef.current,
@@ -4096,6 +4106,25 @@ const InfraTradingTerminalInner = ({
   const selectedTicketNoPrice = selectedTicketUsesLatchedOutcomeDisplay
     ? selectedOutcomeDisplayValues?.noPrice ?? selectedTicketOutcome?.noPrice ?? null
     : selectedTicketOutcome?.noPrice ?? null;
+
+  React.useEffect(() => {
+    if (!shouldSyncSelectedOutcomeRowDisplay({
+      current: selectedOutcomeDisplayValues,
+      next: selectedOutcomeRowDisplay,
+      outcomeExpanded: expandedOutcomeId === selectedOutcome?.id,
+      orderbookUsable: selectedOutcomeBookUsable,
+    })) {
+      return;
+    }
+    setSelectedOutcomeDisplayFallback(selectedOutcomeRowDisplay);
+    setSelectedOutcomeDisplayValues(selectedOutcomeRowDisplay);
+  }, [
+    expandedOutcomeId,
+    selectedOutcome?.id,
+    selectedOutcomeBookUsable,
+    selectedOutcomeDisplayValues,
+    selectedOutcomeRowDisplay,
+  ]);
 
   const focusTerminalOutcomeOrderbook = useCallback((outcomeId: string) => {
     selectTerminalOutcome(outcomeId);

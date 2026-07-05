@@ -14,6 +14,7 @@ import {
   resolveSelectedOutcomeOrderbookDisplaySource,
   resolveSelectedOutcomeDisplayValues,
   resolveVisibleSelectedOutcomeOrderbook,
+  shouldSyncSelectedOutcomeRowDisplay,
   shouldResetOrderbookForRequestChange,
   shouldReuseSelectedOutcomeState,
   shouldResetExpandedOutcomeForMarketChange,
@@ -207,6 +208,42 @@ describe('resolveSelectedOutcomeDisplayValues', () => {
       },
       liveReady: false,
     })).toEqual(live);
+  });
+});
+
+describe('shouldSyncSelectedOutcomeRowDisplay', () => {
+  it('syncs the selected row quote when the expanded orderbook is not usable yet', () => {
+    expect(shouldSyncSelectedOutcomeRowDisplay({
+      current: {
+        yesPrice: '18c',
+        noPrice: '82c',
+        probability: '18%',
+      },
+      next: {
+        yesPrice: '35c',
+        noPrice: '65c',
+        probability: '35%',
+      },
+      outcomeExpanded: true,
+      orderbookUsable: false,
+    })).toBe(true);
+  });
+
+  it('does not overwrite a usable expanded orderbook display with the row fallback', () => {
+    expect(shouldSyncSelectedOutcomeRowDisplay({
+      current: {
+        yesPrice: '35c',
+        noPrice: '65c',
+        probability: '35%',
+      },
+      next: {
+        yesPrice: '34c',
+        noPrice: '66c',
+        probability: '34%',
+      },
+      outcomeExpanded: true,
+      orderbookUsable: true,
+    })).toBe(false);
   });
 });
 
@@ -448,6 +485,22 @@ describe('resolveSelectedOutcomeOrderbookDisplaySource', () => {
   it('falls back to the visible snapshot while the live orderbook is unavailable', () => {
     expect(resolveSelectedOutcomeOrderbookDisplaySource({
       live: null,
+      visible: visibleOrderbook,
+    })).toEqual(visibleOrderbook);
+  });
+
+  it('keeps the visible snapshot when the newest live orderbook has no usable depth yet', () => {
+    expect(resolveSelectedOutcomeOrderbookDisplaySource({
+      live: {
+        ...visibleOrderbook,
+        bids: [],
+        asks: [],
+        bestBid: null,
+        bestAsk: null,
+        midpoint: null,
+        spread: null,
+        status: 'partial',
+      },
       visible: visibleOrderbook,
     })).toEqual(visibleOrderbook);
   });

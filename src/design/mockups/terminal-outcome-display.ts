@@ -82,6 +82,26 @@ export const resolveSelectedOutcomeDisplayValues = (input: {
   return input.current ?? input.fallback ?? input.live;
 };
 
+const sameDisplayValues = (
+  left: TerminalOutcomeDisplayValues | null,
+  right: TerminalOutcomeDisplayValues | null,
+): boolean => (
+  left?.yesPrice === right?.yesPrice &&
+  left?.noPrice === right?.noPrice &&
+  left?.probability === right?.probability
+);
+
+export const shouldSyncSelectedOutcomeRowDisplay = (input: {
+  current: TerminalOutcomeDisplayValues | null;
+  next: TerminalOutcomeDisplayValues | null;
+  outcomeExpanded: boolean;
+  orderbookUsable: boolean;
+}): boolean => {
+  if (!input.next) return false;
+  if (input.outcomeExpanded && input.orderbookUsable) return false;
+  return !sameDisplayValues(input.current, input.next);
+};
+
 export const resolveVisibleSelectedOutcomeOrderbook = (input: {
   current: MarketOrderbookResponse | null;
   next: MarketOrderbookResponse | null;
@@ -96,7 +116,10 @@ export const resolveVisibleSelectedOutcomeOrderbook = (input: {
 export const resolveSelectedOutcomeOrderbookDisplaySource = (input: {
   live: MarketOrderbookResponse | null;
   visible: MarketOrderbookResponse | null;
-}): MarketOrderbookResponse | null => input.live ?? input.visible;
+}): MarketOrderbookResponse | null => {
+  if (input.live && hasUsableOrderbookDepth(input.live)) return input.live;
+  return input.visible ?? input.live;
+};
 
 export const orderSelectedOutcomeVisibleVenues = (
   venues: readonly string[],
