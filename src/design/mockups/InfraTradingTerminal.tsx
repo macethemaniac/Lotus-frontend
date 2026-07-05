@@ -116,6 +116,10 @@ const TERMINAL_ACCOUNT_REFRESH_INTERVAL_MS = 30_000;
 const TERMINAL_ALL_OUTCOME_PRICE_REFRESH_INTERVAL_MS = 12_000;
 const TERMINAL_FULL_OUTCOME_REFRESH_INTERVAL_MS = 120_000;
 const TERMINAL_LIVE_PRICE_BATCH_SIZE = 80;
+// Production Chrome profiles with multiple injected extensions have been
+// crashing the renderer on repeated full-page terminal polling. Keep the
+// selected market/orderbook path live, but disable the broader background loops.
+const TERMINAL_BACKGROUND_POLLING_ENABLED = env.lotusDeployEnv !== 'production';
 
 const walletAddressEquals = (left?: string | null, right?: string | null): boolean => {
   if (!left || !right) return false;
@@ -3229,6 +3233,11 @@ const LiveCanonicalChart = ({
       }
     };
     void loadChart();
+    if (!TERMINAL_BACKGROUND_POLLING_ENABLED) {
+      return () => {
+        cancelled = true;
+      };
+    }
     const interval = window.setInterval(() => {
       if (document.visibilityState === 'hidden') return;
       void loadChart();
@@ -5651,6 +5660,7 @@ const InfraTradingTerminalInner = ({
 
   React.useEffect(() => {
     void refreshOutcomes();
+    if (!TERMINAL_BACKGROUND_POLLING_ENABLED) return;
     const fullOutcomeInterval = window.setInterval(() => {
       if (document.visibilityState === 'hidden') return;
       void refreshOutcomes();
@@ -5663,6 +5673,7 @@ const InfraTradingTerminalInner = ({
   React.useEffect(() => {
     if (!terminalMarketId || selectedOutcomeRefreshKey.startsWith('none:')) return;
     void refreshAllOutcomePrices();
+    if (!TERMINAL_BACKGROUND_POLLING_ENABLED) return;
     const activeMarketPriceInterval = window.setInterval(() => {
       if (document.visibilityState === 'hidden') return;
       void refreshAllOutcomePrices();
