@@ -1392,11 +1392,6 @@ const compareOutcomeRowsByProbability = (
   return left.name.localeCompare(right.name);
 };
 
-const terminalOutcomeHasUsableQuote = (outcome: Pick<TerminalOutcomeRow, 'prob' | 'yesPrice' | 'noPrice'>): boolean =>
-  normalizeTerminalDisplayValue(outcome.prob) !== null
-  || normalizeTerminalDisplayValue(outcome.yesPrice) !== null
-  || normalizeTerminalDisplayValue(outcome.noPrice) !== null;
-
 const quoteVenueListFromLivePrice = (
   livePrice: MarketLivePriceItem | null | undefined,
   fallbackVenues: readonly string[] = [],
@@ -3511,11 +3506,10 @@ const InfraTradingTerminalInner = ({
     [terminalOutcomes],
   );
   const quoteableTerminalOutcomes = useMemo(() => {
-    const quoted = sortedTerminalOutcomes.filter(terminalOutcomeHasUsableQuote);
-    if (quoted.length === 0 && outcomesLoading) {
+    if (sortedTerminalOutcomes.length === 0 && outcomesLoading) {
       return [];
     }
-    return quoted.length > 0 ? quoted : sortedTerminalOutcomes;
+    return sortedTerminalOutcomes;
   }, [outcomesLoading, sortedTerminalOutcomes]);
   const selectedOutcome = quoteableTerminalOutcomes.find((outcome) => outcome.id === selectedOutcomeId)
     ?? quoteableTerminalOutcomes[0]
