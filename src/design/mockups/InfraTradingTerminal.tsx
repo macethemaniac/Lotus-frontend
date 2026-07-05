@@ -7103,11 +7103,10 @@ const InfraTradingTerminalInner = ({
                          )}
                          {visibleOutcomeRows.map((m) => {
                            const venues = m.venues.length ? m.venues : marketVenueList;
-                          const isSelectedOutcome = selectedOutcomeId ? selectedOutcomeId === m.id : m.active;
-                          const isExpandedOutcome = expandedOutcomeId === m.id;
-                          const rowVenueList = (isSelectedOutcome || isExpandedOutcome) && selectedOutcomeVisibleVenues.length > 0
-                            ? selectedOutcomeVisibleVenues
-                            : venues;
+                           const isSelectedOutcome = selectedOutcomeId ? selectedOutcomeId === m.id : m.active;
+                           const rowVenueList = isSelectedOutcome && selectedOutcomeVisibleVenues.length > 0
+                             ? selectedOutcomeVisibleVenues
+                             : venues;
                            const rowVenueCount = rowVenueList.length || m.platforms;
                            const primaryVenue = isSelectedOutcome && rowVenueList.length > 0
                              ? rowVenueList[0]!
@@ -7154,7 +7153,7 @@ const InfraTradingTerminalInner = ({
                                      <span className="min-w-0">
                                        <span className="block truncate text-lg font-black tracking-tight text-white">{m.name}</span>
                                        <span className="mt-0.5 block truncate text-xs font-medium text-zinc-500">
-                                        {rowVenueCount} Venue{rowVenueCount === 1 ? '' : 's'} <span className="mx-1">·</span> {m.vol}
+                                         {m.platforms} Venue{m.platforms === 1 ? '' : 's'} <span className="mx-1">·</span> {m.vol}
                                        </span>
                                      </span>
                                    </button>
