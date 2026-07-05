@@ -1362,6 +1362,12 @@ const streamFreshnessLabel = (freshnessMs: number | null | undefined): string | 
   return `${Math.round(freshnessMs / 60_000)}m old`;
 };
 
+const normalizeTerminalDisplayValue = (value: string | null | undefined): string | null => {
+  const trimmed = typeof value === 'string' ? value.trim() : '';
+  if (!trimmed || trimmed === '-' || /^quote$/i.test(trimmed)) return null;
+  return trimmed;
+};
+
 const streamStatusLabel = (
   status: MarketOrderbookStreamPayload['snapshotStatus'] | undefined,
   diagnosticsEnabled = lotusMarketDiagnosticsEnabled()
@@ -3737,6 +3743,14 @@ const InfraTradingTerminalInner = ({
       probability: normalizedMidpoint !== null ? formatProbabilityPercent(normalizedMidpoint) : null,
     };
   }, [marketType, orderbook, visibleSelectedOutcomeOrderbook]);
+  const usableSelectedOutcomeBookDisplay = useMemo(() => {
+    if (!selectedOutcomeBookUsable) return null;
+    return {
+      yesPrice: normalizeTerminalDisplayValue(selectedOutcomeBookDisplay.yesPrice),
+      noPrice: normalizeTerminalDisplayValue(selectedOutcomeBookDisplay.noPrice),
+      probability: normalizeTerminalDisplayValue(selectedOutcomeBookDisplay.probability),
+    };
+  }, [selectedOutcomeBookDisplay, selectedOutcomeBookUsable]);
   const latchSelectedOutcomeDisplayFallback = useCallback((
     outcomeId: string | null,
     outcomeRows: TerminalOutcomeRow[] = terminalOutcomesRef.current,
@@ -3744,9 +3758,9 @@ const InfraTradingTerminalInner = ({
     const row = outcomeId ? outcomeRows.find((outcome) => outcome.id === outcomeId) ?? null : null;
     const nextDisplayValues = row
       ? {
-          yesPrice: row.yesPrice,
-          noPrice: row.noPrice,
-          probability: row.prob,
+          yesPrice: normalizeTerminalDisplayValue(row.yesPrice),
+          noPrice: normalizeTerminalDisplayValue(row.noPrice),
+          probability: normalizeTerminalDisplayValue(row.prob),
         }
       : null;
     setSelectedOutcomeDisplayFallback(nextDisplayValues);
@@ -7040,9 +7054,24 @@ const InfraTradingTerminalInner = ({
                            const primaryVenue = isSelectedOutcome && rowVenueList.length > 0
                              ? rowVenueList[0]!
                              : m.primaryVenue ?? venues[0] ?? 'lotus';
-                           const rowYesPrice = isSelectedOutcome ? selectedOutcomeDisplayValues?.yesPrice ?? m.yesPrice : m.yesPrice;
-                           const rowNoPrice = isSelectedOutcome ? selectedOutcomeDisplayValues?.noPrice ?? m.noPrice : m.noPrice;
-                           const rowProbability = isSelectedOutcome ? selectedOutcomeDisplayValues?.probability ?? m.prob : m.prob;
+                           const rowYesPrice = isSelectedOutcome
+                             ? normalizeTerminalDisplayValue(selectedOutcomeDisplayValues?.yesPrice)
+                               ?? usableSelectedOutcomeBookDisplay?.yesPrice
+                               ?? normalizeTerminalDisplayValue(m.yesPrice)
+                               ?? m.yesPrice
+                             : m.yesPrice;
+                           const rowNoPrice = isSelectedOutcome
+                             ? normalizeTerminalDisplayValue(selectedOutcomeDisplayValues?.noPrice)
+                               ?? usableSelectedOutcomeBookDisplay?.noPrice
+                               ?? normalizeTerminalDisplayValue(m.noPrice)
+                               ?? m.noPrice
+                             : m.noPrice;
+                           const rowProbability = isSelectedOutcome
+                             ? normalizeTerminalDisplayValue(selectedOutcomeDisplayValues?.probability)
+                               ?? usableSelectedOutcomeBookDisplay?.probability
+                               ?? normalizeTerminalDisplayValue(m.prob)
+                               ?? m.prob
+                             : m.prob;
                            const rowYesVenue = primaryVenue;
                            const rowNoVenue = primaryVenue;
                            const rowYesSelected = isSelectedOutcome && ticketOutcomeSide === 'yes';
