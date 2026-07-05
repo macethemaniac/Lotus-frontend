@@ -2865,6 +2865,33 @@ const buildChartTicks = (max: number): number[] => {
   return Array.from({ length: divisions + 1 }, (_, index) => Number(((max / divisions) * index).toFixed(max <= 2 ? 2 : max <= 10 ? 1 : 0)));
 };
 
+const useChartFrameSize = () => {
+  const frameRef = React.useRef<HTMLDivElement | null>(null);
+  const [size, setSize] = useState({ width: 0, height: 0 });
+
+  React.useEffect(() => {
+    const frame = frameRef.current;
+    if (!frame || typeof ResizeObserver === "undefined") return;
+
+    const updateSize = () => {
+      const nextWidth = Math.max(0, Math.round(frame.clientWidth));
+      const nextHeight = Math.max(0, Math.round(frame.clientHeight));
+      setSize((current) =>
+        current.width === nextWidth && current.height === nextHeight
+          ? current
+          : { width: nextWidth, height: nextHeight }
+      );
+    };
+
+    updateSize();
+    const observer = new ResizeObserver(() => updateSize());
+    observer.observe(frame);
+    return () => observer.disconnect();
+  }, []);
+
+  return [frameRef, size] as const;
+};
+
 const buildChartYAxis = (
   rows: TerminalChartRow[],
   series: TerminalChartSeries[]
@@ -3058,6 +3085,67 @@ const LiveCanonicalChart = ({
   );
   const { rows, series, historyStatus } = chartModel;
   const yAxis = useMemo(() => buildChartYAxis(rows, series), [rows, series]);
+  const [chartFrameRef, chartFrameSize] = useChartFrameSize();
+  const chartReady = chartFrameSize.width > 0 && chartFrameSize.height > 0;
+  const chartHeight = Math.max(chartFrameSize.height, 260);
+  const chartTickRows = useMemo(() => {
+    if (rows.length <= 5) return rows;
+    const lastIndex = rows.length - 1;
+    const indices = Array.from(new Set([
+      0,
+      Math.round(lastIndex * 0.25),
+      Math.round(lastIndex * 0.5),
+      Math.round(lastIndex * 0.75),
+      lastIndex,
+    ])).sort((left, right) => left - right);
+    return indices.map((index) => rows[index]!).filter(Boolean);
+  }, [rows]);
+  const chartGeometry = useMemo(() => {
+    if (!chartReady) return null;
+
+    const margin = { top: 12, right: 38, bottom: 28, left: 8 };
+    const plotWidth = Math.max(1, chartFrameSize.width - margin.left - margin.right);
+    const plotHeight = Math.max(1, chartHeight - margin.top - margin.bottom);
+    const timestamps = rows
+      .map((row) => (typeof row.timestamp === 'number' && Number.isFinite(row.timestamp) ? row.timestamp : null))
+      .filter((value): value is number => value !== null);
+    const minTimestamp = timestamps[0] ?? 0;
+    const maxTimestamp = timestamps[timestamps.length - 1] ?? minTimestamp + 1;
+    const domainMax = yAxis.domain[1] > yAxis.domain[0] ? yAxis.domain[1] : yAxis.domain[0] + 1;
+    const xForTimestamp = (timestamp: number) =>
+      timestamps.length <= 1 || maxTimestamp === minTimestamp
+        ? margin.left + plotWidth / 2
+        : margin.left + ((timestamp - minTimestamp) / (maxTimestamp - minTimestamp)) * plotWidth;
+    const yForValue = (value: number) =>
+      margin.top + plotHeight - ((value - yAxis.domain[0]) / (domainMax - yAxis.domain[0])) * plotHeight;
+
+    const lineSeries = series.map((item) => {
+      const points = rows.flatMap((row) => {
+        const value = row[item.id];
+        if (typeof row.timestamp !== 'number' || typeof value !== 'number' || !Number.isFinite(value)) return [];
+        return [{
+          x: xForTimestamp(row.timestamp),
+          y: yForValue(value),
+          value,
+          timestamp: row.timestamp,
+        }];
+      });
+      return {
+        item,
+        points,
+        latest: points[points.length - 1] ?? null,
+      };
+    });
+
+    return {
+      margin,
+      plotWidth,
+      plotHeight,
+      xForTimestamp,
+      yForValue,
+      lineSeries,
+    };
+  }, [chartFrameSize.width, chartHeight, chartReady, rows, series, yAxis.domain]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -3223,7 +3311,7 @@ const LiveCanonicalChart = ({
           <div className="text-zinc-500 font-bold ml-2">Live history accumulating</div>
         )}
       </div>
-      <div className="relative mt-4 min-h-[260px] w-full flex-1 pr-2 sm:mt-5 sm:min-h-[300px] sm:pr-4">
+      <div ref={chartFrameRef} className="relative mt-4 min-h-[260px] w-full flex-1 pr-2 sm:mt-5 sm:min-h-[300px] sm:pr-4">
         {loading && rows.length === 0 && (
           <div className="absolute inset-0 z-10 flex items-center justify-center text-xs font-bold uppercase tracking-[0.18em] text-zinc-500">
             Loading live chart
@@ -3239,68 +3327,84 @@ const LiveCanonicalChart = ({
             Live chart data will appear after Lotus receives backend orderbook points for this market.
           </div>
         )}
-        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={260}>
-          <LineChart data={rows} margin={{ top: 12, right: 38, left: 8, bottom: 12 }}>
-            <XAxis
-              dataKey="timestamp"
-              type="number"
-              domain={['dataMin', 'dataMax']}
-              axisLine={false}
-              tickLine={false}
-              tick={{ fill: '#71717A', fontSize: 11 }}
-              tickCount={activeTab === 'ALL' ? 7 : 5}
-              minTickGap={28}
-              dy={10}
-              tickFormatter={(value) => formatChartAxisTimeLabel(Number(value), activeTab)}
-            />
-            <YAxis
-              orientation="right"
-              axisLine={false}
-              tickLine={false}
-              tick={{ fill: '#71717A', fontSize: 11 }}
-              width={42}
-              dx={8}
-              tickFormatter={(value) => formatChartAxisValue(Number(value))}
-              ticks={yAxis.ticks}
-              domain={yAxis.domain}
-            />
-            {yAxis.ticks.map((val) => (
-              <ReferenceLine key={val} y={val} stroke="#27272A" strokeDasharray="3 3" opacity={0.6} />
-            ))}
-            <Tooltip content={<CustomTooltip />} cursor={{ stroke: '#52525B', strokeWidth: 1, strokeDasharray: '3 3' }} />
-            {series.map((item) => (
-              <Line
-                key={item.id}
-                type="stepAfter"
-                dataKey={item.id}
-                name={item.label}
-                stroke={item.color}
-                strokeWidth={item.emphasis || series.length === 1 ? 2.5 : 1.8}
-                dot={false}
-                strokeDasharray={item.dashed ? '4 2' : undefined}
-                activeDot={{ r: item.emphasis || series.length === 1 ? 5 : 4, stroke: '#18181b', strokeWidth: 2 }}
-                connectNulls
-              />
-            ))}
-            {series.length === 1 && (() => {
-              const item = series[0]!;
-              const latest = [...rows].reverse().find((point) => typeof point[item.id] === 'number');
-              const latestValue = latest?.[item.id];
-              if (typeof latest?.timestamp !== 'number' || typeof latestValue !== 'number') return null;
+        {chartReady && chartGeometry ? (
+          <svg
+            width={chartFrameSize.width}
+            height={chartHeight}
+            viewBox={`0 0 ${chartFrameSize.width} ${chartHeight}`}
+            className="block h-full w-full"
+            aria-label="Probability chart"
+            role="img"
+          >
+            {yAxis.ticks.map((tick) => {
+              const y = chartGeometry.yForValue(tick);
               return (
-                <ReferenceDot
-                  key={`${item.id}-latest-dot`}
-                  x={latest.timestamp}
-                  y={latestValue}
-                  r={5}
-                  fill={item.color}
-                  stroke="#0c0c0c"
-                  strokeWidth={2}
-                />
+                <g key={`tick-${tick}`}>
+                  <line
+                    x1={chartGeometry.margin.left}
+                    x2={chartGeometry.margin.left + chartGeometry.plotWidth}
+                    y1={y}
+                    y2={y}
+                    stroke="#27272A"
+                    strokeDasharray="3 3"
+                    opacity="0.6"
+                  />
+                  <text
+                    x={chartGeometry.margin.left + chartGeometry.plotWidth + 8}
+                    y={y + 4}
+                    fill="#71717A"
+                    fontSize="11"
+                    textAnchor="start"
+                  >
+                    {formatChartAxisValue(Number(tick))}
+                  </text>
+                </g>
               );
-            })()}
-          </LineChart>
-        </ResponsiveContainer>
+            })}
+            {chartTickRows.map((row) => {
+              if (typeof row.timestamp !== 'number') return null;
+              return (
+                <text
+                  key={`time-${row.timestamp}`}
+                  x={chartGeometry.xForTimestamp(row.timestamp)}
+                  y={chartHeight - 8}
+                  fill="#71717A"
+                  fontSize="11"
+                  textAnchor="middle"
+                >
+                  {formatChartAxisTimeLabel(row.timestamp, activeTab)}
+                </text>
+              );
+            })}
+            {chartGeometry.lineSeries.map(({ item, points, latest }) => {
+              if (points.length === 0) return null;
+              const polylinePoints = points.map((point) => `${point.x},${point.y}`).join(' ');
+              return (
+                <g key={item.id}>
+                  <polyline
+                    fill="none"
+                    points={polylinePoints}
+                    stroke={item.color}
+                    strokeWidth={item.emphasis || series.length === 1 ? 2.5 : 1.8}
+                    strokeDasharray={item.dashed ? '4 2' : undefined}
+                    strokeLinejoin="round"
+                    strokeLinecap="round"
+                  />
+                  {latest ? (
+                    <circle
+                      cx={latest.x}
+                      cy={latest.y}
+                      r={item.emphasis || series.length === 1 ? 5 : 4}
+                      fill={item.color}
+                      stroke="#0c0c0c"
+                      strokeWidth="2"
+                    />
+                  ) : null}
+                </g>
+              );
+            })}
+          </svg>
+        ) : null}
       </div>
     </div>
   );
