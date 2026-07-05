@@ -288,6 +288,7 @@ export type TerminalMarketSelection = {
   canonicalMarketIds?: string[];
   eventId?: string;
   canonicalEventId?: string;
+  status?: MarketCatalogMarket["status"];
   title: string;
   category: string;
   icon: string;
@@ -400,6 +401,21 @@ type TerminalOutcomeRow = {
   venues: string[];
   status: 'live' | 'unavailable' | 'pending' | 'auth_required';
   blocker: string | null;
+};
+
+type TerminalOutcomeSeed = {
+  id: string;
+  label: string;
+  venues: string[];
+  marketId: string | null;
+  canonicalMarketIds: string[];
+  quoteOutcomeId: string;
+  imageUrl?: string | null;
+  iconUrl?: string | null;
+  volume: string | null;
+  volume24h: string | null;
+  quoteReadyVenueCount?: number;
+  quoteReadyVenues?: string[];
 };
 
 type TerminalVenueQuote = {
@@ -632,7 +648,7 @@ const terminalOutcomeNameForEventMarket = (market: MarketCatalogMarket): string 
   return suffix && suffix.length > 0 ? suffix : market.title.trim();
 };
 
-const terminalOutcomeSeedForEventMarket = (market: MarketCatalogMarket) => {
+const terminalOutcomeSeedForEventMarket = (market: MarketCatalogMarket): TerminalOutcomeSeed => {
   const marketId = market.canonicalMarketIds[0] ?? market.canonicalEventId;
   const tradableVenues = market.quoteReadyVenues?.length ? market.quoteReadyVenues : market.venues;
   return {
@@ -651,7 +667,7 @@ const terminalOutcomeSeedForEventMarket = (market: MarketCatalogMarket) => {
   };
 };
 
-const isUnresolvedCatalogMarket = (market: Pick<MarketCatalogMarket, 'status'>): boolean =>
+const isUnresolvedCatalogMarket = (market: Pick<TerminalMarketSelection, "status">): boolean =>
   market.status === 'OPEN' || market.status === 'RESOLVING';
 
 const outcomePriceLabel = (market: TerminalMarketSelection, outcomeId: string, fallback: string): string => {
@@ -3973,7 +3989,7 @@ const InfraTradingTerminalInner = ({
           }
         }
       }
-      const seededOutcomes = fallbackRows.map((row) => ({
+      const seededOutcomes: TerminalOutcomeSeed[] = fallbackRows.map((row) => ({
         id: row.id,
         label: row.name,
         venues: row.venues,
@@ -3988,7 +4004,7 @@ const InfraTradingTerminalInner = ({
       const shouldFetchCanonicalOutcomes = !seededEventOutcomes && !hasCompoundEventOutcomes;
       const outcomeResponse = shouldFetchCanonicalOutcomes ? await getMarketOutcomes(terminalMarketId) : null;
       const unresolvedEventMarkets = eventMarketsResponse?.markets.filter(isUnresolvedCatalogMarket) ?? [];
-      const baseOutcomes = unresolvedEventMarkets.length > 0
+      const baseOutcomes: TerminalOutcomeSeed[] = unresolvedEventMarkets.length > 0
         ? unresolvedEventMarkets.map(terminalOutcomeSeedForEventMarket)
         : seededEventOutcomes
         ? seededOutcomes
@@ -4066,7 +4082,7 @@ const InfraTradingTerminalInner = ({
         });
         const livePriceByKey = new Map(livePriceResponse.prices.map((price) => [`${price.marketId}:${price.outcomeId ?? ''}`, price]));
 
-        const rows = seedRows.map((row) => {
+        const rows: TerminalOutcomeRow[] = seedRows.map((row) => {
           const livePrice = livePriceByKey.get(`${row.marketId ?? terminalMarketId}:${row.quoteOutcomeId}`);
           const quoteVenues = quoteVenueListFromLivePrice(livePrice, row.venues);
           const summaryVenues = resolveOutcomeSummaryVenues(livePrice, row.venues);
@@ -4082,7 +4098,7 @@ const InfraTradingTerminalInner = ({
               venueQuotes: quoteVenues.length > 0
                 ? placeholderVenueQuotes(quoteVenues, '-', '-', null)
                 : [],
-              status: livePrice.status === 'live' ? 'live' : 'pending',
+              status: livePrice.status === 'live' ? 'live' : 'pending' as const,
             };
           }
           const yesPrice = formatProbabilityPrice(parsedPrice);
@@ -4100,7 +4116,7 @@ const InfraTradingTerminalInner = ({
                 ? placeholderVenueQuotes(quoteVenues.length ? quoteVenues : [livePrice.bestVenue], yesPrice, noPrice, null)
                 : row.venueQuotes,
             venues: summaryVenues.length > 0 ? summaryVenues : row.venues,
-            status: 'live',
+            status: 'live' as const,
           };
         });
 

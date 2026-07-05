@@ -1472,6 +1472,7 @@ export const DashboardV2Mockup = ({
       canonicalMarketIds: market.canonicalMarketIds,
       eventId: market.eventId,
       canonicalEventId: market.canonicalEventId,
+      status: market.status,
       title: market.title,
       category: market.category,
       icon: market.icon,
