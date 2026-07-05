@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTurnkey } from '@turnkey/react-wallet-kit';
 import { OAuthProviders } from '@turnkey/sdk-types';
@@ -10,6 +10,7 @@ import { FundingDeposit } from '@/design/mockups/FundingDeposit';
 import { isTurnkeyProviderConfigured } from '@/app/turnkey-provider';
 import type { AuthSession } from '@/features/auth/types';
 import {
+  getEventMarkets,
   getMarket,
   getMarketBatchQuotes,
   getMarketLivePrices,
@@ -221,6 +222,12 @@ const dashboardVenueIconId = (venue: string): string => {
   if (['poly_market', 'polymarket'].includes(normalized)) return 'polymarket';
   return normalized;
 };
+
+const dashboardEventMediaKey = (market: Pick<DashboardMarketRow, 'eventId' | 'canonicalEventId'>): string | null =>
+  market.eventId ?? market.canonicalEventId ?? null;
+
+const shouldPreferEventMedia = (market: Pick<DashboardMarketRow, 'marketType' | 'outcomes'>): boolean =>
+  market.marketType === 'multi' || (market.outcomes?.length ?? 0) > 1;
 
 const normalizeOutcomeId = (value: string): string => value.trim().toUpperCase().replace(/\s+/g, '_');
 
@@ -1427,6 +1434,7 @@ export const DashboardV2Mockup = ({
   const [railActivityItems, setRailActivityItems] = useState<DashboardRailActivityItem[]>([]);
   const [railActivityLoading, setRailActivityLoading] = useState(false);
   const [railActivityError, setRailActivityError] = useState<string | null>(null);
+  const marketEventMediaCacheRef = useRef<Map<string, { imageUrl: string | null; iconUrl: string | null }>>(new Map());
   const [expandedCategories, setExpandedCategories] = useState<Record<string, boolean>>({
     'Sports': true,
     'Politics': true,
@@ -1889,6 +1897,67 @@ export const DashboardV2Mockup = ({
     return () => {
       cancelled = true;
       window.clearInterval(interval);
+    };
+  }, [isMarketSurface, marketRows]);
+
+  useEffect(() => {
+    if (!isMarketSurface || marketRows.length === 0) return;
+
+    let cancelled = false;
+    const pendingEventIds = Array.from(new Set(
+      marketRows
+        .filter(shouldPreferEventMedia)
+        .map(dashboardEventMediaKey)
+        .filter((eventId): eventId is string => typeof eventId === 'string' && eventId.length > 0)
+        .filter((eventId) => !marketEventMediaCacheRef.current.has(eventId))
+    ));
+
+    if (pendingEventIds.length === 0) return;
+
+    void Promise.all(
+      pendingEventIds.map(async (eventId) => {
+        try {
+          const response = await getEventMarkets(eventId);
+          const media = {
+            imageUrl: getSafeMediaUrl(response.imageUrl),
+            iconUrl: getSafeMediaUrl(response.iconUrl),
+          };
+          marketEventMediaCacheRef.current.set(eventId, media);
+          return { eventId, media };
+        } catch {
+          marketEventMediaCacheRef.current.set(eventId, { imageUrl: null, iconUrl: null });
+          return null;
+        }
+      })
+    ).then((results) => {
+      if (cancelled) return;
+      const resolvedMedia = new Map(
+        results
+          .filter((item): item is { eventId: string; media: { imageUrl: string | null; iconUrl: string | null } } => Boolean(item))
+          .map((item) => [item.eventId, item.media])
+      );
+      if (resolvedMedia.size === 0) return;
+      setMarketRows((current) =>
+        current.map((market) => {
+          if (!shouldPreferEventMedia(market)) return market;
+          const eventId = dashboardEventMediaKey(market);
+          if (!eventId) return market;
+          const media = resolvedMedia.get(eventId);
+          if (!media || (!media.imageUrl && !media.iconUrl)) return market;
+          const nextImageUrl = media.imageUrl ?? market.imageUrl;
+          const nextIconUrl = media.iconUrl ?? market.iconUrl;
+          if (nextImageUrl === market.imageUrl && nextIconUrl === market.iconUrl) return market;
+          return {
+            ...market,
+            imageUrl: nextImageUrl,
+            iconUrl: nextIconUrl,
+          };
+        })
+      );
+    });
+
+    return () => {
+      cancelled = true;
     };
   }, [isMarketSurface, marketRows]);
 
