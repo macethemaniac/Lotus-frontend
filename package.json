@@ -14,7 +14,7 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "cf:dev": "wrangler dev",
-    "cf:deploy:staging": "npm run build && wrangler deploy --env staging",
+    "cf:deploy:main": "npm run build && wrangler deploy --env production",
     "cf:deploy:production": "npm run build && wrangler deploy --env production"
   },
   "overrides": {
@@ -23,7 +23,8 @@
     },
     "isows": {
       "ws": "7.5.11"
-    }
+    },
+    "@fortawesome/react-fontawesome": "3.1.1"
   },
   "dependencies": {
     "@turnkey/react-wallet-kit": "^2.0.0",
