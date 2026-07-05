@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import {
   isSelectedOutcomeBookUsable,
   isSelectedOutcomeBookReady,
+  resolveOutcomeSummaryVenueCount,
+  resolveOutcomeSummaryVenues,
   resolveSelectedOutcomeDisplayValues,
   resolveVisibleSelectedOutcomeOrderbook,
   type TerminalOutcomeDisplayValues,
@@ -258,5 +260,60 @@ describe('resolveVisibleSelectedOutcomeOrderbook', () => {
       nextReady: true,
       nextUsable: true,
     })).toEqual(nextReadyOrderbook);
+  });
+});
+
+describe('resolveOutcomeSummaryVenues', () => {
+  it('prefers linked venues over the narrower live venue subset', () => {
+    expect(resolveOutcomeSummaryVenues({
+      marketId: 'market-1',
+      outcomeId: 'YES',
+      generatedAt: new Date().toISOString(),
+      status: 'live',
+      price: '0.13',
+      bestBid: '0.12',
+      bestAsk: '0.14',
+      midpoint: '0.13',
+      spread: '0.02',
+      bestVenue: 'PREDICT_FUN',
+      venueCount: 3,
+      venues: ['LIMITLESS', 'OPINION', 'PREDICT_FUN'],
+      liveVenueCount: 3,
+      liveVenues: ['LIMITLESS', 'OPINION', 'PREDICT_FUN'],
+      linkedVenueCount: 4,
+      linkedVenues: ['LIMITLESS', 'OPINION', 'POLYMARKET', 'PREDICT_FUN'],
+      venueBreakdown: [
+        { venue: 'LIMITLESS', price: '0.125', bestBid: '0.11', bestAsk: '0.14', status: 'live' },
+        { venue: 'OPINION', price: '0.1335', bestBid: '0.119', bestAsk: '0.148', status: 'live' },
+        { venue: 'POLYMARKET', price: null, bestBid: null, bestAsk: null, status: 'no_live_price' },
+        { venue: 'PREDICT_FUN', price: '0.1245', bestBid: '0.124', bestAsk: '0.125', status: 'live' },
+      ],
+      averagePrice: '0.127666666667',
+      freshnessMs: 2511,
+    }, ['LIMITLESS'])).toEqual(['LIMITLESS', 'OPINION', 'POLYMARKET', 'PREDICT_FUN']);
+  });
+
+  it('uses the linked venue count for row summaries when available', () => {
+    expect(resolveOutcomeSummaryVenueCount({
+      marketId: 'market-1',
+      outcomeId: 'YES',
+      generatedAt: new Date().toISOString(),
+      status: 'live',
+      price: '0.13',
+      bestBid: '0.12',
+      bestAsk: '0.14',
+      midpoint: '0.13',
+      spread: '0.02',
+      bestVenue: 'PREDICT_FUN',
+      venueCount: 3,
+      venues: ['LIMITLESS', 'OPINION', 'PREDICT_FUN'],
+      liveVenueCount: 3,
+      liveVenues: ['LIMITLESS', 'OPINION', 'PREDICT_FUN'],
+      linkedVenueCount: 4,
+      linkedVenues: ['LIMITLESS', 'OPINION', 'POLYMARKET', 'PREDICT_FUN'],
+      venueBreakdown: [],
+      averagePrice: '0.127666666667',
+      freshnessMs: 2511,
+    }, ['LIMITLESS'])).toBe(4);
   });
 });

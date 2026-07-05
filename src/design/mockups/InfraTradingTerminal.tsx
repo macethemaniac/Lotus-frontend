@@ -14,6 +14,8 @@ import { FundingDeposit } from '@/design/mockups/FundingDeposit';
 import {
   isSelectedOutcomeBookReady,
   isSelectedOutcomeBookUsable,
+  resolveOutcomeSummaryVenueCount,
+  resolveOutcomeSummaryVenues,
   resolveSelectedOutcomeDisplayValues,
   resolveVisibleSelectedOutcomeOrderbook,
   type TerminalOutcomeDisplayValues,
@@ -4041,14 +4043,16 @@ const InfraTradingTerminalInner = ({
         const rows = seedRows.map((row) => {
           const livePrice = livePriceByKey.get(`${row.marketId ?? terminalMarketId}:${row.quoteOutcomeId}`);
           const quoteVenues = quoteVenueListFromLivePrice(livePrice, row.venues);
+          const summaryVenues = resolveOutcomeSummaryVenues(livePrice, row.venues);
+          const summaryVenueCount = resolveOutcomeSummaryVenueCount(livePrice, row.venues);
           const parsedPrice = orderbookNumericValue(livePrice?.price ?? livePrice?.bestAsk ?? livePrice?.midpoint ?? livePrice?.bestBid);
           if (parsedPrice === null) {
             if (!livePrice) return row;
             return {
               ...row,
-              platforms: quoteVenues.length || row.platforms,
+              platforms: summaryVenueCount || row.platforms,
               primaryVenue: livePrice.bestVenue ?? quoteVenues[0] ?? row.primaryVenue ?? null,
-              venues: quoteVenues.length > 0 ? quoteVenues : row.venues,
+              venues: summaryVenues.length > 0 ? summaryVenues : row.venues,
               venueQuotes: quoteVenues.length > 0
                 ? placeholderVenueQuotes(quoteVenues, '-', '-', null)
                 : [],
@@ -4059,7 +4063,7 @@ const InfraTradingTerminalInner = ({
           const noPrice = terminalMarket.marketType === 'binary' ? formatProbabilityPrice(1 - parsedPrice) : '-';
           return {
             ...row,
-            platforms: quoteVenues.length || row.platforms,
+            platforms: summaryVenueCount || row.platforms,
             prob: formatProbabilityPercent(parsedPrice),
             yesPrice,
             noPrice,
@@ -4069,7 +4073,7 @@ const InfraTradingTerminalInner = ({
               : livePrice?.bestVenue
                 ? placeholderVenueQuotes(quoteVenues.length ? quoteVenues : [livePrice.bestVenue], yesPrice, noPrice, null)
                 : row.venueQuotes,
-            venues: quoteVenues.length > 0 ? quoteVenues : row.venues,
+            venues: summaryVenues.length > 0 ? summaryVenues : row.venues,
             status: 'live',
           };
         });
@@ -4149,24 +4153,26 @@ const InfraTradingTerminalInner = ({
                 streamOutcomeMatches(price.outcomeId ?? quoteOutcomeId, quoteOutcomeId)
               );
             const quoteVenues = quoteVenueListFromLivePrice(livePrice, outcome.venues);
+            const summaryVenues = resolveOutcomeSummaryVenues(livePrice, outcome.venues);
+            const summaryVenueCount = resolveOutcomeSummaryVenueCount(livePrice, outcome.venues);
             const parsedPrice = orderbookNumericValue(livePrice?.price ?? livePrice?.bestAsk ?? livePrice?.midpoint ?? livePrice?.bestBid);
             if (parsedPrice === null) {
               if (!livePrice) return outcome;
               return {
                 ...outcome,
-                platforms: quoteVenues.length || outcome.platforms,
+                platforms: summaryVenueCount || outcome.platforms,
                 primaryVenue: livePrice.bestVenue ?? quoteVenues[0] ?? outcome.primaryVenue ?? null,
                 venueQuotes: quoteVenues.length > 0
                   ? placeholderVenueQuotes(quoteVenues, '-', '-', null)
                   : [],
-                venues: quoteVenues.length > 0 ? quoteVenues : outcome.venues,
+                venues: summaryVenues.length > 0 ? summaryVenues : outcome.venues,
               };
             }
             const yesPrice = formatProbabilityPrice(parsedPrice);
             const noPrice = terminalMarket.marketType === 'binary' ? formatProbabilityPrice(1 - parsedPrice) : '-';
             return {
               ...outcome,
-              platforms: quoteVenues.length || outcome.platforms,
+              platforms: summaryVenueCount || outcome.platforms,
               prob: formatProbabilityPercent(parsedPrice),
               yesPrice,
               noPrice,
@@ -4176,7 +4182,7 @@ const InfraTradingTerminalInner = ({
                 : livePrice?.bestVenue
                   ? placeholderVenueQuotes(quoteVenues.length ? quoteVenues : [livePrice.bestVenue], yesPrice, noPrice, null)
                   : outcome.venueQuotes,
-              venues: quoteVenues.length > 0 ? quoteVenues : outcome.venues,
+              venues: summaryVenues.length > 0 ? summaryVenues : outcome.venues,
               status: 'live',
               blocker: null,
             };

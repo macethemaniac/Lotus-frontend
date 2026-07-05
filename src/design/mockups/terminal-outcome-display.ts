@@ -1,4 +1,8 @@
-import type { MarketOrderbookResponse, MarketOrderbookSnapshotStatus } from '@/features/markets/api/market-api';
+import type {
+  MarketLivePriceItem,
+  MarketOrderbookResponse,
+  MarketOrderbookSnapshotStatus,
+} from '@/features/markets/api/market-api';
 
 export type TerminalOutcomeDisplayValues = {
   yesPrice: string | null;
@@ -81,4 +85,32 @@ export const resolveVisibleSelectedOutcomeOrderbook = (input: {
   if (input.nextReady && input.next) return input.next;
   if (!input.current && input.nextUsable && input.next) return input.next;
   return input.current;
+};
+
+export const resolveOutcomeSummaryVenues = (
+  livePrice: MarketLivePriceItem | null | undefined,
+  fallbackVenues: readonly string[] = [],
+): string[] => {
+  const source = livePrice
+    ? livePrice.linkedVenues?.length
+      ? livePrice.linkedVenues
+      : livePrice.venueBreakdown?.length
+        ? livePrice.venueBreakdown.map((venue) => venue.venue)
+        : livePrice.venues?.length
+          ? livePrice.venues
+          : livePrice.liveVenues?.length
+            ? livePrice.liveVenues
+            : []
+    : fallbackVenues;
+  return [...new Set(source
+    .map((venue) => typeof venue === 'string' ? venue.trim() : '')
+    .filter(Boolean))];
+};
+
+export const resolveOutcomeSummaryVenueCount = (
+  livePrice: MarketLivePriceItem | null | undefined,
+  fallbackVenues: readonly string[] = [],
+): number => {
+  if (livePrice?.linkedVenueCount && livePrice.linkedVenueCount > 0) return livePrice.linkedVenueCount;
+  return resolveOutcomeSummaryVenues(livePrice, fallbackVenues).length;
 };
