@@ -599,13 +599,20 @@ const canonicalIdsForTerminalOutcome = (
   primaryMarketId: string | null | undefined,
   explicitIds: readonly string[] | null | undefined,
   marketIds: readonly string[] | null | undefined,
-  _outcomeCount = 1,
+  outcomeCount = 1,
 ): string[] => {
   const explicit = uniqueNonEmptyStrings(explicitIds ?? []);
   const primary = uniqueNonEmptyStrings([primaryMarketId]);
   if (explicit.length === 0) {
     // No per-outcome canonical IDs from the backend: fall back to terminal market IDs.
     return uniqueNonEmptyStrings([...(marketIds ?? []), ...primary]);
+  }
+  if (outcomeCount > 2) {
+    // Multi-outcome event cards can carry a union of every underlying market's canonical IDs
+    // on the parent terminal market selection. Merging that union into a specific outcome row
+    // cross-wires the selected orderbook and causes rows like Argentina to flicker to France's
+    // live price. For multi-outcome boards, keep each outcome scoped to its own explicit IDs.
+    return uniqueNonEmptyStrings([...explicit, ...primary]);
   }
   // If any explicit ID appears in the terminal market's canonical IDs the outcome belongs
   // to the same base market — merge both lists so linked-venue IDs absent from the per-outcome

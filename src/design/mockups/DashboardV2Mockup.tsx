@@ -3670,7 +3670,7 @@ const NavItem = ({
   </div>
 );
 
-const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, venueCount, routeType, savings, spread, fallback, fallbackLabel, fallbackMode = 'pending', icon, imageUrl, iconUrl, priceLabel, priceVenue, changeLabel, prob, change, volume, volumeLabel = 'Vol', volume24h = null, liquidity = null, openInterest = null, resolvesAt = null, resolutionDateLabel = null, txnBuy, txnSell, txnLabel = 'Pending', badges = [], outcomes, marketType, venues, venueMarkets, quoteStatus = 'live', quoteReadyVenueCount = 0, quoteBlockers = [], lastQuoteAt = null, isWatched = false, onToggleWatch, onOpenTerminal }: any) => {
+const MarketCard = ({ id, marketId, canonicalMarketIds, eventId, canonicalEventId, title, category, venueCount, routeType, savings, spread, fallback, fallbackLabel, fallbackMode = 'pending', icon, imageUrl, iconUrl, priceLabel, priceVenue, changeLabel, prob, change, volume, volumeLabel = 'Vol', volume24h = null, liquidity = null, openInterest = null, resolvesAt = null, resolutionDateLabel = null, txnBuy, txnSell, txnLabel = 'Pending', badges = [], outcomes, marketType, venues, venueMarkets, quoteStatus = 'live', quoteReadyVenueCount = 0, quoteBlockers = [], lastQuoteAt = null, isWatched = false, onToggleWatch, onOpenTerminal }: any) => {
   const [outcomesExpanded, setOutcomesExpanded] = useState(false);
   const allVenues = [
     { id: 'polymarket', label: 'Polymarket' },
@@ -3728,7 +3728,7 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
     : priceVenue;
   const showRouteVenueLogo = diagnosticsEnabled && typeof routeVenueLogoLabel === 'string' && routeVenueLogoLabel.trim().length > 0;
   const shouldShowVolumeMetric = volume != null && String(volume).trim().length > 0 && String(volume).trim().toLowerCase() !== 'backend catalog';
-  const terminalPayload = { id, marketId, eventId, canonicalEventId, title, category, icon, volume, volume24h, liquidity, openInterest, resolvesAt, resolutionDateLabel, venueCount, routeType, venues, venueMarkets, marketType, outcomes, imageUrl, iconUrl, priceLabel, priceVenue, changeLabel };
+  const terminalPayload = { id, marketId, canonicalMarketIds, eventId, canonicalEventId, title, category, icon, volume, volume24h, liquidity, openInterest, resolvesAt, resolutionDateLabel, venueCount, routeType, venues, venueMarkets, marketType, outcomes, imageUrl, iconUrl, priceLabel, priceVenue, changeLabel };
   const outcomeRailOverflowClass = outcomesExpanded ? 'overflow-x-hidden overflow-y-auto custom-scrollbar' : 'overflow-hidden';
   const outcomeCount = outcomes?.length ?? 0;
   const multiCardMinHeightClass = outcomesExpanded ? 'min-h-[452px]' : 'h-[336px]';
@@ -3744,6 +3744,7 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
         ...terminalPayload,
         id: singleOutcome.marketId ?? terminalPayload.id,
         marketId: singleOutcome.marketId ?? terminalPayload.marketId,
+        canonicalMarketIds: singleOutcome.canonicalMarketIds ?? terminalPayload.canonicalMarketIds,
         eventId: singleOutcome.eventId ?? terminalPayload.eventId,
         canonicalEventId: singleOutcome.canonicalEventId ?? terminalPayload.canonicalEventId,
         title,
@@ -3949,6 +3950,7 @@ const MarketCard = ({ id, marketId, eventId, canonicalEventId, title, category, 
               ...terminalPayload,
               id: outcome.marketId ?? terminalPayload.id,
               marketId: outcome.marketId ?? terminalPayload.marketId,
+              canonicalMarketIds: outcome.canonicalMarketIds ?? terminalPayload.canonicalMarketIds,
               eventId: outcome.eventId ?? terminalPayload.eventId,
               canonicalEventId: outcome.canonicalEventId ?? terminalPayload.canonicalEventId,
               title,
