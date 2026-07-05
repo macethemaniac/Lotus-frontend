@@ -87,6 +87,11 @@ export const resolveVisibleSelectedOutcomeOrderbook = (input: {
   return input.current;
 };
 
+export const shouldResetExpandedOutcomeForMarketChange = (
+  previousMarketResetKey: string | null,
+  nextMarketResetKey: string,
+): boolean => previousMarketResetKey !== nextMarketResetKey;
+
 export const resolveOutcomeSummaryVenues = (
   livePrice: MarketLivePriceItem | null | undefined,
   fallbackVenues: readonly string[] = [],

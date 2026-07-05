@@ -18,6 +18,7 @@ import {
   resolveOutcomeSummaryVenues,
   resolveSelectedOutcomeDisplayValues,
   resolveVisibleSelectedOutcomeOrderbook,
+  shouldResetExpandedOutcomeForMarketChange,
   type TerminalOutcomeDisplayValues,
 } from '@/design/mockups/terminal-outcome-display';
 import { isTurnkeyProviderConfigured } from '@/app/turnkey-provider';
@@ -3367,6 +3368,7 @@ const InfraTradingTerminalInner = ({
   const orchestratorSignaturePromiseRef = React.useRef<Promise<ExecutionOrderResponse | null> | null>(null);
   const [localSelectedMarket, setLocalSelectedMarket] = useState<TerminalMarketSelection | null>(null);
   const executionOrchestratorEnabled = env.executionOrchestratorV1Enabled;
+  const terminalMarketResetKeyRef = React.useRef<string | null>(null);
 
   React.useEffect(() => {
     setLocalSelectedMarket(null);
@@ -3389,6 +3391,7 @@ const InfraTradingTerminalInner = ({
     routeType: marketType === 'binary' ? 'Pair' : 'Single',
     marketType,
   }, [activeEventMarket.category, activeEventMarket.icon, activeSelectedMarket, marketType]);
+  const terminalMarketResetKey = `${terminalMarketKey(terminalMarket)}:${terminalMarket.marketType ?? marketType}`;
   const selectorMarkets = useMemo(() => {
     const matchingEventMarkets = relatedMarkets.filter((market) => sameTerminalEvent(market, terminalMarket));
     const sourceMarkets = matchingEventMarkets.length > 0
@@ -4257,8 +4260,19 @@ const InfraTradingTerminalInner = ({
 
   React.useEffect(() => {
     setShowAllOutcomes(hasCompoundEventOutcomes);
+  }, [hasCompoundEventOutcomes]);
+
+  React.useEffect(() => {
+    const marketChanged = shouldResetExpandedOutcomeForMarketChange(
+      terminalMarketResetKeyRef.current,
+      terminalMarketResetKey,
+    );
+    terminalMarketResetKeyRef.current = terminalMarketResetKey;
+
     selectTerminalOutcome(terminalMarket.initialOutcomeId ?? null);
-    setExpandedOutcomeId(null);
+    if (marketChanged) {
+      setExpandedOutcomeId(null);
+    }
     setTicketOutcomeSide(terminalMarket.initialOutcomeSide ?? 'yes');
     setTicketAmount('');
     setTicketLiveCandidates(null);
@@ -4271,7 +4285,7 @@ const InfraTradingTerminalInner = ({
     setTicketOrchestratorAutoRenewFailed(false);
     setTicketStatusMessage(null);
     setTicketError(null);
-  }, [hasCompoundEventOutcomes, selectTerminalOutcome, terminalMarket.initialOutcomeId, terminalMarket.initialOutcomeSide, terminalMarketId]);
+  }, [selectTerminalOutcome, terminalMarket.initialOutcomeId, terminalMarket.initialOutcomeSide, terminalMarketResetKey]);
 
   const selectTicketOutcome = useCallback((nextSide: TicketOutcomeSide, fallbackOutcomeId?: string | null) => {
     setTicketOutcomeSide(nextSide);

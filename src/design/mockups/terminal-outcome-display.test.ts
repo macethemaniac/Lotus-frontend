@@ -7,6 +7,7 @@ import {
   resolveOutcomeSummaryVenues,
   resolveSelectedOutcomeDisplayValues,
   resolveVisibleSelectedOutcomeOrderbook,
+  shouldResetExpandedOutcomeForMarketChange,
   type TerminalOutcomeDisplayValues,
 } from './terminal-outcome-display';
 
@@ -260,6 +261,20 @@ describe('resolveVisibleSelectedOutcomeOrderbook', () => {
       nextReady: true,
       nextUsable: true,
     })).toEqual(nextReadyOrderbook);
+  });
+});
+
+describe('shouldResetExpandedOutcomeForMarketChange', () => {
+  it('resets the expanded outcome on the first market load', () => {
+    expect(shouldResetExpandedOutcomeForMarketChange(null, 'world-cup:multi')).toBe(true);
+  });
+
+  it('keeps the expanded outcome open when only the selected outcome seed changes inside the same market', () => {
+    expect(shouldResetExpandedOutcomeForMarketChange('world-cup:multi', 'world-cup:multi')).toBe(false);
+  });
+
+  it('resets the expanded outcome when the terminal switches to a different market context', () => {
+    expect(shouldResetExpandedOutcomeForMarketChange('world-cup:multi', 'france-election:binary')).toBe(true);
   });
 });
 
