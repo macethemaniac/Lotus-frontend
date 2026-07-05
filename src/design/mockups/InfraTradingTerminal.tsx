@@ -3523,12 +3523,12 @@ const InfraTradingTerminalInner = ({
   const visibleOutcomeRows = useMemo(() => {
     if (showAllOutcomes || quoteableTerminalOutcomes.length <= 5) return quoteableTerminalOutcomes;
     const defaultRows = quoteableTerminalOutcomes.slice(0, 5);
-    const pinnedOutcomeId = selectedOutcomeId ?? terminalMarket.initialOutcomeId ?? null;
+    const pinnedOutcomeId = expandedOutcomeId ?? selectedOutcomeId ?? terminalMarket.initialOutcomeId ?? null;
     if (!pinnedOutcomeId) return defaultRows;
     const pinnedIndex = quoteableTerminalOutcomes.findIndex((outcome) => outcome.id === pinnedOutcomeId);
     if (pinnedIndex < 0 || pinnedIndex < 5) return defaultRows;
     return [...quoteableTerminalOutcomes.slice(0, 4), quoteableTerminalOutcomes[pinnedIndex]!];
-  }, [quoteableTerminalOutcomes, selectedOutcomeId, showAllOutcomes, terminalMarket.initialOutcomeId]);
+  }, [expandedOutcomeId, quoteableTerminalOutcomes, selectedOutcomeId, showAllOutcomes, terminalMarket.initialOutcomeId]);
   const selectedOutcomeMarketId = selectedOutcome?.marketId ?? terminalMarketId;
   const selectedQuoteOutcomeId = selectedOutcome?.quoteOutcomeId ?? selectedOutcomeId;
   const selectedOutcomeRefreshKey = `${selectedOutcome?.id ?? 'none'}:${selectedOutcomeMarketId ?? 'none'}:${selectedQuoteOutcomeId ?? 'none'}`;
@@ -7355,11 +7355,11 @@ const InfraTradingTerminalInner = ({
                                             type="button"
                                             onClick={(event) => {
                                               event.stopPropagation();
-                                              setExpandedOutcomeId((current) => {
-                                                if (current === m.id) return null;
+                                              const nextExpandedOutcomeId = expandedOutcomeId === m.id ? null : m.id;
+                                              if (nextExpandedOutcomeId) {
                                                 selectTerminalOutcome(m.id);
-                                                return m.id;
-                                              });
+                                              }
+                                              setExpandedOutcomeId(nextExpandedOutcomeId);
                                             }}
                                             aria-label={`Open ${m.name} outcome details`}
                                             className="ml-1 flex h-8 w-8 items-center justify-center rounded-lg text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
