@@ -387,6 +387,8 @@ type TerminalOutcomeRow = {
   canonicalMarketIds: string[];
   quoteOutcomeId: string;
   name: string;
+  imageUrl?: string | null;
+  iconUrl?: string | null;
   vol: string;
   platforms: number;
   prob: string;
@@ -636,6 +638,8 @@ const terminalOutcomeSeedForEventMarket = (market: MarketCatalogMarket) => {
   return {
     id: marketId,
     label: terminalOutcomeNameForEventMarket(market),
+    imageUrl: market.imageUrl,
+    iconUrl: market.iconUrl,
     venues: tradableVenues,
     quoteReadyVenueCount: market.quoteReadyVenueCount,
     quoteReadyVenues: market.quoteReadyVenues,
@@ -804,7 +808,7 @@ const TerminalMarketThumb = ({
   const rawMediaUrl = imageUrl ?? iconUrl;
   React.useEffect(() => setFailed(false), [rawMediaUrl]);
   const mediaUrl = !failed ? rawMediaUrl : null;
-  const shouldUseOutcomeAvatar = !countryFlagEmoji && title.includes(':') && !outcomeMediaLooksSpecific(title, mediaUrl);
+  const shouldUseOutcomeAvatar = !mediaUrl && !countryFlagEmoji && title.includes(':') && !outcomeMediaLooksSpecific(title, mediaUrl);
   const outcomeInitials = outcomeAvatarInitials(title);
   const outcomePalette = outcomeAvatarPalette(title);
   const topicLogoId = resolveTopicAssetLogoId(title);
@@ -812,7 +816,16 @@ const TerminalMarketThumb = ({
 
   return (
     <span className={`flex shrink-0 items-center justify-center overflow-hidden rounded-full border border-amber-500/30 bg-amber-500/10 text-base ${className}`}>
-      {countryFlagEmoji ? (
+      {mediaUrl ? (
+        <img
+          src={mediaUrl}
+          alt=""
+          className="h-full w-full object-cover"
+          loading="lazy"
+          referrerPolicy="no-referrer"
+          onError={() => setFailed(true)}
+        />
+      ) : countryFlagEmoji ? (
         <span aria-hidden="true" className="flex h-full w-full items-center justify-center text-[1.35em] leading-none">
           {countryFlagEmoji}
         </span>
@@ -828,15 +841,6 @@ const TerminalMarketThumb = ({
         >
           {outcomeInitials}
         </span>
-      ) : mediaUrl ? (
-        <img
-          src={mediaUrl}
-          alt=""
-          className="h-full w-full object-cover"
-          loading="lazy"
-          referrerPolicy="no-referrer"
-          onError={() => setFailed(true)}
-        />
       ) : useTopicFallback ? (
         <CryptoLogo
           id={topicLogoId ?? title}
@@ -3899,12 +3903,18 @@ const InfraTradingTerminalInner = ({
           ?? market.outcomes?.[0]?.name
           ?? market.title,
         prob: market.priceLabel ?? market.outcomes?.find((outcome) => outcome.id === market.initialOutcomeId)?.prob ?? 'Quote',
+        imageUrl: market.outcomes?.find((outcome) => outcome.id === market.initialOutcomeId)?.imageUrl
+          ?? market.outcomes?.[0]?.imageUrl
+          ?? market.imageUrl,
+        iconUrl: market.outcomes?.find((outcome) => outcome.id === market.initialOutcomeId)?.iconUrl
+          ?? market.outcomes?.[0]?.iconUrl
+          ?? market.iconUrl,
         venues: market.venues,
         volume: null as string | null,
         volume24h: null as string | null,
       }))
       : [];
-    const fallbackRows = relatedEventOutcomeRows.length > 0
+      const fallbackRows = relatedEventOutcomeRows.length > 0
       ? relatedEventOutcomeRows.map((outcome, index): TerminalOutcomeRow => ({
         id: outcome.id,
         marketId: outcome.marketId,
@@ -3916,6 +3926,8 @@ const InfraTradingTerminalInner = ({
         ),
         quoteOutcomeId: outcome.quoteOutcomeId,
         name: outcome.name,
+        imageUrl: outcome.imageUrl,
+        iconUrl: outcome.iconUrl,
         vol: terminalMarket.volume,
         platforms: outcome.venues?.length ?? terminalMarket.venueCount,
         prob: outcome.prob,
@@ -3949,6 +3961,16 @@ const InfraTradingTerminalInner = ({
           : null);
         if (resolvedEventId) {
           eventMarketsResponse = await getEventMarkets(resolvedEventId);
+          if (eventMarketsResponse.imageUrl || eventMarketsResponse.iconUrl) {
+            setLocalSelectedMarket((current) => {
+              const source = current ?? terminalMarket;
+              return {
+                ...source,
+                imageUrl: eventMarketsResponse?.imageUrl ?? source.imageUrl,
+                iconUrl: eventMarketsResponse?.iconUrl ?? source.iconUrl,
+              };
+            });
+          }
         }
       }
       const seededOutcomes = fallbackRows.map((row) => ({
@@ -3958,6 +3980,8 @@ const InfraTradingTerminalInner = ({
         marketId: row.marketId,
         canonicalMarketIds: row.canonicalMarketIds,
         quoteOutcomeId: row.quoteOutcomeId,
+        imageUrl: row.imageUrl,
+        iconUrl: row.iconUrl,
         volume: null as string | null,
         volume24h: null as string | null,
       }));
@@ -3976,6 +4000,8 @@ const InfraTradingTerminalInner = ({
             marketId: terminalMarketId,
             canonicalMarketIds: canonicalIdsForTerminalOutcome(terminalMarketId, outcome.canonicalMarketIds ?? null, terminalMarket.canonicalMarketIds, outcomeResponse.outcomes.length),
             quoteOutcomeId: canonicalQuoteOutcomeId(outcome.label),
+            imageUrl: null as string | null,
+            iconUrl: null as string | null,
             volume: outcome.volume ?? null,
             volume24h: outcome.volume24h ?? null,
           }))
@@ -3998,6 +4024,8 @@ const InfraTradingTerminalInner = ({
           canonicalMarketIds,
           quoteOutcomeId,
           name: outcome.label,
+          imageUrl: outcome.imageUrl,
+          iconUrl: outcome.iconUrl,
           vol: outcomeVolume ? `${outcomeVolume} Vol.` : '',
           platforms: outcome.quoteReadyVenueCount ?? (venues.length || terminalMarket.venueCount),
           prob: '-',
@@ -6757,8 +6785,8 @@ const InfraTradingTerminalInner = ({
                                 venues: outcome.venues ?? market.venues,
                                 venueMarkets: outcome.venueMarkets ?? market.venueMarkets,
                                 marketType: outcome.marketType ?? market.marketType,
-                                imageUrl: outcome.imageUrl ?? market.imageUrl,
-                                iconUrl: outcome.iconUrl ?? market.iconUrl,
+                                imageUrl: market.imageUrl,
+                                iconUrl: market.iconUrl,
                                 priceLabel: outcome.prob ?? market.priceLabel,
                                 priceVenue: outcome.priceVenue ?? market.priceVenue,
                                 outcomes: market.outcomes,
@@ -7147,8 +7175,8 @@ const InfraTradingTerminalInner = ({
                                      <TerminalMarketThumb
                                        title={m.name}
                                        icon={terminalMarket.icon}
-                                       imageUrl={terminalMarket.imageUrl}
-                                       iconUrl={terminalMarket.iconUrl}
+                                       imageUrl={m.imageUrl ?? terminalMarket.imageUrl}
+                                       iconUrl={m.iconUrl ?? terminalMarket.iconUrl}
                                        className="h-12 w-12 rounded-lg"
                                      />
                                      <span className="min-w-0">

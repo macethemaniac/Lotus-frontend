@@ -387,7 +387,14 @@ export function listEvents(input: MarketListInput = {}) {
 }
 
 export function getEventMarkets(eventId: string) {
-  return apiRequest<{ eventId: string; title: string; markets: MarketCatalogMarket[]; count: number }>(
+  return apiRequest<{
+    eventId: string;
+    title: string;
+    imageUrl: string | null;
+    iconUrl: string | null;
+    markets: MarketCatalogMarket[];
+    count: number;
+  }>(
     `/events/${encodeURIComponent(eventId)}/markets`
   );
 }
