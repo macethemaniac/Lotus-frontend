@@ -7,6 +7,7 @@ import {
   resolveOutcomeSummaryVenueCount,
   resolveOutcomeSummaryVenues,
   resolveOutcomeSeedMedia,
+  resolveSelectedMarketSeedMedia,
   resolveInitialSelectedOutcomeId,
   resolveSelectedOutcomeOrderbookDisplaySource,
   resolveSelectedOutcomeDisplayValues,
@@ -227,6 +228,32 @@ describe('resolveOutcomeSeedMedia', () => {
     })).toEqual({
       imageUrl: 'https://cdn.example.com/events/world-cup.png',
       iconUrl: 'https://cdn.example.com/events/world-cup-icon.png',
+    });
+  });
+});
+
+describe('resolveSelectedMarketSeedMedia', () => {
+  it('prefers event or market media for the terminal header seed', () => {
+    expect(resolveSelectedMarketSeedMedia({
+      marketImageUrl: 'https://cdn.example.com/events/world-cup.png',
+      marketIconUrl: 'https://cdn.example.com/events/world-cup-icon.png',
+      outcomeImageUrl: 'https://cdn.example.com/outcomes/argentina.png',
+      outcomeIconUrl: 'https://cdn.example.com/outcomes/argentina-icon.png',
+    })).toEqual({
+      imageUrl: 'https://cdn.example.com/events/world-cup.png',
+      iconUrl: 'https://cdn.example.com/events/world-cup-icon.png',
+    });
+  });
+
+  it('falls back to outcome media when no event or market media exists', () => {
+    expect(resolveSelectedMarketSeedMedia({
+      marketImageUrl: null,
+      marketIconUrl: null,
+      outcomeImageUrl: 'https://cdn.example.com/outcomes/argentina.png',
+      outcomeIconUrl: 'https://cdn.example.com/outcomes/argentina-icon.png',
+    })).toEqual({
+      imageUrl: 'https://cdn.example.com/outcomes/argentina.png',
+      iconUrl: 'https://cdn.example.com/outcomes/argentina-icon.png',
     });
   });
 });

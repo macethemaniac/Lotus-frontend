@@ -144,6 +144,16 @@ export const resolveOutcomeSeedMedia = (input: {
   iconUrl: input.iconUrl ?? input.fallbackIconUrl ?? null,
 });
 
+export const resolveSelectedMarketSeedMedia = (input: {
+  marketImageUrl?: string | null;
+  marketIconUrl?: string | null;
+  outcomeImageUrl?: string | null;
+  outcomeIconUrl?: string | null;
+}): { imageUrl: string | null; iconUrl: string | null } => ({
+  imageUrl: input.marketImageUrl ?? input.outcomeImageUrl ?? null,
+  iconUrl: input.marketIconUrl ?? input.outcomeIconUrl ?? null,
+});
+
 export const resolveInitialSelectedOutcomeId = <T extends { id: string }>(
   initialOutcomeId: string | null | undefined,
   rows: readonly T[],

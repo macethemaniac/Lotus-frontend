@@ -18,6 +18,7 @@ import {
   resolveOutcomeSummaryVenueCount,
   resolveOutcomeSummaryVenues,
   resolveOutcomeSeedMedia,
+  resolveSelectedMarketSeedMedia,
   resolveInitialSelectedOutcomeId,
   resolveSelectedOutcomeOrderbookDisplaySource,
   resolveSelectedOutcomeDisplayValues,
@@ -7001,6 +7002,12 @@ const InfraTradingTerminalInner = ({
                               outcome: NonNullable<TerminalMarketSelection['outcomes']>[number],
                               side: TicketOutcomeSide,
                             ) => {
+                              const headerSeedMedia = resolveSelectedMarketSeedMedia({
+                                marketImageUrl: market.imageUrl,
+                                marketIconUrl: market.iconUrl,
+                                outcomeImageUrl: outcome.imageUrl,
+                                outcomeIconUrl: outcome.iconUrl,
+                              });
                               setMarketType(outcome.marketType ?? market.marketType ?? marketType);
                               setLocalSelectedMarket({
                                 ...market,
@@ -7013,8 +7020,8 @@ const InfraTradingTerminalInner = ({
                                 venues: outcome.venues ?? market.venues,
                                 venueMarkets: outcome.venueMarkets ?? market.venueMarkets,
                                 marketType: outcome.marketType ?? market.marketType,
-                                imageUrl: outcome.imageUrl ?? market.imageUrl,
-                                iconUrl: outcome.iconUrl ?? market.iconUrl,
+                                imageUrl: headerSeedMedia.imageUrl,
+                                iconUrl: headerSeedMedia.iconUrl,
                                 priceLabel: outcome.prob ?? market.priceLabel,
                                 priceVenue: outcome.priceVenue ?? market.priceVenue,
                                 outcomes: market.outcomes,

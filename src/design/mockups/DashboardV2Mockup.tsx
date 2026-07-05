@@ -8,6 +8,7 @@ import { InfraTradingTerminal, type TerminalMarketSelection } from '@/design/moc
 import { PortfolioMockupV2 } from '@/design/mockups/PortfolioMockupV2';
 import { FundingDeposit } from '@/design/mockups/FundingDeposit';
 import { resolveDashboardCardMedia, shouldPreferDashboardEventMedia } from '@/design/mockups/dashboard-market-media';
+import { resolveSelectedMarketSeedMedia } from '@/design/mockups/terminal-outcome-display';
 import { isTurnkeyProviderConfigured } from '@/app/turnkey-provider';
 import type { AuthSession } from '@/features/auth/types';
 import {
@@ -3949,8 +3950,12 @@ const MarketCard = ({ id, marketId, canonicalMarketIds, eventId, canonicalEventI
         venues: singleOutcome.venues ?? terminalPayload.venues,
         venueMarkets: singleOutcome.venueMarkets ?? terminalPayload.venueMarkets,
         marketType: singleOutcome.marketType ?? terminalPayload.marketType,
-        imageUrl: singleOutcome.imageUrl ?? terminalPayload.imageUrl,
-        iconUrl: singleOutcome.iconUrl ?? terminalPayload.iconUrl,
+        ...resolveSelectedMarketSeedMedia({
+          marketImageUrl: terminalPayload.imageUrl,
+          marketIconUrl: terminalPayload.iconUrl,
+          outcomeImageUrl: singleOutcome.imageUrl,
+          outcomeIconUrl: singleOutcome.iconUrl,
+        }),
         priceLabel: singleOutcome.prob ?? terminalPayload.priceLabel,
         priceVenue: singleOutcome.priceVenue ?? terminalPayload.priceVenue,
         outcomes,
@@ -4155,8 +4160,12 @@ const MarketCard = ({ id, marketId, canonicalMarketIds, eventId, canonicalEventI
               venues: outcome.venues ?? terminalPayload.venues,
               venueMarkets: outcome.venueMarkets ?? terminalPayload.venueMarkets,
               marketType: outcome.marketType ?? terminalPayload.marketType,
-              imageUrl: outcome.imageUrl ?? terminalPayload.imageUrl,
-              iconUrl: outcome.iconUrl ?? terminalPayload.iconUrl,
+              ...resolveSelectedMarketSeedMedia({
+                marketImageUrl: terminalPayload.imageUrl,
+                marketIconUrl: terminalPayload.iconUrl,
+                outcomeImageUrl: outcome.imageUrl,
+                outcomeIconUrl: outcome.iconUrl,
+              }),
               priceLabel: outcome.prob ?? terminalPayload.priceLabel,
               priceVenue: outcome.priceVenue ?? terminalPayload.priceVenue,
               outcomes,
