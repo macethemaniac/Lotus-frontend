@@ -681,6 +681,40 @@ const readableQuoteBlocker = (reason: string | null | undefined): string | null 
   return reason.replace(/[_-]+/g, ' ').toLowerCase();
 };
 
+const COUNTRY_FLAG_EMOJI_BY_NAME: Record<string, string> = {
+  argentina: '🇦🇷',
+  belgium: '🇧🇪',
+  brazil: '🇧🇷',
+  croatia: '🇭🇷',
+  england: '🏴',
+  france: '🇫🇷',
+  germany: '🇩🇪',
+  mexico: '🇲🇽',
+  netherlands: '🇳🇱',
+  portugal: '🇵🇹',
+  spain: '🇪🇸',
+  unitedstates: '🇺🇸',
+  usa: '🇺🇸',
+  uruguay: '🇺🇾',
+};
+
+const normalizeCountryFlagKey = (value: string): string =>
+  value.toLowerCase().replace(/[^a-z]/g, '');
+
+const countryFlagEmojiForTitle = (title: string): string | null => {
+  const trimmed = title.trim();
+  if (!trimmed) return null;
+  const suffix = trimmed.match(/:\s*(.+)$/)?.[1]?.trim() ?? null;
+  const candidates = [suffix, trimmed]
+    .filter((value): value is string => Boolean(value))
+    .map(normalizeCountryFlagKey);
+  for (const candidate of candidates) {
+    const emoji = COUNTRY_FLAG_EMOJI_BY_NAME[candidate];
+    if (emoji) return emoji;
+  }
+  return null;
+};
+
 const TerminalMarketThumb = ({
   title,
   icon,
@@ -695,6 +729,7 @@ const TerminalMarketThumb = ({
   className?: string;
 }) => {
   const [failed, setFailed] = useState(false);
+  const countryFlagEmoji = countryFlagEmojiForTitle(title);
   const rawMediaUrl = imageUrl ?? iconUrl;
   React.useEffect(() => setFailed(false), [rawMediaUrl]);
   const mediaUrl = !failed ? rawMediaUrl : null;
@@ -703,7 +738,11 @@ const TerminalMarketThumb = ({
 
   return (
     <span className={`flex shrink-0 items-center justify-center overflow-hidden rounded-full border border-amber-500/30 bg-amber-500/10 text-base ${className}`}>
-      {mediaUrl ? (
+      {countryFlagEmoji ? (
+        <span aria-hidden="true" className="flex h-full w-full items-center justify-center text-[1.35em] leading-none">
+          {countryFlagEmoji}
+        </span>
+      ) : mediaUrl ? (
         <img
           src={mediaUrl}
           alt=""
@@ -3496,11 +3535,13 @@ const InfraTradingTerminalInner = ({
       ? rawDisplayOrderbook?.status ?? 'pending'
       : 'updating';
   const unavailableOrderbookVenueRows = useMemo(() => {
-    if (!marketDiagnosticsEnabled) return [];
     const rows = new Map<string, { venue: string; reason: string; status: 'syncing' | 'unavailable' }>();
+    const expectedVenues = selectedOutcome?.venues?.length ? selectedOutcome.venues : marketVenueList;
+    const coveredVenues = new Set<string>((rawDisplayOrderbook?.venues ?? []).map((venue) => toBackendVenueId(venue.venue)));
     for (const blocker of rawDisplayOrderbook?.blockers ?? []) {
       const backendVenue = toBackendVenueId(blocker.venue);
       if (backendVenue === 'LOTUS' || backendVenue === 'UNKNOWN') continue;
+      coveredVenues.add(backendVenue);
       const preferredReason = typeof blocker.reason === 'string' && blocker.reason.trim()
         ? blocker.reason
         : typeof blocker.detailsCode === 'string' && !isIsoTimestampLike(blocker.detailsCode)
@@ -3509,10 +3550,15 @@ const InfraTradingTerminalInner = ({
       const fallbackReason = typeof blocker.detailsCode === 'string' && !isIsoTimestampLike(blocker.detailsCode)
         ? blocker.detailsCode
         : blocker.reason;
-      const normalizedReason = readableQuoteBlocker(preferredReason) ?? readableQuoteBlocker(fallbackReason) ?? 'Venue quote unavailable';
+      const readableReason = readableQuoteBlocker(preferredReason) ?? readableQuoteBlocker(fallbackReason);
       const status = /LIVE_ORDERBOOK_REQUIRED|QUOTE_SNAPSHOT/i.test(`${blocker.reason ?? ''} ${blocker.detailsCode ?? ''}`)
         ? 'syncing'
         : 'unavailable';
+      const normalizedReason = marketDiagnosticsEnabled
+        ? (readableReason ?? 'Venue quote unavailable')
+        : status === 'syncing'
+          ? 'Updating live prices'
+          : 'Venue quote unavailable';
       const key = `${backendVenue}:${normalizedReason}`;
       rows.set(key, {
         venue: blocker.venue,
@@ -3520,8 +3566,18 @@ const InfraTradingTerminalInner = ({
         status,
       });
     }
+    for (const venue of expectedVenues) {
+      const backendVenue = toBackendVenueId(venue);
+      if (backendVenue === 'UNKNOWN' || coveredVenues.has(backendVenue)) continue;
+      const reason = marketDiagnosticsEnabled ? 'Quote snapshot syncing' : 'Updating live prices';
+      rows.set(`${backendVenue}:${reason}`, {
+        venue,
+        reason,
+        status: 'syncing',
+      });
+    }
     return [...rows.values()];
-  }, [marketDiagnosticsEnabled, rawDisplayOrderbook?.blockers]);
+  }, [marketDiagnosticsEnabled, marketVenueList, rawDisplayOrderbook?.blockers, rawDisplayOrderbook?.venues, selectedOutcome?.venues]);
   const selectedOutcomeSyncingVenueCount = useMemo(
     () => unavailableOrderbookVenueRows.filter((row) => row.status === 'syncing').length,
     [unavailableOrderbookVenueRows],
