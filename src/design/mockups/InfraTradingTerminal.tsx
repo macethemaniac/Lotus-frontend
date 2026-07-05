@@ -1368,6 +1368,20 @@ const normalizeTerminalDisplayValue = (value: string | null | undefined): string
   return trimmed;
 };
 
+const compareOutcomeRowsByProbability = (
+  left: Pick<TerminalOutcomeRow, 'name' | 'prob'>,
+  right: Pick<TerminalOutcomeRow, 'name' | 'prob'>,
+): number => {
+  const leftProbability = parseProbabilityLabel(normalizeTerminalDisplayValue(left.prob));
+  const rightProbability = parseProbabilityLabel(normalizeTerminalDisplayValue(right.prob));
+  if (leftProbability !== null && rightProbability !== null && leftProbability !== rightProbability) {
+    return rightProbability - leftProbability;
+  }
+  if (leftProbability !== null) return -1;
+  if (rightProbability !== null) return 1;
+  return left.name.localeCompare(right.name);
+};
+
 const streamStatusLabel = (
   status: MarketOrderbookStreamPayload['snapshotStatus'] | undefined,
   diagnosticsEnabled = lotusMarketDiagnosticsEnabled()
@@ -3461,16 +3475,20 @@ const InfraTradingTerminalInner = ({
     const activation = fundingActivations.find((item) => toBackendVenueId(item.venue) === 'POLYMARKET');
     return String(activation?.readinessReason ?? '').toUpperCase() === 'POLYMARKET_CLOB_SYNC_PENDING';
   }, [backendVenueList, fundingActivations, polymarketClobConfirmed]);
-  const selectedOutcome = terminalOutcomes.find((outcome) => outcome.id === selectedOutcomeId) ?? terminalOutcomes[0] ?? null;
+  const sortedTerminalOutcomes = useMemo(
+    () => [...terminalOutcomes].sort(compareOutcomeRowsByProbability),
+    [terminalOutcomes],
+  );
+  const selectedOutcome = terminalOutcomes.find((outcome) => outcome.id === selectedOutcomeId) ?? sortedTerminalOutcomes[0] ?? null;
   const visibleOutcomeRows = useMemo(() => {
-    if (showAllOutcomes || terminalOutcomes.length <= 5) return terminalOutcomes;
-    const defaultRows = terminalOutcomes.slice(0, 5);
+    if (showAllOutcomes || sortedTerminalOutcomes.length <= 5) return sortedTerminalOutcomes;
+    const defaultRows = sortedTerminalOutcomes.slice(0, 5);
     const pinnedOutcomeId = selectedOutcomeId ?? terminalMarket.initialOutcomeId ?? null;
     if (!pinnedOutcomeId) return defaultRows;
-    const pinnedIndex = terminalOutcomes.findIndex((outcome) => outcome.id === pinnedOutcomeId);
+    const pinnedIndex = sortedTerminalOutcomes.findIndex((outcome) => outcome.id === pinnedOutcomeId);
     if (pinnedIndex < 0 || pinnedIndex < 5) return defaultRows;
-    return [...terminalOutcomes.slice(0, 4), terminalOutcomes[pinnedIndex]!];
-  }, [selectedOutcomeId, showAllOutcomes, terminalMarket.initialOutcomeId, terminalOutcomes]);
+    return [...sortedTerminalOutcomes.slice(0, 4), sortedTerminalOutcomes[pinnedIndex]!];
+  }, [selectedOutcomeId, showAllOutcomes, sortedTerminalOutcomes, terminalMarket.initialOutcomeId]);
   const selectedOutcomeMarketId = selectedOutcome?.marketId ?? terminalMarketId;
   const selectedQuoteOutcomeId = selectedOutcome?.quoteOutcomeId ?? selectedOutcomeId;
   const selectedOutcomeRefreshKey = `${selectedOutcome?.id ?? 'none'}:${selectedOutcomeMarketId ?? 'none'}:${selectedQuoteOutcomeId ?? 'none'}`;
