@@ -6,6 +6,8 @@ import {
   orderSelectedOutcomeVisibleVenues,
   resolveOutcomeSummaryVenueCount,
   resolveOutcomeSummaryVenues,
+  resolveOutcomeSeedMedia,
+  resolveInitialSelectedOutcomeId,
   resolveSelectedOutcomeOrderbookDisplaySource,
   resolveSelectedOutcomeDisplayValues,
   resolveVisibleSelectedOutcomeOrderbook,
@@ -202,6 +204,47 @@ describe('resolveSelectedOutcomeDisplayValues', () => {
       },
       liveReady: false,
     })).toEqual(live);
+  });
+});
+
+describe('resolveOutcomeSeedMedia', () => {
+  it('prefers outcome-specific media but falls back to market media when missing', () => {
+    expect(resolveOutcomeSeedMedia({
+      imageUrl: 'https://cdn.example.com/outcomes/france.png',
+      iconUrl: 'https://cdn.example.com/outcomes/france-icon.png',
+      fallbackImageUrl: 'https://cdn.example.com/events/world-cup.png',
+      fallbackIconUrl: 'https://cdn.example.com/events/world-cup-icon.png',
+    })).toEqual({
+      imageUrl: 'https://cdn.example.com/outcomes/france.png',
+      iconUrl: 'https://cdn.example.com/outcomes/france-icon.png',
+    });
+
+    expect(resolveOutcomeSeedMedia({
+      imageUrl: null,
+      iconUrl: null,
+      fallbackImageUrl: 'https://cdn.example.com/events/world-cup.png',
+      fallbackIconUrl: 'https://cdn.example.com/events/world-cup-icon.png',
+    })).toEqual({
+      imageUrl: 'https://cdn.example.com/events/world-cup.png',
+      iconUrl: 'https://cdn.example.com/events/world-cup-icon.png',
+    });
+  });
+});
+
+describe('resolveInitialSelectedOutcomeId', () => {
+  it('pins the requested outcome when it exists in the next seed rows', () => {
+    expect(resolveInitialSelectedOutcomeId('france', [
+      { id: 'argentina' },
+      { id: 'france' },
+    ])).toBe('france');
+  });
+
+  it('falls back to the first current-market outcome when the requested row is unavailable', () => {
+    expect(resolveInitialSelectedOutcomeId('france', [
+      { id: 'argentina' },
+      { id: 'brazil' },
+    ])).toBe('argentina');
+    expect(resolveInitialSelectedOutcomeId(null, [])).toBeNull();
   });
 });
 

@@ -134,6 +134,26 @@ export const shouldResetExpandedOutcomeForMarketChange = (
   nextMarketResetKey: string,
 ): boolean => previousMarketResetKey !== nextMarketResetKey;
 
+export const resolveOutcomeSeedMedia = (input: {
+  imageUrl?: string | null;
+  iconUrl?: string | null;
+  fallbackImageUrl?: string | null;
+  fallbackIconUrl?: string | null;
+}): { imageUrl: string | null; iconUrl: string | null } => ({
+  imageUrl: input.imageUrl ?? input.fallbackImageUrl ?? null,
+  iconUrl: input.iconUrl ?? input.fallbackIconUrl ?? null,
+});
+
+export const resolveInitialSelectedOutcomeId = <T extends { id: string }>(
+  initialOutcomeId: string | null | undefined,
+  rows: readonly T[],
+): string | null => {
+  if (initialOutcomeId && rows.some((row) => row.id === initialOutcomeId)) {
+    return initialOutcomeId;
+  }
+  return rows[0]?.id ?? null;
+};
+
 export const resolveOutcomeSummaryVenues = (
   livePrice: MarketLivePriceItem | null | undefined,
   fallbackVenues: readonly string[] = [],
