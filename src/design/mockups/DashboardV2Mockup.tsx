@@ -226,8 +226,15 @@ const dashboardVenueIconId = (venue: string): string => {
 const dashboardEventMediaKey = (market: Pick<DashboardMarketRow, 'eventId' | 'canonicalEventId'>): string | null =>
   market.eventId ?? market.canonicalEventId ?? null;
 
+const isGenericBinaryOutcomeLabel = (value: string | null | undefined): boolean => {
+  const normalized = normalizeOutcomeId(value ?? '');
+  return normalized === 'YES' || normalized === 'NO' || normalized === 'UP' || normalized === 'DOWN';
+};
+
 const shouldPreferEventMedia = (market: Pick<DashboardMarketRow, 'marketType' | 'outcomes'>): boolean =>
-  market.marketType === 'multi' || (market.outcomes?.length ?? 0) > 1;
+  market.marketType === 'multi'
+  || (market.outcomes?.length ?? 0) > 1
+  || ((market.outcomes?.length ?? 0) === 1 && !isGenericBinaryOutcomeLabel(market.outcomes?.[0]?.name));
 
 const normalizeOutcomeId = (value: string): string => value.trim().toUpperCase().replace(/\s+/g, '_');
 
