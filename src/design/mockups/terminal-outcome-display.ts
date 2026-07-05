@@ -87,6 +87,11 @@ export const resolveVisibleSelectedOutcomeOrderbook = (input: {
   return input.current;
 };
 
+export const resolveSelectedOutcomeOrderbookDisplaySource = (input: {
+  live: MarketOrderbookResponse | null;
+  visible: MarketOrderbookResponse | null;
+}): MarketOrderbookResponse | null => input.live ?? input.visible;
+
 export const shouldResetExpandedOutcomeForMarketChange = (
   previousMarketResetKey: string | null,
   nextMarketResetKey: string,

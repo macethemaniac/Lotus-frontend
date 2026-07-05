@@ -5,6 +5,7 @@ import {
   isSelectedOutcomeBookReady,
   resolveOutcomeSummaryVenueCount,
   resolveOutcomeSummaryVenues,
+  resolveSelectedOutcomeOrderbookDisplaySource,
   resolveSelectedOutcomeDisplayValues,
   resolveVisibleSelectedOutcomeOrderbook,
   shouldResetExpandedOutcomeForMarketChange,
@@ -261,6 +262,45 @@ describe('resolveVisibleSelectedOutcomeOrderbook', () => {
       nextReady: true,
       nextUsable: true,
     })).toEqual(nextReadyOrderbook);
+  });
+});
+
+describe('resolveSelectedOutcomeOrderbookDisplaySource', () => {
+  const visibleOrderbook = {
+    marketId: 'market-1',
+    outcomeId: 'YES',
+    generatedAt: new Date().toISOString(),
+    depth: 20,
+    venues: [],
+    bids: [{ venue: 'LIMITLESS', price: '0.17', size: '100' }],
+    asks: [{ venue: 'POLYMARKET', price: '0.18', size: '100' }],
+    bestBid: '0.17',
+    bestAsk: '0.18',
+    midpoint: '0.175',
+    spread: '0.01',
+    status: 'live' as const,
+    blockers: [],
+    stream: null,
+  };
+
+  it('prefers the latest live orderbook over the last visible snapshot', () => {
+    const liveOrderbook = {
+      ...visibleOrderbook,
+      bestBid: '0.18',
+      bestAsk: '0.19',
+      midpoint: '0.185',
+    };
+    expect(resolveSelectedOutcomeOrderbookDisplaySource({
+      live: liveOrderbook,
+      visible: visibleOrderbook,
+    })).toEqual(liveOrderbook);
+  });
+
+  it('falls back to the visible snapshot while the live orderbook is unavailable', () => {
+    expect(resolveSelectedOutcomeOrderbookDisplaySource({
+      live: null,
+      visible: visibleOrderbook,
+    })).toEqual(visibleOrderbook);
   });
 });
 

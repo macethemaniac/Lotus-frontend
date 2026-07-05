@@ -16,6 +16,7 @@ import {
   isSelectedOutcomeBookUsable,
   resolveOutcomeSummaryVenueCount,
   resolveOutcomeSummaryVenues,
+  resolveSelectedOutcomeOrderbookDisplaySource,
   resolveSelectedOutcomeDisplayValues,
   resolveVisibleSelectedOutcomeOrderbook,
   shouldResetExpandedOutcomeForMarketChange,
@@ -3806,7 +3807,10 @@ const InfraTradingTerminalInner = ({
     selectedOutcomeSyncingVenueCount,
   ]);
   const selectedOutcomeBookDisplay = useMemo(() => {
-    const sourceOrderbook = visibleSelectedOutcomeOrderbook ?? orderbook;
+    const sourceOrderbook = resolveSelectedOutcomeOrderbookDisplaySource({
+      live: orderbook,
+      visible: visibleSelectedOutcomeOrderbook,
+    });
     if (!sourceOrderbook) {
       return {
         yesPrice: null as string | null,
