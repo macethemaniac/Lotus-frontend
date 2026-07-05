@@ -2490,6 +2490,12 @@ const buildTerminalFallbackRows = (input: {
   marketVenueList: string[];
 }): TerminalOutcomeRow[] => {
   const { hasCompoundEventOutcomes, relatedEventMarkets, terminalMarket, terminalMarketId, marketVenueList } = input;
+  if ((terminalMarket.outcomes?.length ?? 0) > 0) {
+    return initialOutcomeRows({
+      ...terminalMarket,
+      venues: terminalMarket.venues?.length ? terminalMarket.venues : marketVenueList,
+    });
+  }
   const relatedEventOutcomeRows = hasCompoundEventOutcomes
     ? relatedEventMarkets.map((market) => {
         const marketId = executionMarketId(market) ?? market.canonicalMarketIds?.[0] ?? market.id ?? market.title;
@@ -2536,10 +2542,6 @@ const buildTerminalFallbackRows = (input: {
       status: 'pending',
       blocker: null,
     }));
-  }
-
-  if (!terminalMarketId) {
-    return initialOutcomeRows(terminalMarket);
   }
 
   return initialOutcomeRows({
