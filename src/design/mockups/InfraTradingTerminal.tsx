@@ -647,6 +647,9 @@ const terminalOutcomeSeedForEventMarket = (market: MarketCatalogMarket) => {
   };
 };
 
+const isUnresolvedCatalogMarket = (market: Pick<MarketCatalogMarket, 'status'>): boolean =>
+  market.status === 'OPEN' || market.status === 'RESOLVING';
+
 const outcomePriceLabel = (market: TerminalMarketSelection, outcomeId: string, fallback: string): string => {
   const outcome = market.outcomes?.find((item) => item.id.toUpperCase() === outcomeId || item.name.toUpperCase() === outcomeId);
   return outcome?.prob && outcome.prob !== 'Quote' ? outcome.prob : fallback;
@@ -3376,7 +3379,7 @@ const InfraTradingTerminalInner = ({
     return Array.from(byKey.values());
   }, [relatedMarkets, terminalMarket]);
   const relatedEventMarkets = useMemo(
-    () => relatedMarkets.filter((market) => sameTerminalEvent(market, terminalMarket)),
+    () => relatedMarkets.filter((market) => sameTerminalEvent(market, terminalMarket) && isUnresolvedCatalogMarket(market)),
     [relatedMarkets, terminalMarket],
   );
   const hasCompoundEventOutcomes = terminalMarket.marketType === 'multi'
@@ -3966,8 +3969,9 @@ const InfraTradingTerminalInner = ({
       }));
       const shouldFetchCanonicalOutcomes = !seededEventOutcomes && !hasCompoundEventOutcomes;
       const outcomeResponse = shouldFetchCanonicalOutcomes ? await getMarketOutcomes(terminalMarketId) : null;
-      const baseOutcomes = eventMarketsResponse && eventMarketsResponse.markets.length > 0
-        ? eventMarketsResponse.markets.map(terminalOutcomeSeedForEventMarket)
+      const unresolvedEventMarkets = eventMarketsResponse?.markets.filter(isUnresolvedCatalogMarket) ?? [];
+      const baseOutcomes = unresolvedEventMarkets.length > 0
+        ? unresolvedEventMarkets.map(terminalOutcomeSeedForEventMarket)
         : seededEventOutcomes
         ? seededOutcomes
         : outcomeResponse && outcomeResponse.outcomes.length > 0
