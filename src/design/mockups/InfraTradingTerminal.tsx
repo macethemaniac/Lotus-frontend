@@ -3544,7 +3544,9 @@ const InfraTradingTerminalInner = ({
   React.useEffect(() => {
     selectedOutcomeIdRef.current = selectedOutcomeId;
   }, [selectedOutcomeId]);
-  const orderbookActive = Boolean(selectedOutcome && expandedOutcomeId === selectedOutcome.id);
+  // Keep the selected outcome's orderbook warm even while collapsed so the row can
+  // render the same venue set/count immediately instead of only after expansion.
+  const orderbookActive = Boolean(selectedOutcome);
   const orderbookMarketId = orderbookActive ? selectedOutcomeMarketId ?? terminalMarketId : null;
   const orderbookSideLabel = ticketOutcomeSide === 'no' ? 'No' : 'Yes';
   const orderbookQuoteOutcomeId = orderbookActive
