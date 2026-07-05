@@ -7,6 +7,7 @@ import { CryptoLogo, VenueLogo, resolveTopicAssetLogoId } from '@/components/ico
 import { InfraTradingTerminal, type TerminalMarketSelection } from '@/design/mockups/InfraTradingTerminal';
 import { PortfolioMockupV2 } from '@/design/mockups/PortfolioMockupV2';
 import { FundingDeposit } from '@/design/mockups/FundingDeposit';
+import { resolveDashboardCardMedia, shouldPreferDashboardEventMedia } from '@/design/mockups/dashboard-market-media';
 import { isTurnkeyProviderConfigured } from '@/app/turnkey-provider';
 import type { AuthSession } from '@/features/auth/types';
 import {
@@ -226,15 +227,8 @@ const dashboardVenueIconId = (venue: string): string => {
 const dashboardEventMediaKey = (market: Pick<DashboardMarketRow, 'eventId' | 'canonicalEventId'>): string | null =>
   market.eventId ?? market.canonicalEventId ?? null;
 
-const isGenericBinaryOutcomeLabel = (value: string | null | undefined): boolean => {
-  const normalized = normalizeOutcomeId(value ?? '');
-  return normalized === 'YES' || normalized === 'NO' || normalized === 'UP' || normalized === 'DOWN';
-};
-
 const shouldPreferEventMedia = (market: Pick<DashboardMarketRow, 'marketType' | 'outcomes'>): boolean =>
-  market.marketType === 'multi'
-  || (market.outcomes?.length ?? 0) > 1
-  || ((market.outcomes?.length ?? 0) === 1 && !isGenericBinaryOutcomeLabel(market.outcomes?.[0]?.name));
+  shouldPreferDashboardEventMedia(market);
 
 const normalizeOutcomeId = (value: string): string => value.trim().toUpperCase().replace(/\s+/g, '_');
 
@@ -964,6 +958,12 @@ const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardM
       if (rightIndex === -1) return -1;
       return leftIndex - rightIndex;
     });
+  const cardMedia = resolveDashboardCardMedia({
+    marketType: market.outcomeCount > 2 ? 'multi' : 'binary',
+    outcomes: outcomeRows,
+    catalogImageUrl: getSafeMediaUrl(market.imageUrl),
+    catalogIconUrl: getSafeMediaUrl(market.iconUrl),
+  });
 
   return {
     id: marketId,
@@ -990,8 +990,8 @@ const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardM
     outcomes: outcomeRows.length > 0
       ? outcomeRows
       : [{ id: 'OUTCOMES', marketId, canonicalMarketIds: market.canonicalMarketIds, eventId: market.eventId ?? market.canonicalEventId, canonicalEventId: market.canonicalEventId, quoteOutcomeId: 'OUTCOMES', name: 'Outcomes load in terminal', prob: pendingPricePlaceholder(), liveStatus: 'not_requested' }],
-    imageUrl: getSafeMediaUrl(market.imageUrl),
-    iconUrl: getSafeMediaUrl(market.iconUrl),
+    imageUrl: cardMedia.imageUrl,
+    iconUrl: cardMedia.iconUrl,
     priceLabel: diagnosticsEnabled ? marketQuoteStatusPriceLabel(quoteStatus, diagnosticsEnabled) : '-',
     priceVenue: null,
     changeLabel: diagnosticsEnabled ? quoteReadinessLabel : '',
@@ -1121,6 +1121,63 @@ const mapCatalogMarketsToDashboardRows = (markets: MarketCatalogMarket[]): Dashb
       fallbackLabel: diagnosticsEnabled ? quoteReadinessLabel : '-',
       fallbackMode: quoteStatus === 'unavailable' && diagnosticsEnabled ? 'blocker' : base.fallbackMode,
       quoteRequired: diagnosticsEnabled && quoteStatus === 'unavailable',
+    };
+  });
+};
+
+const resolveDashboardRowsEventMedia = async (
+  rows: DashboardMarketRow[],
+  mediaCache: Map<string, { imageUrl: string | null; iconUrl: string | null }>,
+): Promise<DashboardMarketRow[]> => {
+  const pendingEventIds = Array.from(new Set(
+    rows
+      .filter(shouldPreferEventMedia)
+      .map(dashboardEventMediaKey)
+      .filter((eventId): eventId is string => typeof eventId === 'string' && eventId.length > 0)
+      .filter((eventId) => !mediaCache.has(eventId))
+  ));
+
+  if (pendingEventIds.length > 0) {
+    const resolvedMedia = await Promise.all(
+      pendingEventIds.map(async (eventId) => {
+        try {
+          const response = await getEventMarkets(eventId);
+          const media = {
+            imageUrl: getSafeMediaUrl(response.imageUrl),
+            iconUrl: getSafeMediaUrl(response.iconUrl),
+          };
+          mediaCache.set(eventId, media);
+          return { eventId, media };
+        } catch {
+          return { eventId, media: { imageUrl: null, iconUrl: null } };
+        }
+      })
+    );
+
+    resolvedMedia.forEach(({ eventId, media }) => {
+      if (media.imageUrl || media.iconUrl) {
+        mediaCache.set(eventId, media);
+      }
+    });
+  }
+
+  return rows.map((market) => {
+    if (!shouldPreferEventMedia(market)) return market;
+    const eventId = dashboardEventMediaKey(market);
+    const eventMedia = eventId ? mediaCache.get(eventId) : undefined;
+    const cardMedia = resolveDashboardCardMedia({
+      marketType: market.marketType,
+      outcomes: market.outcomes,
+      catalogImageUrl: market.imageUrl,
+      catalogIconUrl: market.iconUrl,
+      eventImageUrl: eventMedia?.imageUrl,
+      eventIconUrl: eventMedia?.iconUrl,
+    });
+    if (cardMedia.imageUrl === market.imageUrl && cardMedia.iconUrl === market.iconUrl) return market;
+    return {
+      ...market,
+      imageUrl: cardMedia.imageUrl,
+      iconUrl: cardMedia.iconUrl,
     };
   });
 };
@@ -1725,9 +1782,12 @@ export const DashboardV2Mockup = ({
         routeCoverage: 'all',
         view: 'compact',
       })
-        .then((response) => {
+        .then(async (response) => {
           if (cancelled) return;
-          setMarketRows(mapCatalogMarketsToDashboardRows(response.markets));
+          const mappedRows = mapCatalogMarketsToDashboardRows(response.markets);
+          const hydratedRows = await resolveDashboardRowsEventMedia(mappedRows, marketEventMediaCacheRef.current);
+          if (cancelled) return;
+          setMarketRows(hydratedRows);
           setMarketNextCursor(response.nextCursor ?? null);
           setMarketsHasMore(Boolean(response.hasMore));
         })
@@ -1763,7 +1823,10 @@ export const DashboardV2Mockup = ({
         routeCoverage: 'all',
         view: 'compact',
       });
-      const nextRows = mapCatalogMarketsToDashboardRows(response.markets);
+      const nextRows = await resolveDashboardRowsEventMedia(
+        mapCatalogMarketsToDashboardRows(response.markets),
+        marketEventMediaCacheRef.current,
+      );
       setMarketRows((current) => {
         const byId = new Map(current.map((market) => [market.id, market]));
         for (const row of nextRows) byId.set(row.id, row);
@@ -1932,8 +1995,7 @@ export const DashboardV2Mockup = ({
           marketEventMediaCacheRef.current.set(eventId, media);
           return { eventId, media };
         } catch {
-          marketEventMediaCacheRef.current.set(eventId, { imageUrl: null, iconUrl: null });
-          return null;
+          return { eventId, media: { imageUrl: null, iconUrl: null } };
         }
       })
     ).then((results) => {
@@ -1941,6 +2003,7 @@ export const DashboardV2Mockup = ({
       const resolvedMedia = new Map(
         results
           .filter((item): item is { eventId: string; media: { imageUrl: string | null; iconUrl: string | null } } => Boolean(item))
+          .filter((item) => item.media.imageUrl || item.media.iconUrl)
           .map((item) => [item.eventId, item.media])
       );
       if (resolvedMedia.size === 0) return;
@@ -1951,8 +2014,16 @@ export const DashboardV2Mockup = ({
           if (!eventId) return market;
           const media = resolvedMedia.get(eventId);
           if (!media || (!media.imageUrl && !media.iconUrl)) return market;
-          const nextImageUrl = media.imageUrl ?? market.imageUrl;
-          const nextIconUrl = media.iconUrl ?? market.iconUrl;
+          const cardMedia = resolveDashboardCardMedia({
+            marketType: market.marketType,
+            outcomes: market.outcomes,
+            catalogImageUrl: market.imageUrl,
+            catalogIconUrl: market.iconUrl,
+            eventImageUrl: media.imageUrl,
+            eventIconUrl: media.iconUrl,
+          });
+          const nextImageUrl = cardMedia.imageUrl;
+          const nextIconUrl = cardMedia.iconUrl;
           if (nextImageUrl === market.imageUrl && nextIconUrl === market.iconUrl) return market;
           return {
             ...market,
