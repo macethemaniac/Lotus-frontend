@@ -9,6 +9,7 @@ import {
   resolveSelectedOutcomeOrderbookDisplaySource,
   resolveSelectedOutcomeDisplayValues,
   resolveVisibleSelectedOutcomeOrderbook,
+  shouldResetOrderbookForRequestChange,
   shouldResetExpandedOutcomeForMarketChange,
   type TerminalOutcomeDisplayValues,
 } from './terminal-outcome-display';
@@ -318,6 +319,16 @@ describe('orderSelectedOutcomeVisibleVenues', () => {
       ['ZETA', 'ALPHA', 'POLYMARKET'],
       ['POLYMARKET'],
     )).toEqual(['POLYMARKET', 'ALPHA', 'ZETA']);
+  });
+});
+
+describe('shouldResetOrderbookForRequestChange', () => {
+  it('resets the visible orderbook when the selected market or outcome changes', () => {
+    expect(shouldResetOrderbookForRequestChange('market-1:YES:alias-a', 'market-2:YES:alias-b')).toBe(true);
+  });
+
+  it('keeps the current orderbook visible when the request effect reruns for the same selection', () => {
+    expect(shouldResetOrderbookForRequestChange('market-1:YES:alias-a|alias-b', 'market-1:YES:alias-a|alias-b')).toBe(false);
   });
 });
 

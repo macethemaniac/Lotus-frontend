@@ -114,6 +114,11 @@ export const orderSelectedOutcomeVisibleVenues = (
   });
 };
 
+export const shouldResetOrderbookForRequestChange = (
+  previousRequestKey: string | null,
+  nextRequestKey: string,
+): boolean => previousRequestKey !== nextRequestKey;
+
 export const shouldResetExpandedOutcomeForMarketChange = (
   previousMarketResetKey: string | null,
   nextMarketResetKey: string,

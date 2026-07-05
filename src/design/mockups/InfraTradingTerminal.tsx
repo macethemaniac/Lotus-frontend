@@ -20,6 +20,7 @@ import {
   resolveSelectedOutcomeOrderbookDisplaySource,
   resolveSelectedOutcomeDisplayValues,
   resolveVisibleSelectedOutcomeOrderbook,
+  shouldResetOrderbookForRequestChange,
   shouldResetExpandedOutcomeForMarketChange,
   type TerminalOutcomeDisplayValues,
 } from '@/design/mockups/terminal-outcome-display';
@@ -3353,6 +3354,7 @@ const InfraTradingTerminalInner = ({
   const lastOrderbookRestRecoveryAtRef = React.useRef<number | null>(null);
   const orderbookRestRecoveryInFlightRef = React.useRef(false);
   const orderbookRestRecoveryTimerRef = React.useRef<number | null>(null);
+  const orderbookRequestKeyRef = React.useRef<string | null>(null);
   const terminalLivePriceRefreshInFlightRef = React.useRef(false);
   const terminalLivePriceRefreshQueuedRef = React.useRef(false);
   const missingRiskProfileKeysRef = React.useRef<Set<string>>(new Set());
@@ -3595,6 +3597,14 @@ const InfraTradingTerminalInner = ({
       ? selectedOutcomeCanonicalMarketIds
       : uniqueNonEmptyStrings([orderbookMarketId]),
     [orderbookMarketId, selectedOutcomeCanonicalMarketIds],
+  );
+  const orderbookStreamMarketIdsKey = useMemo(
+    () => orderbookStreamMarketIds.join('|'),
+    [orderbookStreamMarketIds],
+  );
+  const orderbookStreamTopicsKey = useMemo(
+    () => orderbookStreamTopics.join('|'),
+    [orderbookStreamTopics],
   );
   const selectedTicketOutcomeId = outcomeIdForTicketSide(terminalOutcomes, ticketOutcomeSide, selectedOutcomeId);
   const selectedTicketOutcome = terminalOutcomes.find((outcome) => outcome.id === selectedTicketOutcomeId) ?? selectedOutcome;
@@ -5417,8 +5427,9 @@ const InfraTradingTerminalInner = ({
 
   React.useEffect(() => {
     let cancelled = false;
-    const requestKey = `${orderbookMarketId ?? 'none'}:${orderbookQuoteOutcomeId ?? 'none'}`;
+    const requestKey = `${orderbookMarketId ?? 'none'}:${orderbookQuoteOutcomeId ?? 'none'}:${orderbookStreamMarketIdsKey}`;
     if (!orderbookMarketId) {
+      orderbookRequestKeyRef.current = null;
       orderbookRef.current = null;
       orderbookChecksumValidationSeqRef.current += 1;
       setOrderbook(null);
@@ -5428,6 +5439,8 @@ const InfraTradingTerminalInner = ({
       return;
     }
     if (orderbookNotFoundKey === requestKey) return;
+    const selectionChanged = shouldResetOrderbookForRequestChange(orderbookRequestKeyRef.current, requestKey);
+    orderbookRequestKeyRef.current = requestKey;
 
     const localTopics = orderbookStreamMarketIds.map((marketId) => orderbookTopicForSelection(marketId, orderbookQuoteOutcomeId));
     const loadFallbackOrderbook = async (
@@ -5477,14 +5490,18 @@ const InfraTradingTerminalInner = ({
 
     const refreshOrderbook = () => {
       setLatestOrderbookStream(null);
-      orderbookRef.current = null;
-      orderbookChecksumValidationSeqRef.current += 1;
-      setOrderbook(null);
       setOrderbookStreamTopics((current) => sameTopicList(current, localTopics) ? current : localTopics);
-      setOrderbookLoading(true);
       setOrderbookError(null);
       lastOrderbookWsUpdateAtRef.current = null;
       lastOrderbookRestRecoveryAtRef.current = null;
+      if (selectionChanged) {
+        orderbookRef.current = null;
+        orderbookChecksumValidationSeqRef.current += 1;
+        setOrderbook(null);
+        setOrderbookLoading(true);
+        return;
+      }
+      setOrderbookLoading(!hasUsableOrderbookDepth(orderbookRef.current));
     };
     void refreshOrderbook();
     orderbookStreamSeqRef.current.clear();
@@ -5507,7 +5524,7 @@ const InfraTradingTerminalInner = ({
       cancelled = true;
       window.clearTimeout(fallbackTimer);
     };
-  }, [orderbookMarketId, orderbookNotFoundKey, orderbookQuoteOutcomeId, orderbookStreamMarketIds]);
+  }, [orderbookMarketId, orderbookNotFoundKey, orderbookQuoteOutcomeId, orderbookStreamMarketIdsKey]);
 
   React.useEffect(() => {
     if (!orderbookMarketId || orderbookStreamTopics.length === 0) {
@@ -5763,7 +5780,7 @@ const InfraTradingTerminalInner = ({
         client.socket.close();
       }
     };
-  }, [marketType, orderbookMarketId, orderbookQuoteOutcomeId, orderbookStreamMarketIds, orderbookStreamTopics]);
+  }, [marketType, orderbookMarketId, orderbookQuoteOutcomeId, orderbookStreamMarketIdsKey, orderbookStreamTopicsKey]);
 
   const refreshAccountData = useCallback(async () => {
     if (!token) {
