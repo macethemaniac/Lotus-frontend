@@ -3574,9 +3574,10 @@ const InfraTradingTerminalInner = ({
   React.useEffect(() => {
     selectedOutcomeRefreshKeyRef.current = selectedOutcomeRefreshKey;
   }, [selectedOutcomeRefreshKey]);
-  // Keep the selected outcome's orderbook warm even while collapsed so the row can
-  // render the same venue set/count immediately instead of only after expansion.
-  const orderbookActive = Boolean(selectedOutcome);
+  // Only warm the selected outcome orderbook while its detail row is expanded.
+  // Keeping the live book active for a merely selected collapsed row makes the
+  // outcome list flicker between the stable summary quote and live orderbook data.
+  const orderbookActive = Boolean(selectedOutcome && expandedOutcomeId === selectedOutcome.id);
   const orderbookMarketId = orderbookActive ? selectedOutcomeMarketId ?? terminalMarketId : null;
   const orderbookSideLabel = ticketOutcomeSide === 'no' ? 'No' : 'Yes';
   const orderbookQuoteOutcomeId = orderbookActive
@@ -7165,26 +7166,27 @@ const InfraTradingTerminalInner = ({
                          {visibleOutcomeRows.map((m) => {
                            const venues = m.venues.length ? m.venues : marketVenueList;
                            const isSelectedOutcome = selectedOutcomeId ? selectedOutcomeId === m.id : m.active;
-                           const rowVenueList = isSelectedOutcome && selectedOutcomeVisibleVenues.length > 0
+                           const isExpandedOutcome = expandedOutcomeId === m.id;
+                           const rowVenueList = isExpandedOutcome && selectedOutcomeVisibleVenues.length > 0
                              ? selectedOutcomeVisibleVenues
                              : venues;
                            const rowVenueCount = rowVenueList.length || m.platforms;
-                           const primaryVenue = isSelectedOutcome && rowVenueList.length > 0
+                           const primaryVenue = isExpandedOutcome && rowVenueList.length > 0
                              ? rowVenueList[0]!
                              : m.primaryVenue ?? venues[0] ?? 'lotus';
-                           const rowYesPrice = isSelectedOutcome
+                           const rowYesPrice = isExpandedOutcome
                              ? normalizeTerminalDisplayValue(selectedOutcomeDisplayValues?.yesPrice)
                                ?? usableSelectedOutcomeBookDisplay?.yesPrice
                                ?? normalizeTerminalDisplayValue(m.yesPrice)
                                ?? m.yesPrice
                              : m.yesPrice;
-                           const rowNoPrice = isSelectedOutcome
+                           const rowNoPrice = isExpandedOutcome
                              ? normalizeTerminalDisplayValue(selectedOutcomeDisplayValues?.noPrice)
                                ?? usableSelectedOutcomeBookDisplay?.noPrice
                                ?? normalizeTerminalDisplayValue(m.noPrice)
                                ?? m.noPrice
                              : m.noPrice;
-                           const rowProbability = isSelectedOutcome
+                           const rowProbability = isExpandedOutcome
                              ? normalizeTerminalDisplayValue(selectedOutcomeDisplayValues?.probability)
                                ?? usableSelectedOutcomeBookDisplay?.probability
                                ?? normalizeTerminalDisplayValue(m.prob)
@@ -7194,7 +7196,7 @@ const InfraTradingTerminalInner = ({
                            const rowNoVenue = primaryVenue;
                            const rowYesSelected = isSelectedOutcome && ticketOutcomeSide === 'yes';
                            const rowNoSelected = isSelectedOutcome && ticketOutcomeSide === 'no';
-                           if (expandedOutcomeId === m.id) {
+                           if (isExpandedOutcome) {
                              return (
                                <div key={m.id} className="overflow-hidden rounded-xl border border-zinc-800 bg-[#151517]">
                                  <div className="flex items-center justify-between gap-4 border-b border-zinc-800 px-5 py-3">
