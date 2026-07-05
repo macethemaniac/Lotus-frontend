@@ -9,6 +9,7 @@ import { PortfolioMockupV2 } from '@/design/mockups/PortfolioMockupV2';
 import { FundingDeposit } from '@/design/mockups/FundingDeposit';
 import { resolveDashboardCardMedia, shouldPreferDashboardEventMedia } from '@/design/mockups/dashboard-market-media';
 import { resolveSelectedMarketHydratedMedia, resolveSelectedMarketSeedMedia } from '@/design/mockups/terminal-outcome-display';
+import { terminalRouteSelectionMatches } from '@/design/mockups/terminal-route-selection';
 import { isTurnkeyProviderConfigured } from '@/app/turnkey-provider';
 import type { AuthSession } from '@/features/auth/types';
 import {
@@ -1581,6 +1582,7 @@ export const DashboardV2Mockup = ({
   const [showNotifications, setShowNotifications] = useState(false);
   const [marketViewMode, setMarketViewMode] = useState<'grid' | 'list'>('grid');
   const [selectedTerminalMarket, setSelectedTerminalMarket] = useState<TerminalMarketSelection | null>(null);
+  const [terminalRouteError, setTerminalRouteError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [selectedRouteTypes, setSelectedRouteTypes] = useState<DashboardRouteFilter[]>([]);
@@ -1649,19 +1651,32 @@ export const DashboardV2Mockup = ({
     () => quotedMarketRows.map(toTerminalMarketSelection),
     [quotedMarketRows],
   );
+  const terminalRouteResolved = terminalRouteSelectionMatches(routeEventSlug, selectedTerminalMarket);
+  const terminalRoutePending = activePage === 'terminal' && !terminalRouteResolved && !terminalRouteError;
   useEffect(() => {
-    if (activePage !== 'terminal') return;
-    if (routeEventSlug && selectedTerminalMarket?.eventSlug === routeEventSlug) return;
-    if (!routeEventSlug && selectedTerminalMarket) return;
+    if (activePage !== 'terminal') {
+      setTerminalRouteError(null);
+      return;
+    }
+    if (terminalRouteResolved) {
+      setTerminalRouteError(null);
+      return;
+    }
 
     let cancelled = false;
     const resolveTerminalRoute = async () => {
       try {
+        setTerminalRouteError(null);
         const eventResponse = await listEvents({ limit: 250 });
         const matchedEvent = routeEventSlug
           ? eventResponse.events.find((event) => eventSlugFromTitle(event.title) === routeEventSlug)
           : eventResponse.events[0];
-        if (!matchedEvent) return;
+        if (!matchedEvent) {
+          if (!cancelled) {
+            setTerminalRouteError(routeEventSlug ? 'This terminal market could not be found.' : 'No terminal market is available right now.');
+          }
+          return;
+        }
 
         const marketResponse = await getEventMarkets(matchedEvent.eventId);
         const hydratedMarkets = await hydrateCatalogMarketsWithAggregateVolumes(marketResponse.markets).catch(() => marketResponse.markets);
@@ -1669,17 +1684,28 @@ export const DashboardV2Mockup = ({
           mapCatalogMarketsToDashboardRows(hydratedMarkets),
           marketEventMediaCacheRef.current,
         );
-        if (cancelled || rows.length === 0) return;
+        if (cancelled) return;
+        if (rows.length === 0) {
+          setTerminalRouteError('This terminal market has no routeable outcomes yet.');
+          return;
+        }
         const quotedRows = await hydrateMarketRowsWithLiveQuotes(rows).catch(() => rows);
-        if (cancelled || quotedRows.length === 0) return;
+        if (cancelled) return;
+        if (quotedRows.length === 0) {
+          setTerminalRouteError('This terminal market has no routeable outcomes yet.');
+          return;
+        }
         const matchedRow = quotedRows.find((row) => dashboardMarketEventSlug(row) === eventSlugFromTitle(matchedEvent.title)) ?? quotedRows[0]!;
         const nextSelection = toTerminalMarketSelection(matchedRow);
         setSelectedTerminalMarket(nextSelection);
+        setTerminalRouteError(null);
         if (!routeEventSlug) {
           onNavigate?.('terminal', nextSelection.eventSlug ?? null);
         }
-      } catch {
-        // Keep the terminal shell visible even when route resolution fails.
+      } catch (error) {
+        if (!cancelled) {
+          setTerminalRouteError(toSafeErrorMessage(error, 'Terminal market data is unavailable right now.'));
+        }
       }
     };
 
@@ -1687,7 +1713,7 @@ export const DashboardV2Mockup = ({
     return () => {
       cancelled = true;
     };
-  }, [activePage, onNavigate, routeEventSlug, selectedTerminalMarket?.eventSlug]);
+  }, [activePage, onNavigate, routeEventSlug, terminalRouteResolved]);
   const displayedMarkets = activePage === 'home'
     ? filteredMarketRows.slice(0, homeVisibleMarketCount)
     : filteredMarketRows;
@@ -2995,14 +3021,40 @@ export const DashboardV2Mockup = ({
           </>
           ) : activePage === 'terminal' ? (
             <div className="min-w-0 flex-1">
-              <InfraTradingTerminal
-                embedded
-                darkMode={isDarkMode}
-                selectedMarket={selectedTerminalMarket}
-                relatedMarkets={terminalMarketSelections}
-                session={session}
-                onRequireLogin={onRequireLogin}
-              />
+              {terminalRoutePending ? (
+                <div className="min-h-[calc(100vh-10rem)] rounded-[28px] border border-white/8 bg-[#0d0d10] p-6 shadow-[0_0_0_1px_rgba(255,255,255,0.03)]">
+                  <div className="flex h-full min-h-[32rem] flex-col items-center justify-center gap-4 rounded-[24px] border border-white/6 bg-[#111115] px-6 text-center">
+                    <div className="h-12 w-12 animate-pulse rounded-2xl border border-[#ccff00]/30 bg-[#ccff00]/10" />
+                    <div className="space-y-2">
+                      <p className="text-lg font-semibold text-zinc-100">Loading terminal market…</p>
+                      <p className="text-sm text-zinc-400">
+                        {routeEventSlug
+                          ? `Resolving ${routeEventSlug.replace(/-/g, ' ')}.`
+                          : 'Resolving the latest routeable market.'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ) : terminalRouteError ? (
+                <div className="min-h-[calc(100vh-10rem)] rounded-[28px] border border-red-500/20 bg-[#0d0d10] p-6 shadow-[0_0_0_1px_rgba(255,255,255,0.03)]">
+                  <div className="flex h-full min-h-[32rem] flex-col items-center justify-center gap-4 rounded-[24px] border border-red-500/20 bg-[#111115] px-6 text-center">
+                    <AlertTriangle className="h-10 w-10 text-red-400" />
+                    <div className="space-y-2">
+                      <p className="text-lg font-semibold text-zinc-100">Terminal unavailable</p>
+                      <p className="text-sm text-zinc-400">{terminalRouteError}</p>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <InfraTradingTerminal
+                  embedded
+                  darkMode={isDarkMode}
+                  selectedMarket={selectedTerminalMarket}
+                  relatedMarkets={terminalMarketSelections}
+                  session={session}
+                  onRequireLogin={onRequireLogin}
+                />
+              )}
             </div>
           ) : activePage === 'portfolio' ? (
             <div className="min-w-0 flex-1">
