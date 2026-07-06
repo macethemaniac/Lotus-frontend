@@ -1511,20 +1511,30 @@ const toOutcomeQuoteFromBatch = (quote: MarketBatchQuoteItem): DashboardOutcomeQ
   };
 };
 
+const displayableLivePriceValue = (
+  livePrice: MarketLivePriceItem | null | undefined,
+): number | null => {
+  const midpoint = livePrice?.midpoint !== null && livePrice?.midpoint !== undefined ? Number(livePrice.midpoint) : NaN;
+  if (Number.isFinite(midpoint) && midpoint > 0) return midpoint;
+  const bestAsk = livePrice?.bestAsk !== null && livePrice?.bestAsk !== undefined ? Number(livePrice.bestAsk) : NaN;
+  if (Number.isFinite(bestAsk) && bestAsk > 0) return bestAsk;
+  return null;
+};
+
 const toOutcomeQuoteFromLivePrice = (
   outcomeId: string,
   price: MarketLivePriceItem | undefined
 ): DashboardOutcomeQuote => {
-  const numericPrice = price?.price !== null && price?.price !== undefined ? Number(price.price) : NaN;
-  const hasDisplayPrice = Number.isFinite(numericPrice) && numericPrice > 0;
+  const numericPrice = displayableLivePriceValue(price);
+  const hasDisplayPrice = typeof numericPrice === 'number' && Number.isFinite(numericPrice) && numericPrice > 0;
   const livePrice = hasDisplayPrice && price ? price : null;
   const candidate: TradeRouteCandidate | null = livePrice
     ? {
         venue: livePrice.bestVenue ?? livePrice.venues[0] ?? 'LOTUS',
         venueMarketId: livePrice.marketId,
-        price: numericPrice,
+        price: numericPrice!,
         availableSize: '0',
-        ...(livePrice.spread && livePrice.price ? { spreadBps: (Number(livePrice.spread) / Math.max(Number(livePrice.price), 0.000001)) * 10_000 } : {}),
+        ...(livePrice.spread && numericPrice ? { spreadBps: (Number(livePrice.spread) / Math.max(numericPrice, 0.000001)) * 10_000 } : {}),
         quoteQuality: 'DISPLAY_LIVE_PRICE',
         ...(livePrice.freshnessMs !== null ? { freshnessMs: livePrice.freshnessMs } : {}),
         quoteBlockers: [],

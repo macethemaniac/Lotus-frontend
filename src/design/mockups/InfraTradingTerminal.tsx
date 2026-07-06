@@ -530,6 +530,16 @@ const formatProbabilityPercent = (price: number | null | undefined): string => {
   return `${percent >= 10 ? percent.toFixed(0) : percent.toFixed(1)}%`;
 };
 
+const displayableLivePriceValue = (
+  livePrice: MarketLivePriceItem | null | undefined,
+): number | null => {
+  const midpoint = livePrice?.midpoint !== null && livePrice?.midpoint !== undefined ? Number(livePrice.midpoint) : NaN;
+  if (Number.isFinite(midpoint) && midpoint > 0) return midpoint;
+  const bestAsk = livePrice?.bestAsk !== null && livePrice?.bestAsk !== undefined ? Number(livePrice.bestAsk) : NaN;
+  if (Number.isFinite(bestAsk) && bestAsk > 0) return bestAsk;
+  return null;
+};
+
 const parsePositiveNumber = (value: string | number | null | undefined): number | null => {
   const parsed = typeof value === 'number' ? value : typeof value === 'string' ? Number(value.replace(/[$,\s]/g, '')) : NaN;
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
@@ -4350,7 +4360,7 @@ const InfraTradingTerminalInner = ({
           const quoteVenues = quoteVenueListFromLivePrice(livePrice, row.venues);
           const summaryVenues = resolveOutcomeSummaryVenues(livePrice, row.venues);
           const summaryVenueCount = resolveOutcomeSummaryVenueCount(livePrice, row.venues);
-          const parsedPrice = orderbookNumericValue(livePrice?.price ?? livePrice?.bestAsk ?? livePrice?.midpoint ?? livePrice?.bestBid);
+          const parsedPrice = displayableLivePriceValue(livePrice);
           if (parsedPrice === null) {
             if (!livePrice) return row;
             return {
@@ -4465,7 +4475,7 @@ const InfraTradingTerminalInner = ({
             const quoteVenues = quoteVenueListFromLivePrice(livePrice, outcome.venues);
             const summaryVenues = resolveOutcomeSummaryVenues(livePrice, outcome.venues);
             const summaryVenueCount = resolveOutcomeSummaryVenueCount(livePrice, outcome.venues);
-            const parsedPrice = orderbookNumericValue(livePrice?.price ?? livePrice?.bestAsk ?? livePrice?.midpoint ?? livePrice?.bestBid);
+            const parsedPrice = displayableLivePriceValue(livePrice);
             if (parsedPrice === null) {
               if (!livePrice) return outcome;
               const nextOutcome = mergeTerminalOutcomeRowDisplay(outcome, {
