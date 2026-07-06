@@ -305,6 +305,12 @@ export type MarketLivePricesResponse = {
 export type PolymarketMarketSnapshot = {
   slug: string;
   question: string;
+  groupItemTitle?: string | null;
+  clobTokenIds?: string | null;
+  outcomes?: string | null;
+  outcomePrices?: string | null;
+  active?: boolean;
+  closed?: boolean;
   volume?: string | number | null;
   volumeClob?: string | number | null;
   volume24hr?: string | number | null;
@@ -537,6 +543,21 @@ export function getPolymarketEventBySlug(slug: string) {
       throw new Error(`Unable to load Polymarket event ${slug}`);
     }
     return response.json() as Promise<PolymarketEventSnapshot>;
+  }, { ttlMs: 60_000, maxStaleMs: 15 * 60_000 });
+}
+
+export function getPolymarketMarketsByEventSlug(eventSlug: string, input: { limit?: number } = {}) {
+  const params = new URLSearchParams({
+    eventSlug,
+    limit: String(input.limit ?? 100),
+  });
+  const url = `https://gamma-api.polymarket.com/markets?${params.toString()}`;
+  return staleWhileRevalidate(`polymarket-event-markets:${params.toString()}`, async () => {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Unable to load Polymarket event markets for ${eventSlug}`);
+    }
+    return response.json() as Promise<PolymarketMarketSnapshot[]>;
   }, { ttlMs: 60_000, maxStaleMs: 15 * 60_000 });
 }
 

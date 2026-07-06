@@ -5,7 +5,6 @@ import {
   Clock, BarChart2, Layers, Bookmark, Search, Maximize2, Activity, Zap, Ghost,
   Home, Terminal, PieChart, Volleyball, Settings
 } from 'lucide-react';
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceDot } from 'recharts';
 import { useTurnkey, type Wallet as TurnkeyWallet, type WalletAccount } from '@turnkey/react-wallet-kit';
 import { JsonRpcProvider, Transaction } from 'ethers';
 import { CryptoLogo, VenueLogo, resolveTopicAssetLogoId } from '@/components/icons/asset-logo';
@@ -54,7 +53,8 @@ import {
   getMarketLivePrices,
   getMarketOrderbook,
   getMarketOutcomes,
-  getPolymarketEventBySlug,
+  getPolymarketMarketBySlug,
+  getPolymarketMarketsByEventSlug,
   getPolymarketPricesHistory,
   getVenueMarketResolutionRisk,
   type MarketChartResponse,
@@ -68,7 +68,6 @@ import {
   type MarketOrderbookStreamPayload,
   type MarketOrderbookStreamLevel,
   type MarketOrderbookVenue,
-  type PolymarketEventMarketSnapshot,
   type ResolutionRiskAssessment,
   type ResolutionRiskProfile,
 } from '@/features/markets/api/market-api';
@@ -2575,245 +2574,6 @@ const emptyCopy = (title: string, body: string) => (
   </div>
 );
 
-const CanonicalChart = ({ marketType }: { marketType: 'binary' | 'multi' }) => {
-  const [activeTab, setActiveTab] = useState('1W');
-  const [hoverIndex, setHoverIndex] = useState<number | null>(null);
-
-  type ChartPoint = {
-    date: string;
-    canonical?: number;
-    poly?: number;
-    limitless?: number;
-    predict?: number;
-    mbappe?: number;
-    other?: number;
-    kane?: number;
-    martinelli?: number;
-  };
-
-  const dataMulti: ChartPoint[] = [
-    { date: 'May 01', canonical: 26.2, poly: 26.0, limitless: 26.5, predict: 26.9 },
-    { date: 'May 02', canonical: 26.2, poly: 26.0, limitless: 26.5, predict: 26.9 },
-    { date: 'May 03', canonical: 26.2, poly: 26.0, limitless: 26.5, predict: 26.9 },
-    { date: 'May 03 12:00', canonical: 58.5, poly: 58.0, limitless: 59.0, predict: 58.3 }, // Jump
-    { date: 'May 04', canonical: 58.5, poly: 58.0, limitless: 59.0, predict: 58.3 },
-    { date: 'May 05', canonical: 59.0, poly: 58.5, limitless: 59.5, predict: 58.8 },
-    { date: 'May 06', canonical: 59.0, poly: 58.5, limitless: 59.5, predict: 58.8 },
-    { date: 'May 06 12:00', canonical: 99.4, poly: 99.0, limitless: 99.5, predict: 99.2 }, // Jump to 100
-    { date: 'May 07', canonical: 99.4, poly: 99.0, limitless: 99.5, predict: 99.2 },
-  ];
-
-  const dataBinary: ChartPoint[] = [
-    { date: 'May 01', mbappe: 1.0, other: 1.6, kane: 49.0, martinelli: 0.8 },
-    { date: 'May 02', mbappe: 1.0, other: 1.6, kane: 49.0, martinelli: 0.8 },
-    { date: 'May 03', mbappe: 1.0, other: 1.6, kane: 49.0, martinelli: 0.8 },
-    { date: 'May 03 12:00', mbappe: 58.5, other: 1.6, kane: 41.5, martinelli: 0.4 }, 
-    { date: 'May 04', mbappe: 58.5, other: 1.6, kane: 41.5, martinelli: 0.4 },
-    { date: 'May 05', mbappe: 59.0, other: 1.5, kane: 41.0, martinelli: 0.4 },
-    { date: 'May 06', mbappe: 59.0, other: 1.5, kane: 41.0, martinelli: 0.4 },
-    { date: 'May 06 12:00', mbappe: 99.45, other: 1.55, kane: 0.54, martinelli: 0.44 }, 
-    { date: 'May 07', mbappe: 99.45, other: 1.55, kane: 0.54, martinelli: 0.44 },
-  ];
-
-  const data: ChartPoint[] = marketType === 'multi' ? dataMulti : dataBinary;
-
-  const CustomTooltip = ({ active, payload, label }: any) => {
-    if (active && payload && payload.length) {
-      if (marketType === 'multi') {
-        const canonicalEntry = payload.find((p: any) => p.dataKey === 'canonical');
-        const otherEntries = payload.filter((p: any) => p.dataKey !== 'canonical').sort((a: any, b: any) => b.value - a.value);
-
-        return (
-          <div className="bg-[#18181b]/95 border border-zinc-800 rounded-lg p-3 shadow-2xl z-50 min-w-[200px]">
-            <div className="text-zinc-400 text-[11px] mb-3 font-sans">
-              {label}, 26 03:00 AM
-            </div>
-            <div className="flex flex-col gap-2">
-               {canonicalEntry && (
-                  <div className="flex items-center justify-between border-b border-zinc-800/80 pb-2 mb-1 gap-4">
-                    <div className="flex items-center gap-1.5 text-[13px] font-medium">
-                      <div className="w-2 h-2 rounded-full shadow-[0_0_8px_rgba(204,255,0,0.5)]" style={{ backgroundColor: canonicalEntry.color }}></div>
-                      <span className="font-bold text-white text-[15px]">{canonicalEntry.value}¢</span>
-                      <span className="text-white ml-0.5 font-bold">{canonicalEntry.name}</span>
-                    </div>
-                    <span className="bg-[#ccff00]/10 text-[#ccff00] px-1.5 py-0.5 rounded font-sans uppercase tracking-widest text-[9px] font-bold">Unified</span>
-                  </div>
-               )}
-              {otherEntries.map((entry: any, index: number) => (
-                <div key={index} className="flex items-center gap-1.5 text-[13px] font-medium opacity-90">
-                  <div className="w-2 h-2 rounded-full" style={{ backgroundColor: entry.color }}></div>
-                  <span className="font-bold text-white">{entry.value}¢</span>
-                  <span className="text-zinc-300 ml-0.5">{entry.name}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        );
-      } else {
-        return (
-          <div className="bg-[#18181b]/95 border border-zinc-800 rounded-lg p-3 shadow-2xl z-50 min-w-[200px]">
-            <div className="text-zinc-400 text-[11px] mb-3 font-sans">
-              {label}, 26 03:00 AM
-            </div>
-            <div className="flex flex-col gap-2">
-              {[...payload].sort((a: any, b: any) => b.value - a.value).map((entry: any, index: number) => (
-                <div key={index} className="flex items-center gap-1.5 text-[13px] font-medium">
-                  <div className="w-2 h-2 rounded-full" style={{ backgroundColor: entry.color }}></div>
-                  <span className="font-bold text-white">{entry.value}%</span>
-                  <span className="text-white ml-0.5">{entry.name}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        );
-      }
-    }
-    return null;
-  };
-
-  const tabs = ['1H', '6H', '1D', '1W', '1M', 'ALL'];
-
-  return (
-    <div className="relative w-full h-full flex flex-col pt-2 pb-2 bg-[#0c0c0c] rounded-xl overflow-hidden">
-      {/* Probability Header */}
-      <div className="flex items-center gap-2 px-3 pt-2 sm:px-4">
-        <Activity className="w-4 h-4 text-white" />
-        <span className="text-white font-bold text-sm">Probability</span>
-      </div>
-      <div className="w-full bg-zinc-800 h-px mt-2" />
-      <div className="w-24 bg-white h-0.5" /> {/* Underline for Probability */}
-
-      {/* Tabs Row */}
-      <div className="flex items-center justify-between px-4 mt-3">
-        <div className="flex items-center rounded-md bg-transparent space-x-1">
-          {tabs.map((tab) => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={`px-3 py-1 text-sm font-bold transition-colors ${
-                activeTab === tab
-                  ? 'text-white border border-white bg-transparent rounded shadow-sm'
-                  : 'text-zinc-400 hover:text-white'
-              }`}
-            >
-              {tab}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Legend */}
-      <div className="flex items-center gap-4 px-4 mt-4 text-[13px]">
-        {marketType === 'multi' ? (
-          <>
-            <div className="flex items-center gap-1.5">
-              <div className="w-2 h-2 rounded-full bg-[#ccff00] shadow-[0_0_8px_rgba(204,255,0,0.5)]"></div>
-              <span className="text-white font-bold">Canonical 26.2¢</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <div className="w-2 h-2 rounded-full bg-[#3B82F6]"></div>
-              <span className="text-white font-bold">Polymarket 26.0¢</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <div className="w-2 h-2 rounded-full bg-[#10B981]"></div>
-              <span className="text-white font-bold">Limitless 26.5¢</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <div className="w-2 h-2 rounded-full bg-[#8B5CF6]"></div>
-              <span className="text-white font-bold">Predict 26.9¢</span>
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="flex items-center gap-1.5">
-              <div className="w-2 h-2 rounded-full bg-[#3B82F6]"></div>
-              <span className="text-white font-bold">Kylian Mbappe 99.45%</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <div className="w-2 h-2 rounded-full bg-[#EF4444]"></div>
-              <span className="text-white font-bold">Other 1.55%</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <div className="w-2 h-2 rounded-full bg-[#10B981]"></div>
-              <span className="text-white font-bold">Harry Kane 0.54%</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <div className="w-2 h-2 rounded-full bg-[#8B5CF6]"></div>
-              <span className="text-white font-bold">Gabriel Martinelli 0.44%</span>
-            </div>
-          </>
-        )}
-        <div className="text-zinc-400 font-bold ml-2 cursor-pointer hover:text-white transition-colors">
-          ••• More
-        </div>
-      </div>
-
-      {/* Chart Area */}
-      <div className="h-[300px] min-h-[300px] w-full mt-6 pr-4 relative">
-        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={260}>
-          <LineChart data={data} margin={{ top: 20, right: 30, left: 10, bottom: 5 }}>
-            <XAxis 
-              dataKey="date" 
-              axisLine={false}
-              tickLine={false}
-              tick={{ fill: '#71717A', fontSize: 11 }}
-              dy={10}
-              tickFormatter={(val) => val.includes(':') ? '' : val}
-            />
-            <YAxis 
-              orientation="right" 
-              axisLine={false}
-              tickLine={false} 
-              tick={{ fill: '#71717A', fontSize: 11 }}
-              dx={10}
-              tickFormatter={(val) => marketType === 'multi' ? `${val}¢` : `${val}%`}
-              ticks={[0, 25, 50, 75, 100]}
-              domain={[0, 100]}
-            />
-            {/* Dashed Grid lines matching screenshot horizontal lines */}
-            {[0, 25, 50, 75, 100].map((val) => (
-                <ReferenceLine key={val} y={val} stroke="#27272A" strokeDasharray="3 3" opacity={0.6} />
-            ))}
-            
-            <Tooltip 
-               content={<CustomTooltip />} 
-               cursor={{ stroke: '#52525B', strokeWidth: 1, strokeDasharray: '3 3' }}
-            />
-            
-            {marketType === 'multi' ? (
-              <>
-                <Line type="linear" dataKey="poly" name="Polymarket" stroke="#3B82F6" strokeWidth={1.5} dot={false} strokeDasharray="4 2" activeDot={{ r: 4, stroke: '#18181b', strokeWidth: 2 }} />
-                <Line type="linear" dataKey="limitless" name="Limitless" stroke="#10B981" strokeWidth={1.5} dot={false} strokeDasharray="4 2" activeDot={{ r: 4, stroke: '#18181b', strokeWidth: 2 }} />
-                <Line type="linear" dataKey="predict" name="Predict" stroke="#8B5CF6" strokeWidth={1.5} dot={false} strokeDasharray="4 2" activeDot={{ r: 4, stroke: '#18181b', strokeWidth: 2 }} />
-                <Line type="linear" dataKey="canonical" name="Canonical" stroke="#ccff00" strokeWidth={2.5} dot={false} activeDot={{ r: 5, stroke: '#18181b', strokeWidth: 2 }} />
-                
-                {/* Final Value Dots on the far right */}
-                <ReferenceDot x="May 07" y={99.0} r={4} fill="#3B82F6" stroke="#18181b" strokeWidth={2} />
-                <ReferenceDot x="May 07" y={99.5} r={4} fill="#10B981" stroke="#18181b" strokeWidth={2} />
-                <ReferenceDot x="May 07" y={99.2} r={4} fill="#8B5CF6" stroke="#18181b" strokeWidth={2} />
-                <ReferenceDot x="May 07" y={99.4} r={5} fill="#ccff00" stroke="#18181b" strokeWidth={2} />
-              </>
-            ) : (
-              <>
-                <Line type="linear" dataKey="kane" name="Harry Kane" stroke="#10B981" strokeWidth={2} dot={false} activeDot={{ r: 4, stroke: '#18181b', strokeWidth: 2 }} />
-                <Line type="linear" dataKey="other" name="Other" stroke="#EF4444" strokeWidth={2} dot={false} activeDot={{ r: 4, stroke: '#18181b', strokeWidth: 2 }} />
-                <Line type="linear" dataKey="mbappe" name="Kylian Mbappe" stroke="#3B82F6" strokeWidth={2} dot={false} activeDot={{ r: 4, stroke: '#18181b', strokeWidth: 2 }} />
-                <Line type="linear" dataKey="martinelli" name="Gabriel Martinelli" stroke="#8B5CF6" strokeWidth={2} dot={false} activeDot={{ r: 4, stroke: '#18181b', strokeWidth: 2 }} />
-                
-                {/* Final Value Dots on the far right */}
-                <ReferenceDot x="May 07" y={99.45} r={4} fill="#3B82F6" stroke="#18181b" strokeWidth={2} />
-                <ReferenceDot x="May 07" y={1.55} r={4} fill="#EF4444" stroke="#18181b" strokeWidth={2} />
-                <ReferenceDot x="May 07" y={0.54} r={4} fill="#10B981" stroke="#18181b" strokeWidth={2} />
-                <ReferenceDot x="May 07" y={0.44} r={4} fill="#8B5CF6" stroke="#18181b" strokeWidth={2} />
-              </>
-            )}
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
-    </div>
-  );
-};
-
 const chartPointValue = (
   value: string | null | undefined,
   options: { zeroAsMissing?: boolean } = {}
@@ -2873,7 +2633,23 @@ const normalizeOutcomeChartLabel = (value: string | null | undefined): string =>
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
 
+const formatOutcomeChartLabel = (value: string | null | undefined, fallback = "Outcome"): string => {
+  const normalized = normalizeOutcomeChartLabel(value);
+  if (!normalized) return fallback;
+  return normalized.replace(/\b\w/g, (letter) => letter.toUpperCase());
+};
+
 const parsePolymarketTokenIds = (value: string | null | undefined): string[] => {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string" && item.length > 0) : [];
+  } catch {
+    return [];
+  }
+};
+
+const parsePolymarketOutcomeNames = (value: string | null | undefined): string[] => {
   if (!value) return [];
   try {
     const parsed = JSON.parse(value) as unknown;
@@ -2923,6 +2699,32 @@ const toPolymarketOutcomeChartResponse = (
   })),
   blockers: [],
 });
+
+const toPolymarketOutcomeHistory = async (input: {
+  marketSlug: string;
+  timeframe: MarketChartTimeframe;
+  outcomeId?: string | null;
+}) => {
+  const polymarketMarket = await getPolymarketMarketBySlug(input.marketSlug);
+  const tokenIds = parsePolymarketTokenIds(polymarketMarket.clobTokenIds);
+  const outcomeNames = parsePolymarketOutcomeNames(polymarketMarket.outcomes);
+  const normalizedOutcomeId = canonicalQuoteOutcomeId(input.outcomeId ?? "YES");
+  const tokenIndex = normalizedOutcomeId === "NO" ? 1 : 0;
+  const tokenId = tokenIds[tokenIndex] ?? tokenIds[0];
+  if (!tokenId) {
+    throw new Error(`Polymarket market ${input.marketSlug} is missing chart token ids.`);
+  }
+  const history = await getPolymarketPricesHistory(tokenId, polymarketPriceHistoryConfig(input.timeframe));
+  return {
+    label: polymarketMarket.groupItemTitle?.trim() || formatOutcomeChartLabel(polymarketMarket.question),
+    chart: toPolymarketOutcomeChartResponse(
+      polymarketMarket.slug,
+      normalizedOutcomeId,
+      input.timeframe,
+      history.history,
+    ),
+  };
+};
 
 const bucketChartTimestamp = (timestamp: string): number => {
   const parsed = Date.parse(timestamp);
@@ -3117,6 +2919,7 @@ const LiveCanonicalChart = ({
   onMarketTypeChange,
   outcomes = EMPTY_TERMINAL_OUTCOMES,
   polymarketEventSlug = null,
+  polymarketMarketSlug = null,
 }: {
   marketId: string | null;
   outcomeId: string | null;
@@ -3124,6 +2927,7 @@ const LiveCanonicalChart = ({
   onMarketTypeChange?: (value: 'binary' | 'multi') => void;
   outcomes?: TerminalOutcomeRow[];
   polymarketEventSlug?: string | null;
+  polymarketMarketSlug?: string | null;
 }) => {
   const [activeTab, setActiveTab] = useState<MarketChartTimeframe>('1D');
   const [venueChart, setVenueChart] = useState<MarketChartResponse | null>(null);
@@ -3132,7 +2936,7 @@ const LiveCanonicalChart = ({
   const [error, setError] = useState<string | null>(null);
   const [notFoundKey, setNotFoundKey] = useState<string | null>(null);
   const tabs: MarketChartTimeframe[] = ['1H', '6H', '1D', '1W', '1M', 'ALL'];
-  const requestKey = `${marketId ?? 'none'}:${outcomeId ?? 'none'}`;
+  const requestKey = `${marketId ?? 'none'}:${outcomeId ?? 'none'}:${polymarketEventSlug ?? 'no-event'}:${polymarketMarketSlug ?? 'no-market'}`;
   const selectedChartOutcome = useMemo(() => {
     if (outcomes.length === 0) return null;
     return outcomes.find((outcome) => outcome.id === outcomeId) ??
@@ -3179,15 +2983,17 @@ const LiveCanonicalChart = ({
     () => chartOutcomeInputs.map(({ latestValue: _latestValue, ...outcome }) => outcome),
     [chartOutcomeFetchKey]
   );
+  const prefersPolymarketBinaryHistory = marketType === 'binary' && Boolean(polymarketMarketSlug);
+  const prefersPolymarketMultiHistory = marketType === 'multi' && Boolean(polymarketEventSlug);
   const liveOutcomeValuesByKey = useMemo(
-    () => marketType === 'binary'
+    () => marketType === 'binary' && !prefersPolymarketBinaryHistory
       ? new Map(chartOutcomeInputs.map((outcome) => [outcome.key, outcome.latestValue]))
       : new Map<string, number | null>(),
-    [chartOutcomeInputs, marketType]
+    [chartOutcomeInputs, marketType, prefersPolymarketBinaryHistory]
   );
   const prefersOutcomeChart = marketType === 'multi'
-    ? Boolean(polymarketEventSlug) || chartOutcomeInputs.length > 0
-    : chartOutcomeInputs.length > 0;
+    ? prefersPolymarketMultiHistory || chartOutcomeInputs.length > 0
+    : prefersPolymarketBinaryHistory || chartOutcomeInputs.length > 0;
   const chartModel = useMemo(
     () => prefersOutcomeChart
       ? toOutcomeChartModel(outcomeCharts, liveOutcomeValuesByKey, activeTab)
@@ -3195,6 +3001,7 @@ const LiveCanonicalChart = ({
     [activeTab, liveOutcomeValuesByKey, outcomeCharts, prefersOutcomeChart, venueChart]
   );
   const { rows, series, historyStatus } = chartModel;
+  const chartSourceLabel = prefersPolymarketBinaryHistory || prefersPolymarketMultiHistory ? 'Polymarket' : 'Lotus';
   const yAxis = useMemo(() => buildChartYAxis(rows, series), [rows, series]);
   const [chartFrameRef, chartFrameSize] = useChartFrameSize();
   const chartReady = chartFrameSize.width > 0 && chartFrameSize.height > 0;
@@ -3271,14 +3078,39 @@ const LiveCanonicalChart = ({
       setLoading(true);
       setError(null);
       try {
-        if (marketType === 'multi' && polymarketEventSlug) {
+        if (prefersPolymarketBinaryHistory && polymarketMarketSlug) {
           try {
-            const polymarketEvent = await getPolymarketEventBySlug(polymarketEventSlug);
-            const topPolymarketMarkets = [...polymarketEvent.markets]
+            const chart = await toPolymarketOutcomeHistory({
+              marketSlug: polymarketMarketSlug,
+              timeframe: activeTab,
+              outcomeId,
+            });
+            if (!cancelled) {
+              setVenueChart(null);
+              setOutcomeCharts([{
+                id: `${chart.chart.marketId}:${chart.chart.outcomeId ?? 'YES'}`,
+                marketId: chart.chart.marketId,
+                quoteOutcomeId: chart.chart.outcomeId ?? 'YES',
+                label: chart.label,
+                key: normalizeChartKey('polymarket', `${chart.chart.marketId}_${chart.chart.outcomeId ?? 'YES'}`),
+                color: OUTCOME_CHART_COLORS[0]!,
+                chart: chart.chart,
+              }]);
+              setNotFoundKey(null);
+              return;
+            }
+          } catch {
+            // Fall back to Lotus chart history when Polymarket history is unavailable.
+          }
+        }
+        if (prefersPolymarketMultiHistory && polymarketEventSlug) {
+          try {
+            const polymarketMarkets = await getPolymarketMarketsByEventSlug(polymarketEventSlug);
+            const topPolymarketMarkets = [...polymarketMarkets]
               .flatMap((market, index) => {
                 const tokenIds = parsePolymarketTokenIds(market.clobTokenIds);
                 const outcomePrices = parsePolymarketOutcomePrices(market.outcomePrices);
-                const label = market.groupItemTitle?.trim() || normalizeOutcomeChartLabel(market.question);
+                const label = market.groupItemTitle?.trim() || formatOutcomeChartLabel(market.question);
                 if (!label || tokenIds.length === 0 || outcomePrices.length === 0) return [];
                 const yesPrice = outcomePrices[0];
                 if (typeof yesPrice !== 'number' || !Number.isFinite(yesPrice) || yesPrice <= 0 || yesPrice >= 0.95) return [];
@@ -3399,67 +3231,74 @@ const LiveCanonicalChart = ({
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [activeTab, chartOutcomeRequestInputs, marketId, marketType, notFoundKey, outcomeId, polymarketEventSlug, requestKey]);
-
-  const CustomTooltip = ({ active, payload, label }: any) => {
-    if (!active || !payload?.length) return null;
-    return (
-      <div className="bg-[#18181b]/95 border border-zinc-800 rounded-lg p-3 shadow-2xl z-50 min-w-[200px]">
-        <div className="text-zinc-400 text-[11px] mb-3 font-sans">
-          {formatChartAxisTimeLabel(Number(label), activeTab) || String(label)}
-        </div>
-        <div className="flex flex-col gap-2">
-          {[...payload].filter((entry: any) => typeof entry.value === 'number').sort((a: any, b: any) => b.value - a.value).map((entry: any) => (
-            <div key={entry.dataKey} className="flex items-center gap-1.5 text-[13px] font-medium">
-              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: entry.color }} />
-              <span className="font-bold text-white">{Number(entry.value).toFixed(Number(entry.value) >= 10 ? 1 : 2)}%</span>
-              <span className="text-white ml-0.5">{entry.name}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  };
+  }, [
+    activeTab,
+    chartOutcomeRequestInputs,
+    marketId,
+    marketType,
+    notFoundKey,
+    outcomeId,
+    polymarketEventSlug,
+    polymarketMarketSlug,
+    prefersPolymarketBinaryHistory,
+    prefersPolymarketMultiHistory,
+    requestKey,
+  ]);
 
   return (
-    <div className="relative w-full h-full flex flex-col pt-2 pb-2 bg-[#0c0c0c] rounded-xl overflow-hidden">
-      <div className="flex items-center justify-between gap-3 px-4 pt-2">
-        <div className="flex items-center gap-2">
-          <Activity className="w-4 h-4 text-white" />
-          <span className="text-white font-bold text-sm">Probability</span>
+    <div className="relative flex h-full w-full flex-col overflow-hidden rounded-[28px] bg-[#141a22] px-4 py-4 sm:px-6 sm:py-5">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0 overflow-x-auto custom-scrollbar">
+          <div className="flex w-max min-w-full flex-wrap items-center gap-x-6 gap-y-2 pr-3 text-[13px] sm:text-[15px]">
+            {series.slice(0, 5).map((item) => {
+              const latest = [...rows].reverse().find((point) => typeof point[item.id] === 'number');
+              const value = typeof latest?.[item.id] === 'number' ? latest[item.id] as number : null;
+              return (
+                <div key={item.id} className="flex items-center gap-2 text-zinc-300">
+                  <div className="h-3 w-3 rounded-full" style={{ backgroundColor: item.color }} />
+                  <span className="font-medium text-zinc-400">
+                    {item.label} <span className="font-semibold text-zinc-200">{value === null ? 'pending' : `${value.toFixed(value >= 10 ? 1 : 2)}%`}</span>
+                  </span>
+                </div>
+              );
+            })}
+          </div>
         </div>
-        {onMarketTypeChange && (
-          <div className="flex shrink-0 rounded-md border border-zinc-800 bg-zinc-900 p-1">
+        <div className="flex items-center justify-between gap-3 lg:flex-col lg:items-end">
+          <div className="text-[13px] font-semibold tracking-tight text-[#2b3b59] sm:text-[18px]">
+            {chartSourceLabel}
+          </div>
+          {onMarketTypeChange && (
+            <div className="flex shrink-0 rounded-full border border-white/8 bg-white/[0.04] p-1">
             <button
               type="button"
               onClick={() => onMarketTypeChange('binary')}
-              className={`px-2 py-1 text-[10px] font-bold uppercase rounded ${marketType === 'binary' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
+                className={`rounded-full px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] transition-colors ${marketType === 'binary' ? 'bg-white text-[#12161c]' : 'text-zinc-500 hover:text-zinc-300'}`}
             >
               Binary
             </button>
             <button
               type="button"
               onClick={() => onMarketTypeChange('multi')}
-              className={`px-2 py-1 text-[10px] font-bold uppercase rounded ${marketType === 'multi' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
+                className={`rounded-full px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] transition-colors ${marketType === 'multi' ? 'bg-white text-[#12161c]' : 'text-zinc-500 hover:text-zinc-300'}`}
             >
               Multi
             </button>
           </div>
-        )}
+          )}
+        </div>
       </div>
-      <div className="w-full bg-zinc-800 h-px mt-2" />
-      <div className="w-24 bg-white h-0.5" />
-      <div className="mt-3 overflow-x-auto px-2 sm:px-4 custom-scrollbar">
-        <div className="flex w-max min-w-0 items-center rounded-md bg-transparent space-x-1">
+      <div className="mt-4 overflow-x-auto custom-scrollbar">
+        <div className="flex w-max items-center gap-2 rounded-full bg-[#0e131a]/70 p-1">
           {tabs.map((tab) => (
             <button
               key={tab}
               type="button"
               onClick={() => setActiveTab(tab)}
-              className={`px-2.5 py-1 text-sm font-bold transition-colors sm:px-3 ${
+              className={`rounded-full px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.14em] transition-colors ${
                 activeTab === tab
-                  ? 'text-white border border-white bg-transparent rounded shadow-sm'
-                  : 'text-zinc-400 hover:text-white'
+                  ? 'bg-white text-[#11161d]'
+                  : 'text-zinc-500 hover:text-zinc-200'
               }`}
             >
               {tab}
@@ -3467,24 +3306,12 @@ const LiveCanonicalChart = ({
           ))}
         </div>
       </div>
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-3 mt-3 text-[12px] min-h-[20px] sm:px-4 sm:text-[13px]">
-        {series.slice(0, 5).map((item) => {
-          const latest = [...rows].reverse().find((point) => typeof point[item.id] === 'number');
-          const value = typeof latest?.[item.id] === 'number' ? latest[item.id] as number : null;
-          return (
-            <div key={item.id} className="flex items-center gap-1.5">
-              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: item.color }} />
-              <span className="text-white font-bold">
-                {item.label} {value === null ? 'pending' : `${value.toFixed(value >= 10 ? 1 : 2)}%`}
-              </span>
-            </div>
-          );
-        })}
-        {historyStatus === 'accumulating' && (
-          <div className="text-zinc-500 font-bold ml-2">Live history accumulating</div>
-        )}
-      </div>
-      <div ref={chartFrameRef} className="relative mt-4 min-h-[260px] w-full flex-1 pr-2 sm:mt-5 sm:min-h-[300px] sm:pr-4">
+      {historyStatus === 'accumulating' && (
+        <div className="mt-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-500">
+          Live history accumulating
+        </div>
+      )}
+      <div ref={chartFrameRef} className="relative mt-4 min-h-[280px] w-full flex-1">
         {loading && rows.length === 0 && (
           <div className="absolute inset-0 z-10 flex items-center justify-center text-xs font-bold uppercase tracking-[0.18em] text-zinc-500">
             Loading live chart
@@ -3497,7 +3324,7 @@ const LiveCanonicalChart = ({
         )}
         {!loading && !error && rows.length === 0 && (
           <div className="absolute inset-0 z-10 flex items-center justify-center px-6 text-center text-xs font-semibold text-zinc-500">
-            Live chart data will appear after Lotus receives backend orderbook points for this market.
+            {chartSourceLabel} history is not available for this market yet.
           </div>
         )}
         {chartReady && chartGeometry ? (
@@ -3518,14 +3345,14 @@ const LiveCanonicalChart = ({
                     x2={chartGeometry.margin.left + chartGeometry.plotWidth}
                     y1={y}
                     y2={y}
-                    stroke="#27272A"
-                    strokeDasharray="3 3"
-                    opacity="0.6"
+                    stroke="#29415f"
+                    strokeDasharray="3 10"
+                    opacity="0.72"
                   />
                   <text
-                    x={chartGeometry.margin.left + chartGeometry.plotWidth + 8}
+                    x={chartGeometry.margin.left + chartGeometry.plotWidth + 10}
                     y={y + 4}
-                    fill="#71717A"
+                    fill="#a6b2c8"
                     fontSize="11"
                     textAnchor="start"
                   >
@@ -3534,16 +3361,17 @@ const LiveCanonicalChart = ({
                 </g>
               );
             })}
-            {chartTickRows.map((row) => {
+            {chartTickRows.map((row, index) => {
               if (typeof row.timestamp !== 'number') return null;
+              const anchor = index === 0 ? 'start' : index === chartTickRows.length - 1 ? 'end' : 'middle';
               return (
                 <text
                   key={`time-${row.timestamp}`}
                   x={chartGeometry.xForTimestamp(row.timestamp)}
                   y={chartHeight - 8}
-                  fill="#71717A"
+                  fill="#435168"
                   fontSize="11"
-                  textAnchor="middle"
+                  textAnchor={anchor}
                 >
                   {formatChartAxisTimeLabel(row.timestamp, activeTab)}
                 </text>
@@ -3552,26 +3380,36 @@ const LiveCanonicalChart = ({
             {chartGeometry.lineSeries.map(({ item, points, latest }) => {
               if (points.length === 0) return null;
               const polylinePoints = points.map((point) => `${point.x},${point.y}`).join(' ');
+              const highlightRadius = item.emphasis || series.length === 1 ? 6 : 5;
               return (
                 <g key={item.id}>
                   <polyline
                     fill="none"
                     points={polylinePoints}
                     stroke={item.color}
-                    strokeWidth={item.emphasis || series.length === 1 ? 2.5 : 1.8}
+                    strokeWidth={item.emphasis || series.length === 1 ? 3 : 2.4}
                     strokeDasharray={item.dashed ? '4 2' : undefined}
                     strokeLinejoin="round"
                     strokeLinecap="round"
                   />
                   {latest ? (
-                    <circle
-                      cx={latest.x}
-                      cy={latest.y}
-                      r={item.emphasis || series.length === 1 ? 5 : 4}
-                      fill={item.color}
-                      stroke="#0c0c0c"
-                      strokeWidth="2"
-                    />
+                    <>
+                      <circle
+                        cx={latest.x}
+                        cy={latest.y}
+                        r={highlightRadius * 2}
+                        fill={item.color}
+                        opacity="0.16"
+                      />
+                      <circle
+                        cx={latest.x}
+                        cy={latest.y}
+                        r={highlightRadius}
+                        fill={item.color}
+                        stroke="#141a22"
+                        strokeWidth="2.5"
+                      />
+                    </>
                   ) : null}
                 </g>
               );
@@ -7406,9 +7244,13 @@ const InfraTradingTerminalInner = ({
                  marketType={marketType}
                  onMarketTypeChange={setMarketType}
                  outcomes={terminalOutcomes}
-                 polymarketEventSlug={selectedMarket?.venueMarkets?.find((market) => market.venue === 'POLYMARKET' && market.eventSlug)?.eventSlug
-                   ?? selectedMarket?.eventSlug
+                 polymarketEventSlug={terminalMarket.venueMarkets?.find((market) => market.venue === 'POLYMARKET' && market.eventSlug)?.eventSlug
                    ?? terminalMarket.eventSlug
+                   ?? selectedMarket?.venueMarkets?.find((market) => market.venue === 'POLYMARKET' && market.eventSlug)?.eventSlug
+                   ?? selectedMarket?.eventSlug
+                   ?? null}
+                 polymarketMarketSlug={terminalMarket.venueMarkets?.find((market) => market.venue === 'POLYMARKET' && market.marketSlug)?.marketSlug
+                   ?? selectedMarket?.venueMarkets?.find((market) => market.venue === 'POLYMARKET' && market.marketSlug)?.marketSlug
                    ?? null}
                />
             </div>
