@@ -15,6 +15,7 @@ import {
   resolveSelectedOutcomeOrderbookDisplaySource,
   resolveSelectedOutcomeDisplayValues,
   resolveVisibleSelectedOutcomeOrderbook,
+  shouldApplyLatchedOutcomeDisplay,
   shouldSyncSelectedOutcomeRowDisplay,
   shouldResetOrderbookForRequestChange,
   shouldReuseSelectedOutcomeState,
@@ -262,6 +263,14 @@ describe('shouldSyncSelectedOutcomeRowDisplay', () => {
       outcomeExpanded: false,
       orderbookUsable: false,
     })).toBe(false);
+  });
+});
+
+describe('shouldApplyLatchedOutcomeDisplay', () => {
+  it('applies latched values only to the matching outcome row', () => {
+    expect(shouldApplyLatchedOutcomeDisplay('france', 'france')).toBe(true);
+    expect(shouldApplyLatchedOutcomeDisplay('argentina', 'france')).toBe(false);
+    expect(shouldApplyLatchedOutcomeDisplay(null, 'france')).toBe(false);
   });
 });
 

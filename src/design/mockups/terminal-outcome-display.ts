@@ -137,6 +137,17 @@ export const shouldSyncSelectedOutcomeRowDisplay = (input: {
   return !sameDisplayValues(input.current, input.next);
 };
 
+export const shouldApplyLatchedOutcomeDisplay = (
+  displayOutcomeId: string | null | undefined,
+  outcomeId: string | null | undefined,
+): boolean => (
+  typeof displayOutcomeId === 'string'
+  && displayOutcomeId.length > 0
+  && typeof outcomeId === 'string'
+  && outcomeId.length > 0
+  && displayOutcomeId === outcomeId
+);
+
 export const mergeTerminalOutcomeRowDisplay = <T extends TerminalOutcomeRowDisplay>(
   current: T,
   next: TerminalOutcomeRowDisplay,

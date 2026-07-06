@@ -23,6 +23,7 @@ import {
   resolveSelectedMarketSeedMedia,
   resolveInitialSelectedOutcomeId,
   resolveVisibleSelectedOutcomeOrderbook,
+  shouldApplyLatchedOutcomeDisplay,
   shouldResetOrderbookForRequestChange,
   shouldReuseSelectedOutcomeState,
   shouldSyncSelectedOutcomeRowDisplay,
@@ -3554,6 +3555,7 @@ const InfraTradingTerminalInner = ({
   const [showAllOutcomes, setShowAllOutcomes] = useState(false);
   const [expandedOutcomeId, setExpandedOutcomeId] = useState<string | null>(null);
   const [selectedOutcomeId, setSelectedOutcomeId] = useState<string | null>(null);
+  const [selectedOutcomeDisplayOutcomeId, setSelectedOutcomeDisplayOutcomeId] = useState<string | null>(null);
   const [selectedOutcomeDisplayValues, setSelectedOutcomeDisplayValues] = useState<TerminalOutcomeDisplayValues | null>(null);
   const [visibleSelectedOutcomeOrderbook, setVisibleSelectedOutcomeOrderbook] = useState<MarketOrderbookResponse | null>(null);
   const [terminalOutcomes, setTerminalOutcomes] = useState<TerminalOutcomeRow[]>([]);
@@ -4082,6 +4084,7 @@ const InfraTradingTerminalInner = ({
           probability: normalizeTerminalDisplayValue(row.prob),
         }
       : null;
+    setSelectedOutcomeDisplayOutcomeId(row?.id ?? outcomeId ?? null);
     setSelectedOutcomeDisplayValues(nextDisplayValues);
   }, []);
   const cacheKeyForOutcome = useCallback((
@@ -4120,11 +4123,20 @@ const InfraTradingTerminalInner = ({
     setVisibleSelectedOutcomeOrderbook(cacheKey ? orderbookCacheRef.current.get(cacheKey) ?? null : null);
     if (cacheKey) {
       const cachedDisplay = outcomeDisplayCacheRef.current.get(cacheKey) ?? null;
-      if (cachedDisplay) setSelectedOutcomeDisplayValues(cachedDisplay);
+      if (cachedDisplay) {
+        setSelectedOutcomeDisplayOutcomeId(outcomeId);
+        setSelectedOutcomeDisplayValues(cachedDisplay);
+      }
     }
     setSelectedOutcomeId(outcomeId);
   }, [cacheKeyForOutcome, latchSelectedOutcomeDisplayFallback]);
-  const selectedTicketUsesLatchedOutcomeDisplay = expandedOutcomeId === selectedOutcome?.id && selectedTicketOutcome?.id === selectedOutcome?.id;
+  const selectedOutcomeDisplayMatchesActiveOutcome = shouldApplyLatchedOutcomeDisplay(
+    selectedOutcomeDisplayOutcomeId,
+    selectedOutcome?.id,
+  );
+  const selectedTicketUsesLatchedOutcomeDisplay = selectedOutcomeDisplayMatchesActiveOutcome
+    && expandedOutcomeId === selectedOutcome?.id
+    && selectedTicketOutcome?.id === selectedOutcome?.id;
   const selectedTicketYesPrice = selectedTicketUsesLatchedOutcomeDisplay
     ? selectedOutcomeDisplayValues?.yesPrice ?? selectedTicketOutcome?.yesPrice ?? null
     : selectedTicketOutcome?.yesPrice ?? null;
@@ -4141,9 +4153,11 @@ const InfraTradingTerminalInner = ({
     })) {
       return;
     }
+    setSelectedOutcomeDisplayOutcomeId(selectedOutcome?.id ?? null);
     setSelectedOutcomeDisplayValues(selectedOutcomeRowDisplay);
   }, [
     expandedOutcomeId,
+    selectedOutcomeDisplayOutcomeId,
     selectedOutcome?.id,
     selectedOutcomeBookUsable,
     selectedOutcomeDisplayValues,
@@ -7516,17 +7530,21 @@ const InfraTradingTerminalInner = ({
                            const primaryVenue = isExpandedOutcome && rowVenueList.length > 0
                              ? rowVenueList[0]!
                              : m.primaryVenue ?? venues[0] ?? 'lotus';
-                           const rowYesPrice = isExpandedOutcome
+                           const rowUsesLatchedDisplay = isExpandedOutcome && shouldApplyLatchedOutcomeDisplay(
+                             selectedOutcomeDisplayOutcomeId,
+                             m.id,
+                           );
+                           const rowYesPrice = rowUsesLatchedDisplay
                              ? normalizeTerminalDisplayValue(selectedOutcomeDisplayValues?.yesPrice)
                                ?? normalizeTerminalDisplayValue(m.yesPrice)
                                ?? m.yesPrice
                              : m.yesPrice;
-                           const rowNoPrice = isExpandedOutcome
+                           const rowNoPrice = rowUsesLatchedDisplay
                              ? normalizeTerminalDisplayValue(selectedOutcomeDisplayValues?.noPrice)
                                ?? normalizeTerminalDisplayValue(m.noPrice)
                                ?? m.noPrice
                              : m.noPrice;
-                           const rowProbability = isExpandedOutcome
+                           const rowProbability = rowUsesLatchedDisplay
                              ? normalizeTerminalDisplayValue(selectedOutcomeDisplayValues?.probability)
                                ?? normalizeTerminalDisplayValue(m.prob)
                                ?? m.prob
