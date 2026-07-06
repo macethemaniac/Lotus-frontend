@@ -238,6 +238,39 @@ const dashboardEventMediaKey = (market: Pick<DashboardMarketRow, 'eventId' | 'ca
 const dashboardMarketEventSlug = (market: Pick<DashboardMarketRow, 'title' | 'eventSlug'>): string =>
   market.eventSlug || eventSlugFromTitle(market.title);
 
+type TerminalRouteCandidate = {
+  title: string;
+  eventSlug?: string | null;
+  marketType?: string | null;
+  outcomes?: unknown[] | null;
+  venueMarkets?: unknown[] | null;
+  canonicalMarketIds?: string[] | null;
+  venues?: string[] | null;
+};
+
+const terminalRouteSelectionScore = (
+  market: TerminalRouteCandidate,
+): number => {
+  const outcomeCount = market.outcomes?.length ?? 0;
+  const venueMarketCount = market.venueMarkets?.length ?? 0;
+  const canonicalMarketCount = market.canonicalMarketIds?.length ?? 0;
+  const venueCount = market.venues?.length ?? 0;
+  const multiBonus = market.marketType === 'multi' || outcomeCount > 2 ? 1_000 : 0;
+  return multiBonus + (outcomeCount * 100) + (venueMarketCount * 10) + canonicalMarketCount + venueCount;
+};
+
+const pickTerminalRouteRow = <T extends TerminalRouteCandidate>(
+  rows: T[],
+  routeEventSlug: string | null | undefined,
+): T | null => {
+  if (rows.length === 0) return null;
+  const scopedRows = routeEventSlug
+    ? rows.filter((row) => (row.eventSlug || eventSlugFromTitle(row.title)) === routeEventSlug)
+    : rows;
+  const candidates = scopedRows.length > 0 ? scopedRows : rows;
+  return [...candidates].sort((left, right) => terminalRouteSelectionScore(right) - terminalRouteSelectionScore(left))[0] ?? null;
+};
+
 const shouldPreferEventMedia = (market: Pick<DashboardMarketRow, 'marketType' | 'outcomes'>): boolean =>
   shouldPreferDashboardEventMedia(market);
 
@@ -1652,9 +1685,7 @@ export const DashboardV2Mockup = ({
     [quotedMarketRows],
   );
   const immediateTerminalSelection = useMemo<TerminalMarketSelection | null>(() => {
-    if (terminalMarketSelections.length === 0) return null;
-    if (!routeEventSlug) return terminalMarketSelections[0] ?? null;
-    return terminalMarketSelections.find((market) => market.eventSlug === routeEventSlug) ?? null;
+    return pickTerminalRouteRow(terminalMarketSelections, routeEventSlug);
   }, [routeEventSlug, terminalMarketSelections]);
   const activeTerminalSelection = selectedTerminalMarket ?? immediateTerminalSelection;
   const terminalRouteResolved = terminalRouteSelectionMatches(routeEventSlug, activeTerminalSelection);
@@ -1663,8 +1694,12 @@ export const DashboardV2Mockup = ({
     if (activePage !== 'terminal') return;
     if (!immediateTerminalSelection) return;
     setSelectedTerminalMarket((current) => {
-      if (terminalRouteSelectionMatches(routeEventSlug, current)) return current;
-      return immediateTerminalSelection;
+      if (!current) return immediateTerminalSelection;
+      if (!terminalRouteSelectionMatches(routeEventSlug, current)) return immediateTerminalSelection;
+      if (terminalRouteSelectionScore(immediateTerminalSelection) > terminalRouteSelectionScore(current)) {
+        return immediateTerminalSelection;
+      }
+      return current;
     });
   }, [activePage, immediateTerminalSelection, routeEventSlug]);
 
@@ -1710,7 +1745,7 @@ export const DashboardV2Mockup = ({
           setTerminalRouteError('This terminal market has no routeable outcomes yet.');
           return;
         }
-        const matchedRow = quotedRows.find((row) => dashboardMarketEventSlug(row) === eventSlugFromTitle(matchedEvent.title)) ?? quotedRows[0]!;
+        const matchedRow = pickTerminalRouteRow(quotedRows, eventSlugFromTitle(matchedEvent.title)) ?? quotedRows[0]!;
         const nextSelection = toTerminalMarketSelection(matchedRow);
         setSelectedTerminalMarket(nextSelection);
         setTerminalRouteError(null);
