@@ -238,6 +238,40 @@ const dashboardEventMediaKey = (market: Pick<DashboardMarketRow, 'eventId' | 'ca
 const dashboardMarketEventSlug = (market: Pick<DashboardMarketRow, 'title' | 'eventSlug'>): string =>
   market.eventSlug || eventSlugFromTitle(market.title);
 
+const TERMINAL_ROUTE_CACHE_PREFIX = 'lotus:terminal-route-selection:v1:';
+
+const loadCachedTerminalRouteSelection = (
+  routeEventSlug: string | null | undefined,
+): TerminalMarketSelection | null => {
+  if (!routeEventSlug || typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(`${TERMINAL_ROUTE_CACHE_PREFIX}${routeEventSlug}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as TerminalMarketSelection | null;
+    if (!parsed || typeof parsed !== 'object' || !parsed.title) return null;
+    return {
+      ...parsed,
+      eventSlug: parsed.eventSlug ?? routeEventSlug,
+    };
+  } catch {
+    return null;
+  }
+};
+
+const saveCachedTerminalRouteSelection = (
+  routeEventSlug: string | null | undefined,
+  selection: TerminalMarketSelection | null | undefined,
+): void => {
+  if (!routeEventSlug || !selection || typeof window === 'undefined') return;
+  const hasResolvedData = (selection.outcomes?.length ?? 0) > 0 || (selection.venueMarkets?.length ?? 0) > 0 || selection.venueCount > 0;
+  if (!hasResolvedData) return;
+  try {
+    window.localStorage.setItem(`${TERMINAL_ROUTE_CACHE_PREFIX}${routeEventSlug}`, JSON.stringify(selection));
+  } catch {
+    // Ignore storage failures; the terminal can still resolve live route data.
+  }
+};
+
 const titleFromEventSlug = (slug: string): string => {
   const acronymMap: Record<string, string> = {
     fifa: 'FIFA',
@@ -265,6 +299,8 @@ const buildOptimisticTerminalRouteSelection = (
   routeEventSlug: string | null | undefined,
 ): TerminalMarketSelection | null => {
   if (!routeEventSlug) return null;
+  const cachedSelection = loadCachedTerminalRouteSelection(routeEventSlug);
+  if (cachedSelection) return cachedSelection;
   const title = titleFromEventSlug(routeEventSlug);
   const marketType = /winner|champion|cup|election|nominee|mayor|league|season/i.test(title) ? 'multi' : 'binary';
   const category = /world cup|cup|league|championship|winner|team|match|fifa|nba|nfl|mlb|nhl/i.test(title) ? 'Sports' : 'Markets';
@@ -1890,6 +1926,13 @@ export const DashboardV2Mockup = ({
       return current;
     });
   }, [activePage, immediateTerminalSelection, routeEventSlug]);
+
+  useEffect(() => {
+    if (activePage !== 'terminal') return;
+    if (!routeEventSlug) return;
+    if (!resolvedTerminalSelection) return;
+    saveCachedTerminalRouteSelection(routeEventSlug, resolvedTerminalSelection);
+  }, [activePage, resolvedTerminalSelection, routeEventSlug]);
 
   useEffect(() => {
     if (activePage !== 'terminal') {
