@@ -3071,6 +3071,7 @@ const LiveCanonicalChartImpl = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notFoundKey, setNotFoundKey] = useState<string | null>(null);
+  const productionSafeMode = env.lotusDeployEnv === 'production';
   const tabs: MarketChartTimeframe[] = ['1H', '6H', '1D', '1W', '1M', 'ALL'];
   const requestKey = `${marketId ?? 'none'}:${outcomeId ?? 'none'}`;
   const selectedChartOutcome = useMemo(() => {
@@ -3192,6 +3193,13 @@ const LiveCanonicalChartImpl = ({
   React.useEffect(() => {
     let cancelled = false;
     const loadChart = async () => {
+      if (productionSafeMode) {
+        setVenueChart(null);
+        setOutcomeCharts([]);
+        setLoading(false);
+        setError(null);
+        return;
+      }
       if (!marketId) {
         setVenueChart(null);
         setOutcomeCharts([]);
@@ -3214,7 +3222,7 @@ const LiveCanonicalChartImpl = ({
                 await getMarketChart(outcome.marketId!, { outcomeId: outcome.quoteOutcomeId, timeframe: activeTab }),
                 {
                   marketType: 'binary',
-                  productionSafeMode: env.lotusDeployEnv === 'production',
+                  productionSafeMode,
                 },
               );
               return {
@@ -3250,7 +3258,7 @@ const LiveCanonicalChartImpl = ({
           await getMarketChart(marketId, { outcomeId, timeframe: activeTab }),
           {
             marketType,
-            productionSafeMode: env.lotusDeployEnv === 'production',
+            productionSafeMode,
           },
         );
         if (!cancelled) {
@@ -3285,7 +3293,39 @@ const LiveCanonicalChartImpl = ({
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [activeTab, binaryOutcomeChartInputs, marketId, marketType, notFoundKey, outcomeId, requestKey]);
+  }, [activeTab, binaryOutcomeChartInputs, marketId, marketType, notFoundKey, outcomeId, productionSafeMode, requestKey]);
+
+  if (productionSafeMode) {
+    const liveProbability = selectedChartOutcome?.prob ?? outcomes[0]?.prob ?? null;
+    const liveLabel = selectedChartOutcome?.name ?? outcomes[0]?.name ?? 'Selected outcome';
+    return (
+      <div className="relative w-full h-full flex flex-col pt-2 pb-2 bg-[#0c0c0c] rounded-xl overflow-hidden">
+        <div className="flex items-center justify-between gap-3 px-4 pt-2">
+          <div className="flex items-center gap-2">
+            <Activity className="w-4 h-4 text-white" />
+            <span className="text-white font-bold text-sm">Probability</span>
+          </div>
+        </div>
+        <div className="w-full bg-zinc-800 h-px mt-2" />
+        <div className="w-24 bg-white h-0.5" />
+        <div className="flex flex-1 items-center justify-center px-6 py-10">
+          <div className="max-w-xl text-center">
+            <div className="text-sm font-semibold uppercase tracking-[0.24em] text-zinc-500">Production Safe Mode</div>
+            <div className="mt-4 text-2xl font-semibold text-zinc-100">Live chart is temporarily disabled.</div>
+            <div className="mt-3 text-sm text-zinc-400">
+              This route is using a lightweight production view here to keep the terminal responsive and prevent renderer crashes.
+            </div>
+            {liveProbability ? (
+              <div className="mt-6 inline-flex items-center gap-3 rounded-full border border-zinc-800 bg-zinc-950 px-5 py-3">
+                <span className="text-sm font-medium text-zinc-300">{liveLabel}</span>
+                <span className="text-lg font-semibold text-emerald-400">{liveProbability}</span>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (!active || !payload?.length) return null;
