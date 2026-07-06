@@ -3099,8 +3099,9 @@ const LiveCanonicalChartImpl = ({
   outcomes?: TerminalOutcomeRow[];
 }) => {
   const chartTimeframe: MarketChartTimeframe = 'ALL';
-  const chartFetchOutcomeLimit = marketType === 'multi' ? 8 : 4;
-  const chartDisplayOutcomeLimit = marketType === 'multi' ? 4 : 1;
+  const chartShowsMultipleOutcomes = marketType === 'multi' || outcomes.length > 1;
+  const chartFetchOutcomeLimit = chartShowsMultipleOutcomes ? 8 : 4;
+  const chartDisplayOutcomeLimit = chartShowsMultipleOutcomes ? 4 : 1;
   const [outcomeCharts, setOutcomeCharts] = useState<OutcomeChartEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -3438,7 +3439,7 @@ const LiveCanonicalChartImpl = ({
             })}
             {chartGeometry.lineSeries.map(({ item, points, latest }) => {
               if (points.length === 0) return null;
-              const linePath = buildSmoothChartLinePath(points);
+              const linePath = buildLinearChartLinePath(points);
               return (
                 <g key={item.id}>
                   <path
@@ -3830,8 +3831,8 @@ const InfraTradingTerminalInner = ({
     [terminalOutcomes],
   );
   const liveChartOutcomes = useMemo(
-    () => (marketType === 'binary' ? terminalOutcomes : EMPTY_TERMINAL_OUTCOMES),
-    [marketType, terminalOutcomes],
+    () => terminalOutcomes,
+    [terminalOutcomes],
   );
   const quoteableTerminalOutcomes = useMemo(() => {
     if (sortedTerminalOutcomes.length === 0 && outcomesLoading) {
