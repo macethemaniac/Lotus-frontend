@@ -1654,6 +1654,14 @@ export const DashboardV2Mockup = ({
   const terminalRouteResolved = terminalRouteSelectionMatches(routeEventSlug, selectedTerminalMarket);
   const terminalRoutePending = activePage === 'terminal' && !terminalRouteResolved && !terminalRouteError;
   useEffect(() => {
+    if (activePage !== 'terminal') return;
+    setSelectedTerminalMarket((current) => {
+      if (!current) return current;
+      return terminalRouteSelectionMatches(routeEventSlug, current) ? current : null;
+    });
+    setTerminalRouteError(null);
+  }, [activePage, routeEventSlug]);
+  useEffect(() => {
     if (activePage !== 'terminal') {
       setTerminalRouteError(null);
       return;
@@ -3047,6 +3055,7 @@ export const DashboardV2Mockup = ({
                 </div>
               ) : (
                 <InfraTradingTerminal
+                  key={selectedTerminalMarket?.eventSlug ?? selectedTerminalMarket?.marketId ?? routeEventSlug ?? 'terminal'}
                   embedded
                   darkMode={isDarkMode}
                   selectedMarket={selectedTerminalMarket}
