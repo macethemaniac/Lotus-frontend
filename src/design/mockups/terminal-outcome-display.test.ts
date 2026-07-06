@@ -246,6 +246,23 @@ describe('shouldSyncSelectedOutcomeRowDisplay', () => {
       orderbookUsable: true,
     })).toBe(true);
   });
+
+  it('does not keep re-latching collapsed selected rows on background price refreshes', () => {
+    expect(shouldSyncSelectedOutcomeRowDisplay({
+      current: {
+        yesPrice: '18c',
+        noPrice: '82c',
+        probability: '18%',
+      },
+      next: {
+        yesPrice: '19c',
+        noPrice: '81c',
+        probability: '19%',
+      },
+      outcomeExpanded: false,
+      orderbookUsable: false,
+    })).toBe(false);
+  });
 });
 
 describe('mergeTerminalOutcomeRowDisplay', () => {

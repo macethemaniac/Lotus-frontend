@@ -4124,7 +4124,7 @@ const InfraTradingTerminalInner = ({
     }
     setSelectedOutcomeId(outcomeId);
   }, [cacheKeyForOutcome, latchSelectedOutcomeDisplayFallback]);
-  const selectedTicketUsesLatchedOutcomeDisplay = selectedTicketOutcome?.id === selectedOutcome?.id;
+  const selectedTicketUsesLatchedOutcomeDisplay = expandedOutcomeId === selectedOutcome?.id && selectedTicketOutcome?.id === selectedOutcome?.id;
   const selectedTicketYesPrice = selectedTicketUsesLatchedOutcomeDisplay
     ? selectedOutcomeDisplayValues?.yesPrice ?? selectedTicketOutcome?.yesPrice ?? null
     : selectedTicketOutcome?.yesPrice ?? null;
@@ -5912,7 +5912,9 @@ const InfraTradingTerminalInner = ({
       const effectiveOutcomeId = streamPayloadOutcomeId(payload) ?? expectedOutcomeId ?? (marketType === 'binary' ? 'YES' : null);
       if (!effectiveOutcomeId && marketType !== 'binary') return;
       const displayBlocker = diagnosticsEnabled ? blocker : null;
-      setTerminalOutcomes((current) => current.map((outcome) => {
+      setTerminalOutcomes((current) => {
+        let changed = false;
+        const nextOutcomes = current.map((outcome) => {
         const payloadMarketId = streamPayloadMarketId(payload);
         if (payloadMarketId && !terminalOutcomeMatchesMarketAlias(outcome, payloadMarketId, expectedMarketId)) return outcome;
         if (!payloadMarketId && outcome.marketId !== expectedMarketId) return outcome;
@@ -5920,13 +5922,23 @@ const InfraTradingTerminalInner = ({
         const yesPrice = quotePrice !== null ? formatProbabilityPrice(quotePrice) : '-';
         const noPrice = quotePrice !== null && marketType === 'binary' ? formatProbabilityPrice(1 - quotePrice) : '-';
         if (!payloadVenue) {
-          return {
+          const nextOutcome = {
             ...outcome,
             yesPrice: quotePrice !== null ? yesPrice : outcome.yesPrice,
             noPrice: quotePrice !== null ? noPrice : outcome.noPrice,
             status: quotePrice !== null ? 'live' : outcome.status,
             blocker: displayBlocker ?? outcome.blocker,
           };
+          if (
+            nextOutcome.yesPrice !== outcome.yesPrice ||
+            nextOutcome.noPrice !== outcome.noPrice ||
+            nextOutcome.status !== outcome.status ||
+            nextOutcome.blocker !== outcome.blocker
+          ) {
+            changed = true;
+            return nextOutcome;
+          }
+          return outcome;
         }
         const nextVenueQuote: TerminalVenueQuote = {
           venue: payloadVenue,
@@ -5934,6 +5946,7 @@ const InfraTradingTerminalInner = ({
           noPrice,
           blocker: displayBlocker,
         };
+        const existingVenueQuote = outcome.venueQuotes.find((quote) => toBackendVenueId(quote.venue) === toBackendVenueId(payloadVenue)) ?? null;
         const venueQuotes = [
           ...outcome.venueQuotes.filter((quote) => toBackendVenueId(quote.venue) !== toBackendVenueId(payloadVenue)),
           nextVenueQuote,
@@ -5941,7 +5954,7 @@ const InfraTradingTerminalInner = ({
         const primaryQuote = quotePrice !== null && (!outcome.primaryVenue || toBackendVenueId(outcome.primaryVenue) === toBackendVenueId(payloadVenue))
           ? nextVenueQuote
           : null;
-        return {
+        const nextOutcome = {
           ...outcome,
           yesPrice: primaryQuote?.yesPrice ?? outcome.yesPrice,
           noPrice: primaryQuote?.noPrice ?? outcome.noPrice,
@@ -5950,7 +5963,25 @@ const InfraTradingTerminalInner = ({
           status: quotePrice !== null ? 'live' : outcome.status,
           blocker: displayBlocker ?? outcome.blocker,
         };
-      }));
+        const venueQuoteChanged = existingVenueQuote?.yesPrice !== nextVenueQuote.yesPrice
+          || existingVenueQuote?.noPrice !== nextVenueQuote.noPrice
+          || existingVenueQuote?.blocker !== nextVenueQuote.blocker
+          || existingVenueQuote === null;
+        if (
+          venueQuoteChanged ||
+          nextOutcome.yesPrice !== outcome.yesPrice ||
+          nextOutcome.noPrice !== outcome.noPrice ||
+          nextOutcome.primaryVenue !== outcome.primaryVenue ||
+          nextOutcome.status !== outcome.status ||
+          nextOutcome.blocker !== outcome.blocker
+        ) {
+          changed = true;
+          return nextOutcome;
+        }
+        return outcome;
+      });
+        return changed ? nextOutcomes : current;
+      });
     };
 
     const subscribeAll = () => {
