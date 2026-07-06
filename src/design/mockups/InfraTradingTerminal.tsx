@@ -3605,6 +3605,9 @@ const InfraTradingTerminalInner = ({
     orderbook: MarketOrderbookResponse | null;
     latestOrderbookStream: MarketOrderbookStreamPayload | null;
   } | null>(null);
+  const outcomeQuoteRenderTimerRef = React.useRef<number | null>(null);
+  const outcomeQuoteRenderLastCommitAtRef = React.useRef<number | null>(null);
+  const pendingOutcomeQuoteStreamsRef = React.useRef<Map<string, MarketOrderbookStreamPayload>>(new Map());
   const orderbookRequestKeyRef = React.useRef<string | null>(null);
   const terminalLivePriceRefreshInFlightRef = React.useRef(false);
   const terminalLivePriceRefreshQueuedRef = React.useRef(false);
@@ -5767,8 +5770,14 @@ const InfraTradingTerminalInner = ({
         window.clearTimeout(orderbookRenderTimerRef.current);
         orderbookRenderTimerRef.current = null;
       }
+      if (outcomeQuoteRenderTimerRef.current !== null) {
+        window.clearTimeout(outcomeQuoteRenderTimerRef.current);
+        outcomeQuoteRenderTimerRef.current = null;
+      }
       pendingOrderbookRenderRef.current = null;
+      pendingOutcomeQuoteStreamsRef.current.clear();
       orderbookRenderLastCommitAtRef.current = null;
+      outcomeQuoteRenderLastCommitAtRef.current = null;
       orderbookRequestKeyRef.current = null;
       orderbookRef.current = null;
       orderbookChecksumValidationSeqRef.current += 1;
@@ -5895,8 +5904,14 @@ const InfraTradingTerminalInner = ({
         window.clearTimeout(orderbookRenderTimerRef.current);
         orderbookRenderTimerRef.current = null;
       }
+      if (outcomeQuoteRenderTimerRef.current !== null) {
+        window.clearTimeout(outcomeQuoteRenderTimerRef.current);
+        outcomeQuoteRenderTimerRef.current = null;
+      }
       pendingOrderbookRenderRef.current = null;
+      pendingOutcomeQuoteStreamsRef.current.clear();
       orderbookRenderLastCommitAtRef.current = null;
+      outcomeQuoteRenderLastCommitAtRef.current = null;
       setOrderbookWsState('idle');
       setLatestOrderbookStream(null);
       return;
@@ -5947,6 +5962,124 @@ const InfraTradingTerminalInner = ({
         return;
       }
       orderbookRenderTimerRef.current = window.setTimeout(flushBufferedOrderbookRender, delayMs);
+    };
+
+    const applyStreamPricePayloadToOutcomeRows = (
+      current: TerminalOutcomeRow[],
+      payload: MarketOrderbookStreamPayload,
+    ): TerminalOutcomeRow[] => {
+      const quotePrice = orderbookNumericValue(payload.bestAsk ?? payload.bestBid);
+      const diagnosticsEnabled = lotusMarketDiagnosticsEnabled();
+      const blocker = (payload.blockers ?? []).map(normalizeStreamBlocker).find(Boolean) ?? null;
+      if (quotePrice === null && (!blocker || !diagnosticsEnabled)) return current;
+      const payloadVenue = payload.venue ?? null;
+      const effectiveOutcomeId = streamPayloadOutcomeId(payload) ?? expectedOutcomeId ?? (marketType === 'binary' ? 'YES' : null);
+      if (!effectiveOutcomeId && marketType !== 'binary') return current;
+      const displayBlocker = diagnosticsEnabled ? blocker : null;
+      let changed = false;
+      const nextOutcomes = current.map((outcome) => {
+        const payloadMarketId = streamPayloadMarketId(payload);
+        if (payloadMarketId && !terminalOutcomeMatchesMarketAlias(outcome, payloadMarketId, expectedMarketId)) return outcome;
+        if (!payloadMarketId && outcome.marketId !== expectedMarketId) return outcome;
+        if (!streamOutcomeMatches(effectiveOutcomeId, outcome.quoteOutcomeId)) return outcome;
+        const yesPrice = quotePrice !== null ? formatProbabilityPrice(quotePrice) : '-';
+        const noPrice = quotePrice !== null && marketType === 'binary' ? formatProbabilityPrice(1 - quotePrice) : '-';
+        if (!payloadVenue) {
+          const nextOutcome = {
+            ...outcome,
+            yesPrice: quotePrice !== null ? yesPrice : outcome.yesPrice,
+            noPrice: quotePrice !== null ? noPrice : outcome.noPrice,
+            status: quotePrice !== null ? 'live' : outcome.status,
+            blocker: displayBlocker ?? outcome.blocker,
+          };
+          if (
+            nextOutcome.yesPrice !== outcome.yesPrice ||
+            nextOutcome.noPrice !== outcome.noPrice ||
+            nextOutcome.status !== outcome.status ||
+            nextOutcome.blocker !== outcome.blocker
+          ) {
+            changed = true;
+            return nextOutcome;
+          }
+          return outcome;
+        }
+        const nextVenueQuote: TerminalVenueQuote = {
+          venue: payloadVenue,
+          yesPrice,
+          noPrice,
+          blocker: displayBlocker,
+        };
+        const existingVenueQuote = outcome.venueQuotes.find((quote) => toBackendVenueId(quote.venue) === toBackendVenueId(payloadVenue)) ?? null;
+        const venueQuotes = [
+          ...outcome.venueQuotes.filter((quote) => toBackendVenueId(quote.venue) !== toBackendVenueId(payloadVenue)),
+          nextVenueQuote,
+        ];
+        const primaryQuote = quotePrice !== null && (!outcome.primaryVenue || toBackendVenueId(outcome.primaryVenue) === toBackendVenueId(payloadVenue))
+          ? nextVenueQuote
+          : null;
+        const nextOutcome = {
+          ...outcome,
+          yesPrice: primaryQuote?.yesPrice ?? outcome.yesPrice,
+          noPrice: primaryQuote?.noPrice ?? outcome.noPrice,
+          primaryVenue: outcome.primaryVenue ?? payloadVenue,
+          venueQuotes,
+          status: quotePrice !== null ? 'live' : outcome.status,
+          blocker: displayBlocker ?? outcome.blocker,
+        };
+        const venueQuoteChanged = existingVenueQuote?.yesPrice !== nextVenueQuote.yesPrice
+          || existingVenueQuote?.noPrice !== nextVenueQuote.noPrice
+          || existingVenueQuote?.blocker !== nextVenueQuote.blocker
+          || existingVenueQuote === null;
+        if (
+          venueQuoteChanged ||
+          nextOutcome.yesPrice !== outcome.yesPrice ||
+          nextOutcome.noPrice !== outcome.noPrice ||
+          nextOutcome.primaryVenue !== outcome.primaryVenue ||
+          nextOutcome.status !== outcome.status ||
+          nextOutcome.blocker !== outcome.blocker
+        ) {
+          changed = true;
+          return nextOutcome;
+        }
+        return outcome;
+      });
+      return changed ? nextOutcomes : current;
+    };
+
+    const flushBufferedOutcomeQuoteRender = () => {
+      if (!active) return;
+      const payloads = [...pendingOutcomeQuoteStreamsRef.current.values()];
+      outcomeQuoteRenderTimerRef.current = null;
+      pendingOutcomeQuoteStreamsRef.current.clear();
+      if (payloads.length === 0) return;
+      outcomeQuoteRenderLastCommitAtRef.current = Date.now();
+      setTerminalOutcomesInBackground((current) => {
+        let nextOutcomes = current;
+        for (const payload of payloads) {
+          nextOutcomes = applyStreamPricePayloadToOutcomeRows(nextOutcomes, payload);
+        }
+        return nextOutcomes;
+      });
+    };
+
+    const queueBufferedOutcomeQuoteRender = (payload: MarketOrderbookStreamPayload) => {
+      const payloadKey = [
+        streamPayloadMarketId(payload) ?? expectedMarketId,
+        streamPayloadOutcomeId(payload) ?? expectedOutcomeId ?? '',
+        payload.venue ?? '',
+      ].join(':');
+      pendingOutcomeQuoteStreamsRef.current.set(payloadKey, payload);
+      if (outcomeQuoteRenderTimerRef.current !== null) return;
+      const delayMs = bufferedRenderDelay(
+        outcomeQuoteRenderLastCommitAtRef.current,
+        Date.now(),
+        TERMINAL_STREAM_RENDER_INTERVAL_MS,
+      );
+      if (delayMs === 0) {
+        flushBufferedOutcomeQuoteRender();
+        return;
+      }
+      outcomeQuoteRenderTimerRef.current = window.setTimeout(flushBufferedOutcomeQuoteRender, delayMs);
     };
 
     const clearScheduledRestRecovery = () => {
@@ -6054,87 +6187,6 @@ const InfraTradingTerminalInner = ({
       return true;
     };
 
-    const applyStreamPriceToOutcomes = (payload: MarketOrderbookStreamPayload) => {
-      const quotePrice = orderbookNumericValue(payload.bestAsk ?? payload.bestBid);
-      const diagnosticsEnabled = lotusMarketDiagnosticsEnabled();
-      const blocker = (payload.blockers ?? []).map(normalizeStreamBlocker).find(Boolean) ?? null;
-      if (quotePrice === null && (!blocker || !diagnosticsEnabled)) return;
-      const payloadVenue = payload.venue ?? null;
-      const effectiveOutcomeId = streamPayloadOutcomeId(payload) ?? expectedOutcomeId ?? (marketType === 'binary' ? 'YES' : null);
-      if (!effectiveOutcomeId && marketType !== 'binary') return;
-      const displayBlocker = diagnosticsEnabled ? blocker : null;
-      setTerminalOutcomesInBackground((current) => {
-        let changed = false;
-        const nextOutcomes = current.map((outcome) => {
-        const payloadMarketId = streamPayloadMarketId(payload);
-        if (payloadMarketId && !terminalOutcomeMatchesMarketAlias(outcome, payloadMarketId, expectedMarketId)) return outcome;
-        if (!payloadMarketId && outcome.marketId !== expectedMarketId) return outcome;
-        if (!streamOutcomeMatches(effectiveOutcomeId, outcome.quoteOutcomeId)) return outcome;
-        const yesPrice = quotePrice !== null ? formatProbabilityPrice(quotePrice) : '-';
-        const noPrice = quotePrice !== null && marketType === 'binary' ? formatProbabilityPrice(1 - quotePrice) : '-';
-        if (!payloadVenue) {
-          const nextOutcome = {
-            ...outcome,
-            yesPrice: quotePrice !== null ? yesPrice : outcome.yesPrice,
-            noPrice: quotePrice !== null ? noPrice : outcome.noPrice,
-            status: quotePrice !== null ? 'live' : outcome.status,
-            blocker: displayBlocker ?? outcome.blocker,
-          };
-          if (
-            nextOutcome.yesPrice !== outcome.yesPrice ||
-            nextOutcome.noPrice !== outcome.noPrice ||
-            nextOutcome.status !== outcome.status ||
-            nextOutcome.blocker !== outcome.blocker
-          ) {
-            changed = true;
-            return nextOutcome;
-          }
-          return outcome;
-        }
-        const nextVenueQuote: TerminalVenueQuote = {
-          venue: payloadVenue,
-          yesPrice,
-          noPrice,
-          blocker: displayBlocker,
-        };
-        const existingVenueQuote = outcome.venueQuotes.find((quote) => toBackendVenueId(quote.venue) === toBackendVenueId(payloadVenue)) ?? null;
-        const venueQuotes = [
-          ...outcome.venueQuotes.filter((quote) => toBackendVenueId(quote.venue) !== toBackendVenueId(payloadVenue)),
-          nextVenueQuote,
-        ];
-        const primaryQuote = quotePrice !== null && (!outcome.primaryVenue || toBackendVenueId(outcome.primaryVenue) === toBackendVenueId(payloadVenue))
-          ? nextVenueQuote
-          : null;
-        const nextOutcome = {
-          ...outcome,
-          yesPrice: primaryQuote?.yesPrice ?? outcome.yesPrice,
-          noPrice: primaryQuote?.noPrice ?? outcome.noPrice,
-          primaryVenue: outcome.primaryVenue ?? payloadVenue,
-          venueQuotes,
-          status: quotePrice !== null ? 'live' : outcome.status,
-          blocker: displayBlocker ?? outcome.blocker,
-        };
-        const venueQuoteChanged = existingVenueQuote?.yesPrice !== nextVenueQuote.yesPrice
-          || existingVenueQuote?.noPrice !== nextVenueQuote.noPrice
-          || existingVenueQuote?.blocker !== nextVenueQuote.blocker
-          || existingVenueQuote === null;
-        if (
-          venueQuoteChanged ||
-          nextOutcome.yesPrice !== outcome.yesPrice ||
-          nextOutcome.noPrice !== outcome.noPrice ||
-          nextOutcome.primaryVenue !== outcome.primaryVenue ||
-          nextOutcome.status !== outcome.status ||
-          nextOutcome.blocker !== outcome.blocker
-        ) {
-          changed = true;
-          return nextOutcome;
-        }
-        return outcome;
-      });
-        return changed ? nextOutcomes : current;
-      });
-    };
-
     const subscribeAll = () => {
       for (const topic of topics) client?.subscribe(topic);
     };
@@ -6209,7 +6261,7 @@ const InfraTradingTerminalInner = ({
           }
 
           if (event.type === 'MARKET_QUOTE_UPDATE') {
-            applyStreamPriceToOutcomes(payload);
+            queueBufferedOutcomeQuoteRender(payload);
           }
         },
       });
@@ -6227,7 +6279,12 @@ const InfraTradingTerminalInner = ({
         window.clearTimeout(orderbookRenderTimerRef.current);
         orderbookRenderTimerRef.current = null;
       }
+      if (outcomeQuoteRenderTimerRef.current !== null) {
+        window.clearTimeout(outcomeQuoteRenderTimerRef.current);
+        outcomeQuoteRenderTimerRef.current = null;
+      }
       pendingOrderbookRenderRef.current = null;
+      pendingOutcomeQuoteStreamsRef.current.clear();
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
       clearScheduledRestRecovery();
       if (client) {
