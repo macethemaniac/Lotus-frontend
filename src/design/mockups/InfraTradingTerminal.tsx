@@ -3060,7 +3060,7 @@ const toOutcomeChartModel = (
   return { rows, series, historyStatus };
 };
 
-const LiveCanonicalChart = ({
+const LiveCanonicalChartImpl = ({
   marketId,
   outcomeId,
   marketType,
@@ -3464,6 +3464,17 @@ const LiveCanonicalChart = ({
     </div>
   );
 };
+
+const LiveCanonicalChart = React.memo(
+  LiveCanonicalChartImpl,
+  (previousProps, nextProps) => (
+    previousProps.marketId === nextProps.marketId &&
+    previousProps.outcomeId === nextProps.outcomeId &&
+    previousProps.marketType === nextProps.marketType &&
+    previousProps.onMarketTypeChange === nextProps.onMarketTypeChange &&
+    previousProps.outcomes === nextProps.outcomes
+  ),
+);
 
 const TurnkeyUnavailableState = ({ title, detail }: { title: string; detail: string }) => (
   <div className="flex min-h-[calc(100dvh-7rem)] items-center justify-center bg-[#070708] p-6 text-center">
