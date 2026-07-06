@@ -3296,8 +3296,37 @@ const LiveCanonicalChartImpl = ({
   }, [activeTab, binaryOutcomeChartInputs, marketId, marketType, notFoundKey, outcomeId, productionSafeMode, requestKey]);
 
   if (productionSafeMode) {
-    const liveProbability = selectedChartOutcome?.prob ?? outcomes[0]?.prob ?? null;
-    const liveLabel = selectedChartOutcome?.name ?? outcomes[0]?.name ?? 'Selected outcome';
+    const rankedSnapshots = outcomes
+      .map((outcome, index) => {
+        const probability = parseProbabilityLabel(normalizeTerminalDisplayValue(outcome.prob))
+          ?? chartPercentFromDisplayLabel(outcome.yesPrice);
+        return {
+          id: outcome.id,
+          name: outcome.name,
+          probability,
+          venues: outcome.venues.length,
+          rankSeed: index,
+        };
+      })
+      .filter((outcome): outcome is { id: string; name: string; probability: number; venues: number; rankSeed: number } => (
+        typeof outcome.probability === 'number' && Number.isFinite(outcome.probability)
+      ))
+      .sort((left, right) => right.probability - left.probability || left.rankSeed - right.rankSeed);
+    const highlightedSnapshot = rankedSnapshots.find((outcome) => outcome.id === outcomeId) ?? rankedSnapshots[0] ?? null;
+    const visibleSnapshots = highlightedSnapshot
+      ? (() => {
+          const top = rankedSnapshots.slice(0, 8);
+          if (top.some((outcome) => outcome.id === highlightedSnapshot.id)) return top;
+          return [...top.slice(0, 7), highlightedSnapshot].sort((left, right) =>
+            right.probability - left.probability || left.rankSeed - right.rankSeed
+          );
+        })()
+      : rankedSnapshots.slice(0, 8);
+    const leadingSnapshot = rankedSnapshots[0] ?? null;
+    const runnerUpSnapshot = rankedSnapshots[1] ?? null;
+    const leaderGap = leadingSnapshot && runnerUpSnapshot
+      ? Math.max(0, leadingSnapshot.probability - runnerUpSnapshot.probability)
+      : null;
     return (
       <div className="relative w-full h-full flex flex-col pt-2 pb-2 bg-[#0c0c0c] rounded-xl overflow-hidden">
         <div className="flex items-center justify-between gap-3 px-4 pt-2">
@@ -3308,19 +3337,76 @@ const LiveCanonicalChartImpl = ({
         </div>
         <div className="w-full bg-zinc-800 h-px mt-2" />
         <div className="w-24 bg-white h-0.5" />
-        <div className="flex flex-1 items-center justify-center px-6 py-10">
-          <div className="max-w-xl text-center">
-            <div className="text-sm font-semibold uppercase tracking-[0.24em] text-zinc-500">Production Safe Mode</div>
-            <div className="mt-4 text-2xl font-semibold text-zinc-100">Live chart is temporarily disabled.</div>
-            <div className="mt-3 text-sm text-zinc-400">
-              This route is using a lightweight production view here to keep the terminal responsive and prevent renderer crashes.
-            </div>
-            {liveProbability ? (
-              <div className="mt-6 inline-flex items-center gap-3 rounded-full border border-zinc-800 bg-zinc-950 px-5 py-3">
-                <span className="text-sm font-medium text-zinc-300">{liveLabel}</span>
-                <span className="text-lg font-semibold text-emerald-400">{liveProbability}</span>
+        <div className="flex flex-1 flex-col px-4 pb-4 pt-4">
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div className="rounded-2xl border border-zinc-800 bg-zinc-950/80 px-4 py-3">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-zinc-500">Leader</div>
+              <div className="mt-2 text-lg font-semibold text-zinc-100">{leadingSnapshot?.name ?? 'Pending'}</div>
+              <div className="mt-1 text-2xl font-semibold text-emerald-400">
+                {leadingSnapshot ? `${leadingSnapshot.probability.toFixed(leadingSnapshot.probability >= 10 ? 1 : 2)}%` : '--'}
               </div>
-            ) : null}
+            </div>
+            <div className="rounded-2xl border border-zinc-800 bg-zinc-950/80 px-4 py-3">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-zinc-500">Selected</div>
+              <div className="mt-2 text-lg font-semibold text-zinc-100">{highlightedSnapshot?.name ?? 'Pending'}</div>
+              <div className="mt-1 text-2xl font-semibold text-white">
+                {highlightedSnapshot ? `${highlightedSnapshot.probability.toFixed(highlightedSnapshot.probability >= 10 ? 1 : 2)}%` : '--'}
+              </div>
+            </div>
+            <div className="rounded-2xl border border-zinc-800 bg-zinc-950/80 px-4 py-3">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-zinc-500">Leader Gap</div>
+              <div className="mt-2 text-lg font-semibold text-zinc-100">Top vs. next</div>
+              <div className="mt-1 text-2xl font-semibold text-amber-300">
+                {leaderGap !== null ? `${leaderGap.toFixed(leaderGap >= 10 ? 1 : 2)} pts` : '--'}
+              </div>
+            </div>
+          </div>
+          <div className="mt-4 rounded-[24px] border border-zinc-900 bg-[#0a0a0a] p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold text-zinc-100">Live Snapshot</div>
+                <div className="mt-1 text-xs text-zinc-500">
+                  Lightweight ranking chart from the current terminal outcome prices. No historical chart fetches or live chart renderer.
+                </div>
+              </div>
+              <div className="rounded-full border border-zinc-800 bg-zinc-950 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">
+                Stable Mode
+              </div>
+            </div>
+            <div className="mt-5 space-y-3">
+              {visibleSnapshots.length > 0 ? visibleSnapshots.map((outcome, index) => {
+                const isHighlighted = highlightedSnapshot?.id === outcome.id;
+                const width = Math.max(6, Math.min(100, outcome.probability));
+                return (
+                  <div key={outcome.id} className={`rounded-2xl border px-3 py-3 ${isHighlighted ? 'border-emerald-500/40 bg-emerald-500/8' : 'border-zinc-900 bg-zinc-950/60'}`}>
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex min-w-0 items-center gap-3">
+                        <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${isHighlighted ? 'bg-emerald-400 text-black' : 'bg-zinc-800 text-zinc-300'}`}>
+                          {index + 1}
+                        </div>
+                        <div className="min-w-0">
+                          <div className={`truncate text-sm font-semibold ${isHighlighted ? 'text-emerald-100' : 'text-zinc-100'}`}>{outcome.name}</div>
+                          <div className="text-[11px] text-zinc-500">{outcome.venues} venue{outcome.venues === 1 ? '' : 's'}</div>
+                        </div>
+                      </div>
+                      <div className={`shrink-0 text-lg font-semibold ${isHighlighted ? 'text-emerald-300' : 'text-white'}`}>
+                        {outcome.probability.toFixed(outcome.probability >= 10 ? 1 : 2)}%
+                      </div>
+                    </div>
+                    <div className="mt-3 h-2.5 overflow-hidden rounded-full bg-zinc-900">
+                      <div
+                        className={`h-full rounded-full ${isHighlighted ? 'bg-gradient-to-r from-emerald-300 via-emerald-400 to-emerald-500' : 'bg-gradient-to-r from-zinc-500 via-zinc-300 to-white'}`}
+                        style={{ width: `${width}%` }}
+                      />
+                    </div>
+                  </div>
+                );
+              }) : (
+                <div className="rounded-2xl border border-zinc-900 bg-zinc-950/60 px-4 py-8 text-center text-sm font-medium text-zinc-500">
+                  Outcome prices are still loading.
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
