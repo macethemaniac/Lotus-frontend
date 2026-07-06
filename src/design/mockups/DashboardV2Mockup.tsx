@@ -239,13 +239,35 @@ const dashboardMarketEventSlug = (market: Pick<DashboardMarketRow, 'title' | 'ev
   market.eventSlug || eventSlugFromTitle(market.title);
 
 type TerminalRouteCandidate = {
+  id?: string;
+  marketId?: string;
+  canonicalEventId?: string | null;
+  eventId?: string | null;
   title: string;
+  category?: string;
+  icon?: string;
+  volume?: string;
+  volume24h?: string | null;
+  liquidity?: string | null;
+  openInterest?: string | null;
+  resolvesAt?: string | null;
+  resolutionDateLabel?: string | null;
+  venueCount?: number;
+  routeType?: string;
   eventSlug?: string | null;
+  status?: MarketCatalogMarket['status'];
   marketType?: string | null;
+  priceLabel?: string;
+  priceVenue?: string | null;
+  changeLabel?: string;
+  change24hLabel?: 'Quote' | string;
+  change24hDirection?: 'positive' | 'negative' | 'neutral' | 'pending';
   outcomes?: unknown[] | null;
   venueMarkets?: unknown[] | null;
   canonicalMarketIds?: string[] | null;
   venues?: string[] | null;
+  imageUrl?: string | null;
+  iconUrl?: string | null;
 };
 
 const terminalRouteSelectionScore = (
@@ -269,6 +291,113 @@ const pickTerminalRouteRow = <T extends TerminalRouteCandidate>(
     : rows;
   const candidates = scopedRows.length > 0 ? scopedRows : rows;
   return [...candidates].sort((left, right) => terminalRouteSelectionScore(right) - terminalRouteSelectionScore(left))[0] ?? null;
+};
+
+const parseTerminalProbabilityLabel = (value: string | null | undefined): number | null => {
+  if (!value || value === 'Quote' || value === '-') return null;
+  if (/^<\s*1%$/i.test(value.trim())) return 0.5;
+  const cleaned = value.replace(/[^0-9.-]/g, '');
+  const parsed = Number(cleaned);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+};
+
+const compareTerminalOutcomeCandidates = (
+  left: NonNullable<TerminalMarketSelection['outcomes']>[number],
+  right: NonNullable<TerminalMarketSelection['outcomes']>[number],
+): number => {
+  const leftProbability = parseTerminalProbabilityLabel(left.prob);
+  const rightProbability = parseTerminalProbabilityLabel(right.prob);
+  if (leftProbability !== null && rightProbability !== null && leftProbability !== rightProbability) {
+    return rightProbability - leftProbability;
+  }
+  if (leftProbability !== null) return -1;
+  if (rightProbability !== null) return 1;
+  return left.name.localeCompare(right.name);
+};
+
+const buildAggregateTerminalRouteSelection = (
+  rows: TerminalMarketSelection[],
+  routeEventSlug: string | null | undefined,
+): TerminalMarketSelection | null => {
+  if (rows.length === 0) return null;
+  const primary = pickTerminalRouteRow(rows, routeEventSlug);
+  if (!primary) return null;
+  const primaryEventSlug = primary.eventSlug ?? routeEventSlug ?? null;
+  const eventScopedRows = primaryEventSlug
+    ? rows.filter((row) => (row.eventSlug ?? eventSlugFromTitle(row.title)) === primaryEventSlug)
+    : rows;
+  if (eventScopedRows.length <= 1) return primary;
+
+  const sortedRows = [...eventScopedRows].sort((left, right) => {
+    const leftProbability = parseTerminalProbabilityLabel(left.outcomes?.[0]?.prob);
+    const rightProbability = parseTerminalProbabilityLabel(right.outcomes?.[0]?.prob);
+    if (leftProbability !== null && rightProbability !== null && leftProbability !== rightProbability) {
+      return rightProbability - leftProbability;
+    }
+    return terminalRouteSelectionScore(right) - terminalRouteSelectionScore(left);
+  });
+  const leader = sortedRows[0] ?? primary;
+  const outcomes = sortedRows
+    .map((row) => {
+      const baseOutcome = row.outcomes?.[0];
+      return baseOutcome
+        ? {
+            ...baseOutcome,
+            prob: baseOutcome.prob ?? row.priceLabel ?? 'Quote',
+            venues: baseOutcome.venues ?? row.venues,
+            venueMarkets: baseOutcome.venueMarkets ?? row.venueMarkets,
+            priceVenue: baseOutcome.priceVenue ?? row.priceVenue ?? null,
+            imageUrl: baseOutcome.imageUrl ?? row.imageUrl ?? null,
+            iconUrl: baseOutcome.iconUrl ?? row.iconUrl ?? null,
+          }
+        : {
+            id: row.marketId ?? row.id ?? row.title,
+            marketId: row.marketId,
+            canonicalMarketIds: row.canonicalMarketIds,
+            eventId: row.eventId,
+            canonicalEventId: row.canonicalEventId,
+            quoteOutcomeId: 'YES',
+            name: row.title,
+            prob: row.priceLabel ?? 'Quote',
+            volume: null,
+            volume24h: null,
+            venues: row.venues,
+            venueMarkets: row.venueMarkets,
+            marketType: 'binary' as const,
+            marketTitle: row.title,
+            imageUrl: row.imageUrl ?? null,
+            iconUrl: row.iconUrl ?? null,
+            priceVenue: row.priceVenue ?? null,
+          };
+    })
+    .sort(compareTerminalOutcomeCandidates);
+
+  const aggregateVenues = Array.from(new Set(sortedRows.flatMap((row) => row.venues ?? [])));
+  const aggregateCanonicalMarketIds = Array.from(new Set(sortedRows.flatMap((row) => row.canonicalMarketIds ?? (row.marketId ? [row.marketId] : []))));
+  const aggregateVenueMarkets = sortedRows.flatMap((row) => row.venueMarkets ?? []);
+  const aggregateRouteType = sortedRows.some((row) => row.routeType === 'Strict all')
+    ? 'Strict all'
+    : sortedRows.some((row) => row.routeType === 'Tri')
+      ? 'Tri'
+      : sortedRows.some((row) => row.routeType === 'Pair')
+        ? 'Pair'
+        : leader.routeType;
+
+  return {
+    ...leader,
+    id: leader.canonicalEventId ?? leader.eventId ?? leader.eventSlug ?? leader.id ?? leader.title,
+    title: leader.title,
+    marketType: 'multi',
+    routeType: aggregateRouteType,
+    venueCount: aggregateVenues.length || leader.venueCount,
+    venues: aggregateVenues,
+    venueMarkets: aggregateVenueMarkets,
+    canonicalMarketIds: aggregateCanonicalMarketIds,
+    outcomes,
+    initialOutcomeId: outcomes[0]?.id ?? null,
+    priceLabel: outcomes[0]?.prob ?? leader.priceLabel,
+    priceVenue: outcomes[0]?.priceVenue ?? leader.priceVenue ?? null,
+  };
 };
 
 const shouldPreferEventMedia = (market: Pick<DashboardMarketRow, 'marketType' | 'outcomes'>): boolean =>
@@ -1685,7 +1814,7 @@ export const DashboardV2Mockup = ({
     [quotedMarketRows],
   );
   const immediateTerminalSelection = useMemo<TerminalMarketSelection | null>(() => {
-    return pickTerminalRouteRow(terminalMarketSelections, routeEventSlug);
+    return buildAggregateTerminalRouteSelection(terminalMarketSelections, routeEventSlug);
   }, [routeEventSlug, terminalMarketSelections]);
   const activeTerminalSelection = selectedTerminalMarket ?? immediateTerminalSelection;
   const terminalRouteResolved = terminalRouteSelectionMatches(routeEventSlug, activeTerminalSelection);
@@ -1745,8 +1874,10 @@ export const DashboardV2Mockup = ({
           setTerminalRouteError('This terminal market has no routeable outcomes yet.');
           return;
         }
-        const matchedRow = pickTerminalRouteRow(quotedRows, eventSlugFromTitle(matchedEvent.title)) ?? quotedRows[0]!;
-        const nextSelection = toTerminalMarketSelection(matchedRow);
+        const nextSelection = buildAggregateTerminalRouteSelection(
+          quotedRows.map(toTerminalMarketSelection),
+          eventSlugFromTitle(matchedEvent.title),
+        ) ?? toTerminalMarketSelection(quotedRows[0]!);
         setSelectedTerminalMarket(nextSelection);
         setTerminalRouteError(null);
         if (!routeEventSlug) {
