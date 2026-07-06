@@ -37,7 +37,7 @@ import {
 } from '@/design/mockups/terminal-outcome-fallback';
 import { shouldReuseLiveCanonicalChart } from '@/design/mockups/terminal-live-chart-props';
 import { bufferedRenderDelay, TERMINAL_STREAM_RENDER_INTERVAL_MS } from '@/design/mockups/terminal-live-update-scheduler';
-import { downsampleChartRows, maxChartPointsForTimeframe } from '@/design/mockups/terminal-chart-sampling';
+import { downsampleChartRows, maxChartPointsForTimeframe, sanitizeTerminalChartResponse } from '@/design/mockups/terminal-chart-sampling';
 import { isTurnkeyProviderConfigured } from '@/app/turnkey-provider';
 import { env, lotusMarketDiagnosticsEnabled } from '@/config/env';
 import type { AuthSession } from '@/features/auth/types';
@@ -3210,7 +3210,13 @@ const LiveCanonicalChartImpl = ({
           ).values());
           const results = await Promise.allSettled(
             uniqueInputs.map(async (outcome): Promise<OutcomeChartEntry> => {
-              const chart = await getMarketChart(outcome.marketId!, { outcomeId: outcome.quoteOutcomeId, timeframe: activeTab });
+              const chart = sanitizeTerminalChartResponse(
+                await getMarketChart(outcome.marketId!, { outcomeId: outcome.quoteOutcomeId, timeframe: activeTab }),
+                {
+                  marketType: 'binary',
+                  productionSafeMode: env.lotusDeployEnv === 'production',
+                },
+              );
               return {
                 id: outcome.id,
                 marketId: outcome.marketId,
@@ -3240,7 +3246,13 @@ const LiveCanonicalChartImpl = ({
           return;
         }
 
-        const response = await getMarketChart(marketId, { outcomeId, timeframe: activeTab });
+        const response = sanitizeTerminalChartResponse(
+          await getMarketChart(marketId, { outcomeId, timeframe: activeTab }),
+          {
+            marketType,
+            productionSafeMode: env.lotusDeployEnv === 'production',
+          },
+        );
         if (!cancelled) {
           setOutcomeCharts([]);
           setVenueChart(response);
