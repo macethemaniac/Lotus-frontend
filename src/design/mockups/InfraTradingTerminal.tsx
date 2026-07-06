@@ -2883,6 +2883,20 @@ const parsePolymarketTokenIds = (value: string | null | undefined): string[] => 
   }
 };
 
+const parsePolymarketOutcomePrices = (value: string | null | undefined): number[] => {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed)
+      ? parsed
+          .map((item) => Number(item))
+          .filter((item) => Number.isFinite(item) && item >= 0)
+      : [];
+  } catch {
+    return [];
+  }
+};
+
 const toPolymarketOutcomeChartResponse = (
   marketId: string,
   outcomeId: string,
@@ -3166,10 +3180,14 @@ const LiveCanonicalChart = ({
     [chartOutcomeFetchKey]
   );
   const liveOutcomeValuesByKey = useMemo(
-    () => new Map(chartOutcomeInputs.map((outcome) => [outcome.key, outcome.latestValue])),
-    [chartOutcomeInputs]
+    () => marketType === 'binary'
+      ? new Map(chartOutcomeInputs.map((outcome) => [outcome.key, outcome.latestValue]))
+      : new Map<string, number | null>(),
+    [chartOutcomeInputs, marketType]
   );
-  const prefersOutcomeChart = chartOutcomeInputs.length > 0;
+  const prefersOutcomeChart = marketType === 'multi'
+    ? Boolean(polymarketEventSlug) || chartOutcomeInputs.length > 0
+    : chartOutcomeInputs.length > 0;
   const chartModel = useMemo(
     () => prefersOutcomeChart
       ? toOutcomeChartModel(outcomeCharts, liveOutcomeValuesByKey, activeTab)
@@ -3253,61 +3271,64 @@ const LiveCanonicalChart = ({
       setLoading(true);
       setError(null);
       try {
-        if (chartOutcomeRequestInputs.length > 0) {
-          if (marketType === 'multi' && polymarketEventSlug) {
-            try {
-              const polymarketEvent = await getPolymarketEventBySlug(polymarketEventSlug);
-              const polymarketMarketsByLabel = new Map<string, PolymarketEventMarketSnapshot>();
-              for (const market of polymarketEvent.markets) {
+        if (marketType === 'multi' && polymarketEventSlug) {
+          try {
+            const polymarketEvent = await getPolymarketEventBySlug(polymarketEventSlug);
+            const topPolymarketMarkets = [...polymarketEvent.markets]
+              .flatMap((market, index) => {
                 const tokenIds = parsePolymarketTokenIds(market.clobTokenIds);
-                if (tokenIds.length === 0) continue;
-                const label = normalizeOutcomeChartLabel(market.groupItemTitle ?? market.question);
-                if (!label) continue;
-                polymarketMarketsByLabel.set(label, market);
-              }
-              const polymarketInputs = chartOutcomeRequestInputs.flatMap((outcome) => {
-                const market = polymarketMarketsByLabel.get(normalizeOutcomeChartLabel(outcome.label));
-                if (!market || !outcome.marketId) return [];
-                const tokenIds = parsePolymarketTokenIds(market.clobTokenIds);
-                if (tokenIds.length === 0) return [];
+                const outcomePrices = parsePolymarketOutcomePrices(market.outcomePrices);
+                const label = market.groupItemTitle?.trim() || normalizeOutcomeChartLabel(market.question);
+                if (!label || tokenIds.length === 0 || outcomePrices.length === 0) return [];
+                const yesPrice = outcomePrices[0];
+                if (typeof yesPrice !== 'number' || !Number.isFinite(yesPrice) || yesPrice <= 0 || yesPrice >= 0.95) return [];
                 return [{
-                  outcome,
+                  id: `${market.slug}:${label}`,
+                  marketId: market.slug,
+                  quoteOutcomeId: 'YES',
+                  label,
+                  key: normalizeChartKey('polymarket', market.slug || `${label}_${index}`),
+                  color: OUTCOME_CHART_COLORS[index % OUTCOME_CHART_COLORS.length]!,
                   tokenId: tokenIds[0]!,
+                  latestValue: yesPrice * 100,
                 }];
-              });
-              if (polymarketInputs.length > 0) {
-                const historyConfig = polymarketPriceHistoryConfig(activeTab);
-                const results = await Promise.allSettled(
-                  polymarketInputs.map(async ({ outcome, tokenId }): Promise<OutcomeChartEntry> => {
-                    const history = await getPolymarketPricesHistory(tokenId, historyConfig);
-                    return {
-                      id: outcome.id,
-                      marketId: outcome.marketId,
-                      quoteOutcomeId: outcome.quoteOutcomeId,
-                      label: outcome.label,
-                      key: outcome.key,
-                      color: outcome.color,
-                      chart: toPolymarketOutcomeChartResponse(
-                        outcome.marketId!,
-                        outcome.quoteOutcomeId,
-                        activeTab,
-                        history.history,
-                      ),
-                    };
-                  })
-                );
-                const fulfilled = results.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
-                if (!cancelled && fulfilled.length > 0) {
-                  setVenueChart(null);
-                  setOutcomeCharts(fulfilled);
-                  setNotFoundKey(null);
-                  return;
-                }
+              })
+              .sort((left, right) => right.latestValue - left.latestValue)
+              .slice(0, MULTI_OUTCOME_CHART_LIMIT);
+            if (topPolymarketMarkets.length > 0) {
+              const historyConfig = polymarketPriceHistoryConfig(activeTab);
+              const results = await Promise.allSettled(
+                topPolymarketMarkets.map(async (outcome): Promise<OutcomeChartEntry> => {
+                  const history = await getPolymarketPricesHistory(outcome.tokenId, historyConfig);
+                  return {
+                    id: outcome.id,
+                    marketId: outcome.marketId,
+                    quoteOutcomeId: outcome.quoteOutcomeId,
+                    label: outcome.label,
+                    key: outcome.key,
+                    color: outcome.color,
+                    chart: toPolymarketOutcomeChartResponse(
+                      outcome.marketId,
+                      outcome.quoteOutcomeId,
+                      activeTab,
+                      history.history,
+                    ),
+                  };
+                })
+              );
+              const fulfilled = results.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
+              if (!cancelled && fulfilled.length > 0) {
+                setVenueChart(null);
+                setOutcomeCharts(fulfilled);
+                setNotFoundKey(null);
+                return;
               }
-            } catch {
-              // Fall back to Lotus chart history when Polymarket history is unavailable.
             }
+          } catch {
+            // Fall back to Lotus chart history when Polymarket history is unavailable.
           }
+        }
+        if (chartOutcomeRequestInputs.length > 0) {
           const uniqueInputs = Array.from(new Map(
             chartOutcomeRequestInputs
               .filter((outcome) => outcome.marketId)
@@ -3378,7 +3399,7 @@ const LiveCanonicalChart = ({
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [activeTab, chartOutcomeRequestInputs, marketId, notFoundKey, outcomeId, requestKey]);
+  }, [activeTab, chartOutcomeRequestInputs, marketId, marketType, notFoundKey, outcomeId, polymarketEventSlug, requestKey]);
 
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (!active || !payload?.length) return null;
