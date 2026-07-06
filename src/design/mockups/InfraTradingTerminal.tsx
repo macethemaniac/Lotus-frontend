@@ -2821,7 +2821,8 @@ const chartPointValue = (
   return parsed * 100;
 };
 
-const OUTCOME_CHART_COLORS = ["#22C55E", "#EF4444", "#3B82F6", "#F59E0B", "#8B5CF6", "#EC4899"];
+const OUTCOME_CHART_COLORS = ["#93C5FD", "#3B82F6", "#FACC15", "#FB923C", "#8B5CF6", "#EC4899"];
+const MULTI_OUTCOME_CHART_LIMIT = 4;
 
 const normalizeChartKey = (prefix: string, value: string): string =>
   `${prefix}_${value.replace(/[^a-zA-Z0-9_]/g, "_")}`;
@@ -2940,12 +2941,10 @@ const buildChartYAxis = (
   return { domain: [0, upper], ticks: buildChartTicks(upper) };
 };
 
-type VenueChartMode = "aggregate" | "venues";
-
 const toVenueChartModel = (
   chart: MarketChartResponse | null,
   timeframe: MarketChartTimeframe,
-  mode: VenueChartMode = "venues"
+  mode: "aggregate" | "venues" = "venues"
 ): { rows: TerminalChartRow[]; series: TerminalChartSeries[]; historyStatus: MarketChartResponse["historyStatus"] | null } => {
   if (!chart) return { rows: [], series: [], historyStatus: null };
   const chartSeriesKind = (item: MarketChartResponse["series"][number]) =>
@@ -3053,24 +3052,28 @@ const LiveCanonicalChart = ({
   const tabs: MarketChartTimeframe[] = ['1H', '6H', '1D', '1W', '1M', 'ALL'];
   const requestKey = `${marketId ?? 'none'}:${outcomeId ?? 'none'}`;
   const selectedChartOutcome = useMemo(() => {
-    if (marketType !== 'binary' || outcomes.length === 0) return null;
+    if (outcomes.length === 0) return null;
     return outcomes.find((outcome) => outcome.id === outcomeId) ??
       outcomes.find((outcome) => marketId && outcome.marketId === marketId && streamOutcomeMatches(outcome.quoteOutcomeId, outcomeId)) ??
       outcomes.find((outcome) => marketId && outcome.marketId === marketId) ??
       outcomes.find((outcome) => streamOutcomeMatches(outcome.quoteOutcomeId, outcomeId)) ??
       outcomes[0] ??
       null;
-  }, [marketId, marketType, outcomeId, outcomes]);
-  const binaryOutcomeInputs = useMemo(() => {
-    if (marketType !== 'binary') return [];
-    const source = selectedChartOutcome
-      ? [selectedChartOutcome]
-      : outcomes.length > 0
-      ? [outcomes[0]!]
-      : [
-          { id: 'YES', marketId, quoteOutcomeId: 'YES', name: 'Yes' } as TerminalOutcomeRow,
-        ];
-    return source.slice(0, 1).map((outcome, index): OutcomeChartInput => {
+  }, [marketId, outcomeId, outcomes]);
+  const chartOutcomeInputs = useMemo(() => {
+    const source = marketType === 'binary'
+      ? selectedChartOutcome
+        ? [selectedChartOutcome]
+        : outcomes.length > 0
+          ? [outcomes[0]!]
+          : [
+              { id: 'YES', marketId, quoteOutcomeId: 'YES', name: 'Yes' } as TerminalOutcomeRow,
+            ]
+      : [...outcomes]
+          .sort(compareOutcomeRowsByProbability)
+          .filter((outcome) => outcome.marketId)
+          .slice(0, MULTI_OUTCOME_CHART_LIMIT);
+    return source.map((outcome, index): OutcomeChartInput => {
       const chartMarketId = outcome.marketId ?? marketId;
       const quoteOutcomeId = outcome.quoteOutcomeId || canonicalQuoteOutcomeId(outcome.name || outcome.id);
       return {
@@ -3082,27 +3085,28 @@ const LiveCanonicalChart = ({
         color: OUTCOME_CHART_COLORS[index % OUTCOME_CHART_COLORS.length]!,
         latestValue: liveOutcomeChartPercent(outcome),
       };
-    });
+    }).filter((outcome): outcome is OutcomeChartInput => Boolean(outcome.marketId));
   }, [marketId, marketType, outcomes, selectedChartOutcome]);
-  const binaryOutcomeFetchKey = useMemo(
-    () => binaryOutcomeInputs
+  const chartOutcomeFetchKey = useMemo(
+    () => chartOutcomeInputs
       .map((outcome) => `${outcome.id}:${outcome.marketId ?? ''}:${outcome.quoteOutcomeId}:${outcome.key}`)
       .join('|'),
-    [binaryOutcomeInputs]
+    [chartOutcomeInputs]
   );
-  const binaryOutcomeChartInputs = useMemo(
-    () => binaryOutcomeInputs.map(({ latestValue: _latestValue, ...outcome }) => outcome),
-    [binaryOutcomeFetchKey]
+  const chartOutcomeRequestInputs = useMemo(
+    () => chartOutcomeInputs.map(({ latestValue: _latestValue, ...outcome }) => outcome),
+    [chartOutcomeFetchKey]
   );
   const liveOutcomeValuesByKey = useMemo(
-    () => new Map(binaryOutcomeInputs.map((outcome) => [outcome.key, outcome.latestValue])),
-    [binaryOutcomeInputs]
+    () => new Map(chartOutcomeInputs.map((outcome) => [outcome.key, outcome.latestValue])),
+    [chartOutcomeInputs]
   );
+  const prefersOutcomeChart = chartOutcomeInputs.length > 0;
   const chartModel = useMemo(
-    () => marketType === 'binary'
+    () => prefersOutcomeChart
       ? toOutcomeChartModel(outcomeCharts, liveOutcomeValuesByKey, activeTab)
       : toVenueChartModel(venueChart, activeTab, "venues"),
-    [activeTab, liveOutcomeValuesByKey, marketType, outcomeCharts, venueChart]
+    [activeTab, liveOutcomeValuesByKey, outcomeCharts, prefersOutcomeChart, venueChart]
   );
   const { rows, series, historyStatus } = chartModel;
   const yAxis = useMemo(() => buildChartYAxis(rows, series), [rows, series]);
@@ -3181,9 +3185,9 @@ const LiveCanonicalChart = ({
       setLoading(true);
       setError(null);
       try {
-        if (marketType === 'binary') {
+        if (chartOutcomeRequestInputs.length > 0) {
           const uniqueInputs = Array.from(new Map(
-            binaryOutcomeChartInputs
+            chartOutcomeRequestInputs
               .filter((outcome) => outcome.marketId)
               .map((outcome) => [outcome.key, outcome])
           ).values());
@@ -3252,7 +3256,7 @@ const LiveCanonicalChart = ({
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [activeTab, binaryOutcomeChartInputs, marketId, marketType, notFoundKey, outcomeId, requestKey]);
+  }, [activeTab, chartOutcomeRequestInputs, marketId, notFoundKey, outcomeId, requestKey]);
 
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (!active || !payload?.length) return null;

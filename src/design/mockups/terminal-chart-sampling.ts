@@ -5,12 +5,12 @@ type ChartRow = {
 };
 
 const MAX_CHART_POINTS_BY_TIMEFRAME: Record<MarketChartTimeframe, number> = {
-  '1H': 90,
-  '6H': 120,
-  '1D': 180,
-  '1W': 180,
-  '1M': 200,
-  'ALL': 240,
+  '1H': 180,
+  '6H': 240,
+  '1D': 360,
+  '1W': 480,
+  '1M': 600,
+  'ALL': 720,
 };
 
 export const maxChartPointsForTimeframe = (timeframe: MarketChartTimeframe): number =>

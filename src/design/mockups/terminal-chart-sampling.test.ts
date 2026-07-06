@@ -3,9 +3,9 @@ import { describe, expect, it } from 'vitest';
 import { downsampleChartRows, maxChartPointsForTimeframe } from './terminal-chart-sampling';
 
 describe('maxChartPointsForTimeframe', () => {
-  it('caps dense one-day charts more aggressively than all-time charts', () => {
-    expect(maxChartPointsForTimeframe('1D')).toBe(180);
-    expect(maxChartPointsForTimeframe('ALL')).toBe(240);
+  it('keeps more points for longer timeframes while still capping all-time charts', () => {
+    expect(maxChartPointsForTimeframe('1D')).toBe(360);
+    expect(maxChartPointsForTimeframe('ALL')).toBe(720);
   });
 });
 
