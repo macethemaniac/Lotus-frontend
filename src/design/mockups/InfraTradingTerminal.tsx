@@ -3001,7 +3001,7 @@ const LiveCanonicalChart = ({
     [activeTab, liveOutcomeValuesByKey, outcomeCharts, prefersOutcomeChart, venueChart]
   );
   const { rows, series, historyStatus } = chartModel;
-  const chartSourceLabel = prefersPolymarketBinaryHistory || prefersPolymarketMultiHistory ? 'Polymarket' : 'Lotus';
+  const chartSourceLabel = 'Lotus';
   const yAxis = useMemo(() => buildChartYAxis(rows, series), [rows, series]);
   const [chartFrameRef, chartFrameSize] = useChartFrameSize();
   const chartReady = chartFrameSize.width > 0 && chartFrameSize.height > 0;
@@ -3755,6 +3755,7 @@ const InfraTradingTerminalInner = ({
     ?? terminalOutcomes.find((outcome) => outcome.id === selectedOutcomeId)
     ?? sortedTerminalOutcomes[0]
     ?? null;
+  const chartMarketType: 'binary' | 'multi' = hasCompoundEventOutcomes ? 'multi' : marketType;
   const visibleOutcomeRows = useMemo(() => {
     if (showAllOutcomes || quoteableTerminalOutcomes.length <= 5) return quoteableTerminalOutcomes;
     const defaultRows = quoteableTerminalOutcomes.slice(0, 5);
@@ -7246,8 +7247,7 @@ const InfraTradingTerminalInner = ({
                <LiveCanonicalChart
                  marketId={selectedOutcomeMarketId}
                  outcomeId={selectedQuoteOutcomeId}
-                 marketType={marketType}
-                 onMarketTypeChange={setMarketType}
+                 marketType={chartMarketType}
                  outcomes={terminalOutcomes}
                  polymarketEventSlug={terminalMarket.venueMarkets?.find((market) => market.venue === 'POLYMARKET' && market.eventSlug)?.eventSlug
                    ?? terminalMarket.eventSlug
