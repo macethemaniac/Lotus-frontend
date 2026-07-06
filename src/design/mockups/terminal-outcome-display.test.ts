@@ -485,6 +485,20 @@ describe('resolveInitialSelectedOutcomeId', () => {
     ])).toBe('argentina');
     expect(resolveInitialSelectedOutcomeId(null, [])).toBeNull();
   });
+
+  it('falls back to the preferred sorted row when there is no explicit requested outcome', () => {
+    expect(resolveInitialSelectedOutcomeId(
+      null,
+      [
+        { id: 'argentina' },
+        { id: 'france' },
+      ],
+      [
+        { id: 'france' },
+        { id: 'argentina' },
+      ],
+    )).toBe('france');
+  });
 });
 
 describe('resolveSelectedOutcomeRow', () => {

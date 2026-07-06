@@ -260,11 +260,12 @@ export const resolveSelectedMarketHydratedMedia = (input: {
 export const resolveInitialSelectedOutcomeId = <T extends { id: string }>(
   initialOutcomeId: string | null | undefined,
   rows: readonly T[],
+  preferredRows: readonly T[] = rows,
 ): string | null => {
   if (initialOutcomeId && rows.some((row) => row.id === initialOutcomeId)) {
     return initialOutcomeId;
   }
-  return rows[0]?.id ?? null;
+  return preferredRows[0]?.id ?? rows[0]?.id ?? null;
 };
 
 export const resolveSelectedOutcomeRow = <T extends { id: string }>(input: {

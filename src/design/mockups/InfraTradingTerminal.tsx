@@ -1439,6 +1439,9 @@ const compareOutcomeRowsByProbability = (
   return left.name.localeCompare(right.name);
 };
 
+const sortTerminalOutcomeRowsByProbability = <T extends Pick<TerminalOutcomeRow, 'name' | 'prob'>>(rows: readonly T[]): T[] =>
+  [...rows].sort(compareOutcomeRowsByProbability);
+
 const quoteVenueListFromLivePrice = (
   livePrice: MarketLivePriceItem | null | undefined,
   fallbackVenues: readonly string[] = [],
@@ -3778,7 +3781,7 @@ const InfraTradingTerminalInner = ({
     marketVenueList,
   }));
   const sortedTerminalOutcomes = useMemo(
-    () => [...terminalOutcomes].sort(compareOutcomeRowsByProbability),
+    () => sortTerminalOutcomeRowsByProbability(terminalOutcomes),
     [terminalOutcomes],
   );
   const quoteableTerminalOutcomes = useMemo(() => {
@@ -4220,7 +4223,11 @@ const InfraTradingTerminalInner = ({
     });
     if (!terminalMarketId) {
       setTerminalOutcomes(fallbackRows);
-      const nextSelectedOutcomeId = selectedOutcomeIdRef.current ?? resolveInitialSelectedOutcomeId(terminalMarket.initialOutcomeId, fallbackRows);
+      const nextSelectedOutcomeId = selectedOutcomeIdRef.current ?? resolveInitialSelectedOutcomeId(
+        terminalMarket.initialOutcomeId,
+        fallbackRows,
+        sortTerminalOutcomeRowsByProbability(fallbackRows),
+      );
       if (nextSelectedOutcomeId !== selectedOutcomeIdRef.current) {
         selectTerminalOutcome(nextSelectedOutcomeId, fallbackRows);
       }
@@ -4357,7 +4364,11 @@ const InfraTradingTerminalInner = ({
       const currentSelectedOutcomeId = selectedOutcomeIdRef.current;
       const nextSelectedOutcomeId = currentSelectedOutcomeId && seedRows.some((row) => row.id === currentSelectedOutcomeId)
         ? currentSelectedOutcomeId
-        : resolveInitialSelectedOutcomeId(terminalMarket.initialOutcomeId, seedRows);
+        : resolveInitialSelectedOutcomeId(
+          terminalMarket.initialOutcomeId,
+          seedRows,
+          sortTerminalOutcomeRowsByProbability(seedRows),
+        );
       if (nextSelectedOutcomeId !== currentSelectedOutcomeId) {
         selectTerminalOutcome(nextSelectedOutcomeId, seedRows);
       }
@@ -4431,7 +4442,11 @@ const InfraTradingTerminalInner = ({
       const currentSelectedOutcomeId = selectedOutcomeIdRef.current;
       const nextSelectedOutcomeId = currentSelectedOutcomeId
         ? currentSelectedOutcomeId
-        : resolveInitialSelectedOutcomeId(terminalMarket.initialOutcomeId, fallbackRows);
+        : resolveInitialSelectedOutcomeId(
+          terminalMarket.initialOutcomeId,
+          fallbackRows,
+          sortTerminalOutcomeRowsByProbability(fallbackRows),
+        );
       if (nextSelectedOutcomeId !== currentSelectedOutcomeId) {
         selectTerminalOutcome(nextSelectedOutcomeId, fallbackRows);
       }
@@ -4567,7 +4582,11 @@ const InfraTradingTerminalInner = ({
 
     const fallbackRows = seedTerminalOutcomeRows();
     setTerminalOutcomes(fallbackRows);
-    const nextSelectedOutcomeId = resolveInitialSelectedOutcomeId(terminalMarket.initialOutcomeId, fallbackRows);
+    const nextSelectedOutcomeId = resolveInitialSelectedOutcomeId(
+      terminalMarket.initialOutcomeId,
+      fallbackRows,
+      sortTerminalOutcomeRowsByProbability(fallbackRows),
+    );
     selectTerminalOutcome(nextSelectedOutcomeId, fallbackRows);
     if (marketChanged) {
       setExpandedOutcomeId(null);
