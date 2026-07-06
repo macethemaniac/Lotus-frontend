@@ -54,6 +54,8 @@ import {
   getMarketLivePrices,
   getMarketOrderbook,
   getMarketOutcomes,
+  getPolymarketEventBySlug,
+  getPolymarketPricesHistory,
   getVenueMarketResolutionRisk,
   type MarketChartResponse,
   type MarketChartTimeframe,
@@ -66,6 +68,7 @@ import {
   type MarketOrderbookStreamPayload,
   type MarketOrderbookStreamLevel,
   type MarketOrderbookVenue,
+  type PolymarketEventMarketSnapshot,
   type ResolutionRiskAssessment,
   type ResolutionRiskProfile,
 } from '@/features/markets/api/market-api';
@@ -2844,6 +2847,69 @@ const chartSeriesLabel = (item: { id: string; label: string }): string => {
   return formatVenueLabel(item.label || item.id);
 };
 
+const polymarketPriceHistoryConfig = (timeframe: MarketChartTimeframe): { interval: "all" | "1d" | "6h" | "1h" | "1w"; fidelity?: number } => {
+  switch (timeframe) {
+    case "1H":
+      return { interval: "1h" };
+    case "6H":
+      return { interval: "6h" };
+    case "1D":
+      return { interval: "1d" };
+    case "1W":
+      return { interval: "1w", fidelity: 5 };
+    case "1M":
+    case "ALL":
+    default:
+      return { interval: "all" };
+  }
+};
+
+const normalizeOutcomeChartLabel = (value: string | null | undefined): string =>
+  (value ?? "")
+    .toLowerCase()
+    .replace(/^will\s+/i, "")
+    .replace(/^fifa world cup 2026 winner:\s*/i, "")
+    .replace(/\s+win the 2026 fifa world cup\??$/i, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+
+const parsePolymarketTokenIds = (value: string | null | undefined): string[] => {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string" && item.length > 0) : [];
+  } catch {
+    return [];
+  }
+};
+
+const toPolymarketOutcomeChartResponse = (
+  marketId: string,
+  outcomeId: string,
+  timeframe: MarketChartTimeframe,
+  history: Array<{ t: number; p: number }>
+): MarketChartResponse => ({
+  marketId,
+  outcomeId,
+  timeframe,
+  generatedAt: new Date().toISOString(),
+  historyStatus: history.length > 1 ? "live" : "accumulating",
+  series: [{
+    id: "unified",
+    label: "Unified",
+    color: "#ccff00",
+    kind: "unified",
+    hasData: history.length > 0,
+  }],
+  points: history.map((point) => ({
+    timestamp: new Date(point.t * 1000).toISOString(),
+    label: "",
+    unified: String(point.p),
+    venues: {},
+  })),
+  blockers: [],
+});
+
 const bucketChartTimestamp = (timestamp: string): number => {
   const parsed = Date.parse(timestamp);
   if (!Number.isFinite(parsed)) return Date.now();
@@ -3036,12 +3102,14 @@ const LiveCanonicalChart = ({
   marketType,
   onMarketTypeChange,
   outcomes = EMPTY_TERMINAL_OUTCOMES,
+  polymarketEventSlug = null,
 }: {
   marketId: string | null;
   outcomeId: string | null;
   marketType: 'binary' | 'multi';
   onMarketTypeChange?: (value: 'binary' | 'multi') => void;
   outcomes?: TerminalOutcomeRow[];
+  polymarketEventSlug?: string | null;
 }) => {
   const [activeTab, setActiveTab] = useState<MarketChartTimeframe>('1D');
   const [venueChart, setVenueChart] = useState<MarketChartResponse | null>(null);
@@ -3186,6 +3254,60 @@ const LiveCanonicalChart = ({
       setError(null);
       try {
         if (chartOutcomeRequestInputs.length > 0) {
+          if (marketType === 'multi' && polymarketEventSlug) {
+            try {
+              const polymarketEvent = await getPolymarketEventBySlug(polymarketEventSlug);
+              const polymarketMarketsByLabel = new Map<string, PolymarketEventMarketSnapshot>();
+              for (const market of polymarketEvent.markets) {
+                const tokenIds = parsePolymarketTokenIds(market.clobTokenIds);
+                if (tokenIds.length === 0) continue;
+                const label = normalizeOutcomeChartLabel(market.groupItemTitle ?? market.question);
+                if (!label) continue;
+                polymarketMarketsByLabel.set(label, market);
+              }
+              const polymarketInputs = chartOutcomeRequestInputs.flatMap((outcome) => {
+                const market = polymarketMarketsByLabel.get(normalizeOutcomeChartLabel(outcome.label));
+                if (!market || !outcome.marketId) return [];
+                const tokenIds = parsePolymarketTokenIds(market.clobTokenIds);
+                if (tokenIds.length === 0) return [];
+                return [{
+                  outcome,
+                  tokenId: tokenIds[0]!,
+                }];
+              });
+              if (polymarketInputs.length > 0) {
+                const historyConfig = polymarketPriceHistoryConfig(activeTab);
+                const results = await Promise.allSettled(
+                  polymarketInputs.map(async ({ outcome, tokenId }): Promise<OutcomeChartEntry> => {
+                    const history = await getPolymarketPricesHistory(tokenId, historyConfig);
+                    return {
+                      id: outcome.id,
+                      marketId: outcome.marketId,
+                      quoteOutcomeId: outcome.quoteOutcomeId,
+                      label: outcome.label,
+                      key: outcome.key,
+                      color: outcome.color,
+                      chart: toPolymarketOutcomeChartResponse(
+                        outcome.marketId!,
+                        outcome.quoteOutcomeId,
+                        activeTab,
+                        history.history,
+                      ),
+                    };
+                  })
+                );
+                const fulfilled = results.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
+                if (!cancelled && fulfilled.length > 0) {
+                  setVenueChart(null);
+                  setOutcomeCharts(fulfilled);
+                  setNotFoundKey(null);
+                  return;
+                }
+              }
+            } catch {
+              // Fall back to Lotus chart history when Polymarket history is unavailable.
+            }
+          }
           const uniqueInputs = Array.from(new Map(
             chartOutcomeRequestInputs
               .filter((outcome) => outcome.marketId)
@@ -7263,6 +7385,10 @@ const InfraTradingTerminalInner = ({
                  marketType={marketType}
                  onMarketTypeChange={setMarketType}
                  outcomes={terminalOutcomes}
+                 polymarketEventSlug={selectedMarket?.venueMarkets?.find((market) => market.venue === 'POLYMARKET' && market.eventSlug)?.eventSlug
+                   ?? selectedMarket?.eventSlug
+                   ?? terminalMarket.eventSlug
+                   ?? null}
                />
             </div>
 
