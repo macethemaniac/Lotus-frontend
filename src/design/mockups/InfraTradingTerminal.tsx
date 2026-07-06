@@ -53,8 +53,8 @@ import {
   getMarketLivePrices,
   getMarketOrderbook,
   getMarketOutcomes,
+  getPolymarketEventBySlug,
   getPolymarketMarketBySlug,
-  getPolymarketMarketsByEventSlug,
   getPolymarketPricesHistory,
   getVenueMarketResolutionRisk,
   type MarketChartResponse,
@@ -2984,7 +2984,7 @@ const LiveCanonicalChart = ({
     [chartOutcomeFetchKey]
   );
   const prefersPolymarketBinaryHistory = marketType === 'binary' && Boolean(polymarketMarketSlug);
-  const prefersPolymarketMultiHistory = marketType === 'multi' && Boolean(polymarketEventSlug);
+  const prefersPolymarketMultiHistory = marketType === 'multi' && Boolean(polymarketMarketSlug || polymarketEventSlug);
   const liveOutcomeValuesByKey = useMemo(
     () => marketType === 'binary' && !prefersPolymarketBinaryHistory
       ? new Map(chartOutcomeInputs.map((outcome) => [outcome.key, outcome.latestValue]))
@@ -3105,8 +3105,13 @@ const LiveCanonicalChart = ({
         }
         if (prefersPolymarketMultiHistory && polymarketEventSlug) {
           try {
-            const polymarketMarkets = await getPolymarketMarketsByEventSlug(polymarketEventSlug);
-            const topPolymarketMarkets = [...polymarketMarkets]
+            const parentPolymarketMarket = polymarketMarketSlug
+              ? await getPolymarketMarketBySlug(polymarketMarketSlug)
+              : null;
+            const resolvedEventSlug = parentPolymarketMarket?.events?.find((event) => typeof event?.slug === 'string' && event.slug.trim())?.slug?.trim()
+              ?? polymarketEventSlug;
+            const polymarketEvent = await getPolymarketEventBySlug(resolvedEventSlug);
+            const topPolymarketMarkets = [...polymarketEvent.markets]
               .flatMap((market, index) => {
                 const tokenIds = parsePolymarketTokenIds(market.clobTokenIds);
                 const outcomePrices = parsePolymarketOutcomePrices(market.outcomePrices);
