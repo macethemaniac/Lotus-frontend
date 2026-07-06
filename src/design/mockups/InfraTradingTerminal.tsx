@@ -125,6 +125,7 @@ const TERMINAL_LIVE_PRICE_BATCH_SIZE = 80;
 // selected market/orderbook path live, but disable the broader background loops.
 const TERMINAL_BACKGROUND_POLLING_ENABLED = env.lotusDeployEnv !== 'production';
 const TERMINAL_LIVE_ORDERBOOK_STREAM_ENABLED = env.lotusDeployEnv !== 'production';
+const TERMINAL_LIVE_CHART_ENABLED = env.lotusDeployEnv !== 'production';
 
 const walletAddressEquals = (left?: string | null, right?: string | null): boolean => {
   if (!left || !right) return false;
@@ -7556,13 +7557,23 @@ const InfraTradingTerminalInner = ({
             
             {/* Main Chart Section */}
             <div className="min-h-[320px] flex-1 flex flex-col relative p-4 min-w-0 lg:min-h-0">
-               <LiveCanonicalChart
-                 marketId={selectedOutcomeMarketId}
-                 outcomeId={selectedQuoteOutcomeId}
-                 marketType={marketType}
-                 onMarketTypeChange={setMarketType}
-                 outcomes={liveChartOutcomes}
-               />
+               {TERMINAL_LIVE_CHART_ENABLED ? (
+                 <LiveCanonicalChart
+                   marketId={selectedOutcomeMarketId}
+                   outcomeId={selectedQuoteOutcomeId}
+                   marketType={marketType}
+                   onMarketTypeChange={setMarketType}
+                   outcomes={liveChartOutcomes}
+                 />
+               ) : (
+                 <div className="flex h-full min-h-[260px] flex-col items-center justify-center rounded-xl border border-zinc-800/80 bg-[#0d0d10] px-6 text-center">
+                   <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#ccff00]">Terminal stability mode</div>
+                   <div className="mt-3 text-lg font-semibold text-zinc-100">Live chart is temporarily simplified in production.</div>
+                   <div className="mt-2 max-w-xl text-sm text-zinc-400">
+                     Outcome prices and route quotes below stay available while Lotus avoids the renderer freezes seen on this route.
+                   </div>
+                 </div>
+               )}
             </div>
 
             {/* Order Book Panel (Right side of middle container) */}
