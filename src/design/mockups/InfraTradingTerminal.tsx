@@ -2833,7 +2833,7 @@ const chartPointValue = (
   return parsed * 100;
 };
 
-const OUTCOME_CHART_COLORS = ["#22C55E", "#EF4444", "#3B82F6", "#F59E0B", "#8B5CF6", "#EC4899"];
+const OUTCOME_CHART_COLORS = ["#1F7AFF", "#FF8A00", "#4DCC63", "#7C4DFF", "#FF4F6D", "#12B8FF", "#FFD44D", "#9A6BFF"];
 
 const normalizeChartKey = (prefix: string, value: string): string =>
   `${prefix}_${value.replace(/[^a-zA-Z0-9_]/g, "_")}`;
@@ -2987,6 +2987,11 @@ const buildSmoothChartLinePath = (points: ChartPointGeometry[]): string => {
     path += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${next.x} ${next.y}`;
   }
   return path;
+};
+
+const buildLinearChartLinePath = (points: ChartPointGeometry[]): string => {
+  if (points.length === 0) return '';
+  return points.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ');
 };
 
 const buildChartAreaPath = (points: ChartPointGeometry[], baselineY: number): string => {
@@ -3165,26 +3170,33 @@ const LiveCanonicalChartImpl = ({
     [chartTimeframe, liveOutcomeValuesByKey, outcomeCharts]
   );
   const { rows, series, historyStatus } = chartModel;
-  const yAxis = useMemo(() => buildChartYAxis(rows, series), [rows, series]);
+  const yAxis = useMemo(
+    () => ({ domain: [0, 100] as [number, number], ticks: [0, 20, 40, 60, 80, 100] }),
+    []
+  );
   const [chartFrameRef, chartFrameSize] = useChartFrameSize();
   const chartReady = chartFrameSize.width > 0 && chartFrameSize.height > 0;
-  const chartHeight = Math.max(chartFrameSize.height, 260);
+  const chartHeight = Math.max(chartFrameSize.height, 320);
   const chartTickRows = useMemo(() => {
-    if (rows.length <= 5) return rows;
+    const monthRows = new Map<string, TerminalChartRow>();
+    for (const row of rows) {
+      if (typeof row.timestamp !== 'number') continue;
+      const date = new Date(row.timestamp);
+      if (!Number.isFinite(date.getTime())) continue;
+      const key = `${date.getUTCFullYear()}-${date.getUTCMonth()}`;
+      if (!monthRows.has(key)) monthRows.set(key, row);
+    }
+    const values = [...monthRows.values()];
+    if (values.length > 0) return values.slice(0, 6);
+    if (rows.length <= 6) return rows;
     const lastIndex = rows.length - 1;
-    const indices = Array.from(new Set([
-      0,
-      Math.round(lastIndex * 0.25),
-      Math.round(lastIndex * 0.5),
-      Math.round(lastIndex * 0.75),
-      lastIndex,
-    ])).sort((left, right) => left - right);
-    return indices.map((index) => rows[index]!).filter(Boolean);
+    const indices = Array.from({ length: 6 }, (_, index) => Math.round((lastIndex * index) / 5));
+    return Array.from(new Set(indices)).map((index) => rows[index]!).filter(Boolean);
   }, [rows]);
   const chartGeometry = useMemo(() => {
     if (!chartReady) return null;
 
-    const margin = { top: 12, right: 38, bottom: 28, left: 8 };
+    const margin = { top: 18, right: 18, bottom: 46, left: 48 };
     const plotWidth = Math.max(1, chartFrameSize.width - margin.left - margin.right);
     const plotHeight = Math.max(1, chartHeight - margin.top - margin.bottom);
     const timestamps = rows
@@ -3192,13 +3204,12 @@ const LiveCanonicalChartImpl = ({
       .filter((value): value is number => value !== null);
     const minTimestamp = timestamps[0] ?? 0;
     const maxTimestamp = timestamps[timestamps.length - 1] ?? minTimestamp + 1;
-    const domainMax = yAxis.domain[1] > yAxis.domain[0] ? yAxis.domain[1] : yAxis.domain[0] + 1;
     const xForTimestamp = (timestamp: number) =>
       timestamps.length <= 1 || maxTimestamp === minTimestamp
         ? margin.left + plotWidth / 2
         : margin.left + ((timestamp - minTimestamp) / (maxTimestamp - minTimestamp)) * plotWidth;
     const yForValue = (value: number) =>
-      margin.top + plotHeight - ((value - yAxis.domain[0]) / (domainMax - yAxis.domain[0])) * plotHeight;
+      margin.top + plotHeight - ((value - yAxis.domain[0]) / (yAxis.domain[1] - yAxis.domain[0])) * plotHeight;
 
     const lineSeries = series.map((item) => {
       const points = rows.flatMap((row) => {
@@ -3315,102 +3326,27 @@ const LiveCanonicalChartImpl = ({
     };
   }, [chartOutcomeChartInputs, chartTimeframe, marketId, marketType, notFoundKey, requestKey]);
 
-  const CustomTooltip = ({ active, payload, label }: any) => {
-    if (!active || !payload?.length) return null;
-    return (
-      <div className="bg-[#18181b]/95 border border-zinc-800 rounded-lg p-3 shadow-2xl z-50 min-w-[200px]">
-        <div className="text-zinc-400 text-[11px] mb-3 font-sans">
-          {formatChartAxisTimeLabel(Number(label), chartTimeframe) || String(label)}
-        </div>
-        <div className="flex flex-col gap-2">
-          {[...payload].filter((entry: any) => typeof entry.value === 'number').sort((a: any, b: any) => b.value - a.value).map((entry: any) => (
-            <div key={entry.dataKey} className="flex items-center gap-1.5 text-[13px] font-medium">
-              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: entry.color }} />
-              <span className="font-bold text-white">{Number(entry.value).toFixed(Number(entry.value) >= 10 ? 1 : 2)}%</span>
-              <span className="text-white ml-0.5">{entry.name}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  };
-
-  const highlightedLineSeries = chartGeometry?.lineSeries.find((entry) => entry.item.emphasis) ?? chartGeometry?.lineSeries[0] ?? null;
-  const highlightedLatest = highlightedLineSeries?.latest ?? null;
-  const highlightedLabel = highlightedLineSeries?.item.label ?? selectedChartOutcome?.name ?? 'Selected outcome';
-  const highlightedValue = highlightedLatest?.value ?? null;
-  const legendItems = series.map((item) => {
-    const latest = [...rows].reverse().find((point) => typeof point[item.id] === 'number');
-    const value = typeof latest?.[item.id] === 'number' ? latest[item.id] as number : null;
-    return { ...item, value };
-  });
+  const legendItems = series.map((item) => ({
+    ...item,
+    value: [...rows].reverse().find((point) => typeof point[item.id] === 'number')?.[item.id] as number | undefined,
+  }));
 
   return (
-    <div className="relative w-full h-full overflow-hidden rounded-[28px] border border-white/6 bg-[#0b0c10]">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(102,179,255,0.12),transparent_34%),radial-gradient(circle_at_top_right,rgba(34,197,94,0.10),transparent_28%),linear-gradient(180deg,rgba(255,255,255,0.03),rgba(255,255,255,0))]" />
-      <div className="relative flex h-full flex-col px-4 pb-4 pt-4 sm:px-5 sm:pb-5 sm:pt-5">
-      <div className="flex items-start justify-between gap-3">
-        <div className="max-w-[70rem]">
-          <div className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-2xl border border-white/8 bg-white/[0.04] text-zinc-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
-              <Activity className="h-4 w-4" />
-            </div>
-            <div>
-              <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-zinc-500">Probability</div>
-              <div className="mt-0.5 text-lg font-semibold text-zinc-100">{highlightedLabel}</div>
-            </div>
-          </div>
-          {highlightedValue !== null ? (
-            <div className="mt-4 flex flex-wrap items-end gap-3">
-              <div className="text-4xl font-semibold tracking-[-0.05em] text-white sm:text-5xl">
-                {highlightedValue.toFixed(highlightedValue >= 10 ? 1 : 2)}%
-              </div>
-              <div className="rounded-full border border-white/8 bg-white/[0.04] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-400">
-                {historyStatus === 'accumulating' ? 'Accumulating' : historyStatus === 'live' ? 'Live' : 'Snapshot'}
-              </div>
-            </div>
-          ) : null}
-        </div>
-        <div className="shrink-0 rounded-full border border-white/8 bg-white/[0.04] px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-400">
-          All outcomes
-        </div>
-      </div>
-      <div className="mt-5 flex flex-wrap items-center gap-x-4 gap-y-2">
-        {legendItems.map((item) => (
-          <div
-            key={item.id}
-            className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-[12px] shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] ${
-              item.emphasis ? 'border-white/14 bg-white/[0.07] text-white' : 'border-white/6 bg-white/[0.03] text-zinc-300'
-            }`}
-          >
-            <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color, boxShadow: `0 0 12px ${item.color}55` }} />
-            <span className="font-medium">{item.label}</span>
-            <span className={`font-semibold ${item.emphasis ? 'text-white' : 'text-zinc-400'}`}>
-              {item.value === null ? 'pending' : `${item.value.toFixed(item.value >= 10 ? 1 : 2)}%`}
-            </span>
-          </div>
-        ))}
-        {historyStatus === 'accumulating' && (
-          <div className="rounded-full border border-amber-400/20 bg-amber-400/10 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-amber-200">
-            Live history accumulating
-          </div>
-        )}
-      </div>
-      <div className="mt-5 rounded-[24px] border border-white/6 bg-[#090a0d]/85 px-3 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] sm:px-4">
-      <div ref={chartFrameRef} className="relative min-h-[280px] w-full flex-1">
+    <div className="relative w-full h-full overflow-hidden rounded-[24px] border border-[#d9dce5] bg-[#f4f5f9] px-5 py-5 sm:px-6 sm:py-6">
+      <div ref={chartFrameRef} className="relative min-h-[360px] w-full">
         {loading && rows.length === 0 && (
-          <div className="absolute inset-0 z-10 flex items-center justify-center text-xs font-bold uppercase tracking-[0.18em] text-zinc-500">
-            Loading live chart
+          <div className="absolute inset-0 z-10 flex items-center justify-center text-sm font-medium text-[#8f939d]">
+            Loading chart
           </div>
         )}
         {error && rows.length === 0 && (
-          <div className="absolute inset-0 z-10 flex items-center justify-center px-6 text-center text-xs font-semibold text-amber-300">
+          <div className="absolute inset-0 z-10 flex items-center justify-center px-6 text-center text-sm font-medium text-[#c35d2c]">
             {error}
           </div>
         )}
         {!loading && !error && rows.length === 0 && (
-          <div className="absolute inset-0 z-10 flex items-center justify-center px-6 text-center text-xs font-semibold text-zinc-500">
-            Live chart data will appear after Lotus receives backend orderbook points for this market.
+          <div className="absolute inset-0 z-10 flex items-center justify-center px-6 text-center text-sm font-medium text-[#8f939d]">
+            Chart history will appear once venue data is available.
           </div>
         )}
         {chartReady && chartGeometry ? (
@@ -3422,22 +3358,13 @@ const LiveCanonicalChartImpl = ({
             aria-label="Probability chart"
             role="img"
           >
-            <defs>
-              {chartGeometry.lineSeries.map(({ item }) => (
-                <linearGradient key={`gradient-${item.id}`} id={`chart-gradient-${item.id}`} x1="0" x2="0" y1="0" y2="1">
-                  <stop offset="0%" stopColor={item.color} stopOpacity={item.emphasis ? "0.28" : "0.14"} />
-                  <stop offset="60%" stopColor={item.color} stopOpacity={item.emphasis ? "0.08" : "0.03"} />
-                  <stop offset="100%" stopColor={item.color} stopOpacity="0" />
-                </linearGradient>
-              ))}
-            </defs>
             <rect
-              x={chartGeometry.margin.left}
-              y={chartGeometry.margin.top}
-              width={chartGeometry.plotWidth}
-              height={chartGeometry.plotHeight}
+              x="0"
+              y="0"
+              width={chartFrameSize.width}
+              height={chartHeight}
               rx="18"
-              fill="rgba(255,255,255,0.015)"
+              fill="#f4f5f9"
             />
             {yAxis.ticks.map((tick) => {
               const y = chartGeometry.yForValue(tick);
@@ -3448,99 +3375,90 @@ const LiveCanonicalChartImpl = ({
                     x2={chartGeometry.margin.left + chartGeometry.plotWidth}
                     y1={y}
                     y2={y}
-                    stroke="rgba(148,163,184,0.14)"
-                    strokeDasharray="2 8"
+                    stroke="#c4c8d2"
+                    strokeWidth="1"
                   />
                   <text
-                    x={chartGeometry.margin.left + chartGeometry.plotWidth + 12}
+                    x={chartGeometry.margin.left - 10}
                     y={y + 4.5}
-                    fill="rgba(148,163,184,0.72)"
+                    fill="#8f939d"
                     fontSize="11"
                     fontWeight="500"
-                    textAnchor="start"
+                    textAnchor="end"
                   >
-                    {formatChartAxisValue(Number(tick))}
+                    {Number(tick)}
                   </text>
                 </g>
               );
             })}
             {chartTickRows.map((row) => {
               if (typeof row.timestamp !== 'number') return null;
+              const x = chartGeometry.xForTimestamp(row.timestamp);
               return (
-                <text
-                  key={`time-${row.timestamp}`}
-                  x={chartGeometry.xForTimestamp(row.timestamp)}
-                  y={chartHeight - 10}
-                fill="rgba(148,163,184,0.72)"
-                fontSize="11"
-                fontWeight="500"
-                textAnchor="middle"
-              >
-                  {formatChartAxisTimeLabel(row.timestamp, chartTimeframe)}
-                </text>
+                <g key={`time-${row.timestamp}`}>
+                  <line
+                    x1={x}
+                    x2={x}
+                    y1={chartGeometry.margin.top}
+                    y2={chartGeometry.margin.top + chartGeometry.plotHeight}
+                    stroke="#b5bac5"
+                    strokeDasharray="4 4"
+                    strokeWidth="1"
+                  />
+                  <text
+                    x={x}
+                    y={chartHeight - 12}
+                    fill="#8f939d"
+                    fontSize="11"
+                    fontWeight="500"
+                    textAnchor="middle"
+                  >
+                    {new Intl.DateTimeFormat('en-US', { month: 'short' }).format(new Date(row.timestamp)).toUpperCase()}
+                  </text>
+                </g>
               );
             })}
             {chartGeometry.lineSeries.map(({ item, points, latest }) => {
               if (points.length === 0) return null;
-              const linePath = buildSmoothChartLinePath(points);
-              const areaPath = buildChartAreaPath(points, chartGeometry.margin.top + chartGeometry.plotHeight);
+              const linePath = buildLinearChartLinePath(points);
               return (
                 <g key={item.id}>
-                  <path
-                    d={areaPath}
-                    fill={`url(#chart-gradient-${item.id})`}
-                    opacity={item.emphasis || series.length === 1 ? "1" : "0.8"}
-                  />
                   <path
                     fill="none"
                     d={linePath}
                     stroke={item.color}
-                    strokeWidth={item.emphasis || series.length === 1 ? 3 : 2}
+                    strokeWidth={item.emphasis ? 2.25 : 1.9}
                     strokeDasharray={item.dashed ? '4 2' : undefined}
-                    strokeLinejoin="round"
+                    strokeLinejoin="miter"
                     strokeLinecap="round"
                   />
                   {latest ? (
-                    <g>
-                      {item.emphasis || series.length === 1 ? (
-                        <circle
-                          cx={latest.x}
-                          cy={latest.y}
-                          r="18"
-                          fill={item.color}
-                          opacity="0.14"
-                        />
-                      ) : null}
-                      <circle
-                        cx={latest.x}
-                        cy={latest.y}
-                        r={item.emphasis || series.length === 1 ? 5.5 : 4}
-                        fill={item.color}
-                        stroke="#0b0c10"
-                        strokeWidth="2"
-                      />
-                    </g>
+                    <circle
+                      cx={latest.x}
+                      cy={latest.y}
+                      r="2.5"
+                      fill={item.color}
+                    />
                   ) : null}
                 </g>
               );
             })}
-            {highlightedLatest ? (
-              <g>
-                <line
-                  x1={highlightedLatest.x}
-                  x2={highlightedLatest.x}
-                  y1={chartGeometry.margin.top}
-                  y2={chartGeometry.margin.top + chartGeometry.plotHeight}
-                  stroke="rgba(255,255,255,0.12)"
-                  strokeDasharray="3 7"
-                />
-              </g>
-            ) : null}
           </svg>
         ) : null}
       </div>
+      <div className="mt-4 flex flex-wrap items-center justify-center gap-x-6 gap-y-3 text-[14px] text-[#8f939d]">
+        {legendItems.map((item) => (
+          <div key={item.id} className="flex items-center gap-2">
+            <span className="h-px w-6" style={{ backgroundColor: item.color }} />
+            <span>{item.label}{typeof item.value === 'number' ? ` ${item.value.toFixed(item.value >= 10 ? 1 : 2)}%` : ''}</span>
+          </div>
+        ))}
       </div>
-      </div>
+      {historyStatus === 'accumulating' ? (
+        <div className="mt-3 text-center text-[12px] font-medium uppercase tracking-[0.08em] text-[#8f939d]">
+          Live history accumulating
+        </div>
+      ) : null}
     </div>
   );
 };
