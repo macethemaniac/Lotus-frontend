@@ -2748,10 +2748,14 @@ const formatChartTimeLabel = (timestamp: string, timeframe: MarketChartTimeframe
 
 const formatChartAxisTimeLabel = (timestamp: number, timeframe: MarketChartTimeframe): string => {
   if (!Number.isFinite(timestamp)) return "";
+  if (timeframe === "ALL") {
+    return new Intl.DateTimeFormat("en-US", { month: "short" }).format(new Date(timestamp));
+  }
   return formatChartTimeLabel(new Date(timestamp).toISOString(), timeframe);
 };
 
 const formatChartAxisValue = (value: number): string => {
+  if (Math.abs(value) < 0.005) return "0%";
   const precision = Math.abs(value) >= 10 ? 0 : Math.abs(value) >= 1 ? 1 : 2;
   return `${value.toFixed(precision)}%`;
 };
@@ -2760,6 +2764,40 @@ const buildChartTicks = (max: number): number[] => {
   if (!Number.isFinite(max) || max <= 0) return [0, 25, 50, 75, 100];
   const divisions = 4;
   return Array.from({ length: divisions + 1 }, (_, index) => Number(((max / divisions) * index).toFixed(max <= 2 ? 2 : max <= 10 ? 1 : 0)));
+};
+
+const buildChartTimeTicks = (rows: TerminalChartRow[], timeframe: MarketChartTimeframe): number[] => {
+  const timestamps = rows
+    .map((row) => (typeof row.timestamp === "number" && Number.isFinite(row.timestamp) ? row.timestamp : null))
+    .filter((value): value is number => value !== null);
+  if (timestamps.length === 0) return [];
+  if (timeframe !== "ALL") {
+    if (rows.length <= 5) return timestamps;
+    const lastIndex = timestamps.length - 1;
+    return Array.from(new Set([
+      timestamps[0]!,
+      timestamps[Math.round(lastIndex * 0.25)]!,
+      timestamps[Math.round(lastIndex * 0.5)]!,
+      timestamps[Math.round(lastIndex * 0.75)]!,
+      timestamps[lastIndex]!,
+    ]));
+  }
+
+  const start = new Date(timestamps[0]!);
+  const end = new Date(timestamps[timestamps.length - 1]!);
+  const monthTicks: number[] = [];
+  const cursor = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1));
+  while (cursor.getTime() <= end.getTime()) {
+    monthTicks.push(Math.max(cursor.getTime(), timestamps[0]!));
+    cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+  }
+  if (monthTicks.length === 0) return [timestamps[0]!, timestamps[timestamps.length - 1]!];
+  const targetTickCount = 6;
+  if (monthTicks.length > targetTickCount) {
+    const step = Math.ceil(monthTicks.length / targetTickCount);
+    return monthTicks.filter((_, index) => index % step === 0);
+  }
+  return monthTicks;
 };
 
 const useChartFrameSize = () => {
@@ -2929,13 +2967,12 @@ const LiveCanonicalChart = ({
   polymarketEventSlug?: string | null;
   polymarketMarketSlug?: string | null;
 }) => {
-  const [activeTab, setActiveTab] = useState<MarketChartTimeframe>('1D');
+  const activeTab: MarketChartTimeframe = 'ALL';
   const [venueChart, setVenueChart] = useState<MarketChartResponse | null>(null);
   const [outcomeCharts, setOutcomeCharts] = useState<OutcomeChartEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notFoundKey, setNotFoundKey] = useState<string | null>(null);
-  const tabs: MarketChartTimeframe[] = ['1H', '6H', '1D', '1W', '1M', 'ALL'];
   const requestKey = `${marketId ?? 'none'}:${outcomeId ?? 'none'}:${polymarketEventSlug ?? 'no-event'}:${polymarketMarketSlug ?? 'no-market'}`;
   const selectedChartOutcome = useMemo(() => {
     if (outcomes.length === 0) return null;
@@ -3006,18 +3043,7 @@ const LiveCanonicalChart = ({
   const [chartFrameRef, chartFrameSize] = useChartFrameSize();
   const chartReady = chartFrameSize.width > 0 && chartFrameSize.height > 0;
   const chartHeight = Math.max(chartFrameSize.height, 260);
-  const chartTickRows = useMemo(() => {
-    if (rows.length <= 5) return rows;
-    const lastIndex = rows.length - 1;
-    const indices = Array.from(new Set([
-      0,
-      Math.round(lastIndex * 0.25),
-      Math.round(lastIndex * 0.5),
-      Math.round(lastIndex * 0.75),
-      lastIndex,
-    ])).sort((left, right) => left - right);
-    return indices.map((index) => rows[index]!).filter(Boolean);
-  }, [rows]);
+  const chartTimeTicks = useMemo(() => buildChartTimeTicks(rows, activeTab), [activeTab, rows]);
   const chartGeometry = useMemo(() => {
     if (!chartReady) return null;
 
@@ -3293,30 +3319,12 @@ const LiveCanonicalChart = ({
           )}
         </div>
       </div>
-      <div className="mt-4 overflow-x-auto custom-scrollbar">
-        <div className="flex w-max items-center gap-2 rounded-full bg-[#0e131a]/70 p-1">
-          {tabs.map((tab) => (
-            <button
-              key={tab}
-              type="button"
-              onClick={() => setActiveTab(tab)}
-              className={`rounded-full px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.14em] transition-colors ${
-                activeTab === tab
-                  ? 'bg-white text-[#11161d]'
-                  : 'text-zinc-500 hover:text-zinc-200'
-              }`}
-            >
-              {tab}
-            </button>
-          ))}
-        </div>
-      </div>
       {historyStatus === 'accumulating' && (
         <div className="mt-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-500">
           Live history accumulating
         </div>
       )}
-      <div ref={chartFrameRef} className="relative mt-4 min-h-[280px] w-full flex-1">
+      <div ref={chartFrameRef} className="relative mt-6 min-h-[280px] w-full flex-1">
         {loading && rows.length === 0 && (
           <div className="absolute inset-0 z-10 flex items-center justify-center text-xs font-bold uppercase tracking-[0.18em] text-zinc-500">
             Loading live chart
@@ -3366,19 +3374,18 @@ const LiveCanonicalChart = ({
                 </g>
               );
             })}
-            {chartTickRows.map((row, index) => {
-              if (typeof row.timestamp !== 'number') return null;
-              const anchor = index === 0 ? 'start' : index === chartTickRows.length - 1 ? 'end' : 'middle';
+            {chartTimeTicks.map((timestamp, index) => {
+              const anchor = index === 0 ? 'start' : index === chartTimeTicks.length - 1 ? 'end' : 'middle';
               return (
                 <text
-                  key={`time-${row.timestamp}`}
-                  x={chartGeometry.xForTimestamp(row.timestamp)}
+                  key={`time-${timestamp}`}
+                  x={chartGeometry.xForTimestamp(timestamp)}
                   y={chartHeight - 8}
                   fill="#435168"
                   fontSize="11"
                   textAnchor={anchor}
                 >
-                  {formatChartAxisTimeLabel(row.timestamp, activeTab)}
+                  {formatChartAxisTimeLabel(timestamp, activeTab)}
                 </text>
               );
             })}
