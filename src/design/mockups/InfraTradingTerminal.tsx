@@ -468,6 +468,7 @@ type OutcomeChartInput = {
 };
 
 type OutcomeChartEntry = Omit<OutcomeChartInput, "latestValue"> & {
+  latestValue?: number | null;
   chart: MarketChartResponse;
 };
 
@@ -715,6 +716,20 @@ const displayPriceLabel = (label: string | null | undefined, diagnosticsEnabled 
   const normalized = typeof label === 'string' ? label.trim() : '';
   if (!normalized || normalized === 'Quote' || normalized === 'Unavailable') return diagnosticsEnabled ? 'Quote' : '-';
   return normalized;
+};
+
+const displayPercentLabel = (
+  label: string | null | undefined,
+  diagnosticsEnabled = lotusMarketDiagnosticsEnabled(),
+  fractionDigits = 1,
+): string => {
+  const display = displayPriceLabel(label, diagnosticsEnabled);
+  if (!display || display === '-' || display === 'Quote' || display === 'Unavailable' || display.startsWith('<') || !display.includes('%')) {
+    return display;
+  }
+  const probability = parseProbabilityLabel(display);
+  if (probability === null) return display;
+  return `${(probability * 100).toFixed(fractionDigits)}%`;
 };
 
 const readableQuoteBlocker = (reason: string | null | undefined): string | null => {
@@ -2921,7 +2936,7 @@ const toOutcomeChartModel = (
   }
 
   const liveEntries = charts
-    .map((entry) => ({ ...entry, latestValue: latestValuesByKey.get(entry.key) ?? null }))
+    .map((entry) => ({ ...entry, latestValue: latestValuesByKey.get(entry.key) ?? entry.latestValue ?? null }))
     .filter((entry) => typeof entry.latestValue === 'number' && Number.isFinite(entry.latestValue));
   if (liveEntries.length > 0) {
     const now = new Date();
@@ -3120,6 +3135,7 @@ const LiveCanonicalChart = ({
                 label: chart.label,
                 key: normalizeChartKey('polymarket', `${chart.chart.marketId}_${chart.chart.outcomeId ?? 'YES'}`),
                 color: OUTCOME_CHART_COLORS[0]!,
+                latestValue: chartOutcomeInputs[0]?.latestValue ?? null,
                 chart: chart.chart,
               }]);
               setNotFoundKey(null);
@@ -3170,6 +3186,7 @@ const LiveCanonicalChart = ({
                     label: outcome.label,
                     key: outcome.key,
                     color: outcome.color,
+                    latestValue: outcome.latestValue,
                     chart: toPolymarketOutcomeChartResponse(
                       outcome.marketId,
                       outcome.quoteOutcomeId,
@@ -7503,7 +7520,7 @@ const InfraTradingTerminalInner = ({
                                        aria-pressed={rowYesSelected}
                                      >
                                        <VenueLogo id={normalizeVenueId(rowYesVenue)} label={formatVenueLabel(rowYesVenue)} className="h-4 w-4 rounded-full" />
-                                       Yes {displayPriceLabel(rowYesPrice, marketDiagnosticsEnabled)}
+                                       Yes {displayPercentLabel(rowYesPrice, marketDiagnosticsEnabled)}
                                      </button>
                                      <button
                                        type="button"
@@ -7512,7 +7529,7 @@ const InfraTradingTerminalInner = ({
                                        aria-pressed={rowNoSelected}
                                      >
                                        <VenueLogo id={normalizeVenueId(rowNoVenue)} label={formatVenueLabel(rowNoVenue)} className="h-4 w-4 rounded-full" />
-                                       No {displayPriceLabel(rowNoPrice, marketDiagnosticsEnabled)}
+                                       No {displayPercentLabel(rowNoPrice, marketDiagnosticsEnabled)}
                                      </button>
                                      <button
                                        type="button"
@@ -7645,7 +7662,7 @@ const InfraTradingTerminalInner = ({
                                             className={`flex min-h-8 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${rowYesSelected ? 'border-emerald-400 bg-emerald-500 text-white shadow-[0_0_14px_rgba(16,185,129,0.2)] hover:bg-emerald-400' : 'border-transparent bg-[#1A3A34] text-[#4ade80] hover:bg-[#204941]'}`}
                                             aria-pressed={rowYesSelected}
                                           >
-                                               <VenueLogo id={normalizeVenueId(rowYesVenue)} label={formatVenueLabel(rowYesVenue)} className="h-3.5 w-3.5 rounded-full" /> Yes {displayPriceLabel(rowYesPrice, marketDiagnosticsEnabled)}
+                                               <VenueLogo id={normalizeVenueId(rowYesVenue)} label={formatVenueLabel(rowYesVenue)} className="h-3.5 w-3.5 rounded-full" /> Yes {displayPercentLabel(rowYesPrice, marketDiagnosticsEnabled)}
                                           </button>
                                           <button
                                             type="button"
@@ -7657,7 +7674,7 @@ const InfraTradingTerminalInner = ({
                                             className={`flex min-h-8 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${rowNoSelected ? 'border-red-400 bg-[#E52B50] text-white shadow-[0_0_14px_rgba(229,43,80,0.22)] hover:bg-[#ff3366]' : 'border-transparent bg-[#3F1D24] text-[#f87171] hover:bg-[#52252f]'}`}
                                             aria-pressed={rowNoSelected}
                                           >
-                                               <VenueLogo id={normalizeVenueId(rowNoVenue)} label={formatVenueLabel(rowNoVenue)} className="h-3.5 w-3.5 rounded-full" /> No {displayPriceLabel(rowNoPrice, marketDiagnosticsEnabled)}
+                                               <VenueLogo id={normalizeVenueId(rowNoVenue)} label={formatVenueLabel(rowNoVenue)} className="h-3.5 w-3.5 rounded-full" /> No {displayPercentLabel(rowNoPrice, marketDiagnosticsEnabled)}
                                           </button>
                                           <button
                                             type="button"
