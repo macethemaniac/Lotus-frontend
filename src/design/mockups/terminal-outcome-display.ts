@@ -133,7 +133,6 @@ export const shouldSyncSelectedOutcomeRowDisplay = (input: {
   orderbookUsable: boolean;
 }): boolean => {
   if (!input.next) return false;
-  if (input.outcomeExpanded && input.orderbookUsable) return false;
   return !sameDisplayValues(input.current, input.next);
 };
 

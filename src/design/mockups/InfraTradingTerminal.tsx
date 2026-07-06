@@ -22,8 +22,6 @@ import {
   resolveOutcomeSeedMedia,
   resolveSelectedMarketSeedMedia,
   resolveInitialSelectedOutcomeId,
-  resolveSelectedOutcomeOrderbookDisplaySource,
-  resolveSelectedOutcomeDisplayValues,
   resolveVisibleSelectedOutcomeOrderbook,
   shouldResetOrderbookForRequestChange,
   shouldReuseSelectedOutcomeState,
@@ -3532,7 +3530,6 @@ const InfraTradingTerminalInner = ({
   const [showAllOutcomes, setShowAllOutcomes] = useState(false);
   const [expandedOutcomeId, setExpandedOutcomeId] = useState<string | null>(null);
   const [selectedOutcomeId, setSelectedOutcomeId] = useState<string | null>(null);
-  const [selectedOutcomeDisplayFallback, setSelectedOutcomeDisplayFallback] = useState<TerminalOutcomeDisplayValues | null>(null);
   const [selectedOutcomeDisplayValues, setSelectedOutcomeDisplayValues] = useState<TerminalOutcomeDisplayValues | null>(null);
   const [visibleSelectedOutcomeOrderbook, setVisibleSelectedOutcomeOrderbook] = useState<MarketOrderbookResponse | null>(null);
   const [terminalOutcomes, setTerminalOutcomes] = useState<TerminalOutcomeRow[]>([]);
@@ -3803,11 +3800,15 @@ const InfraTradingTerminalInner = ({
   // outcome list flicker between the stable summary quote and live orderbook data.
   const orderbookActive = Boolean(selectedOutcome && expandedOutcomeId === selectedOutcome.id);
   const orderbookMarketId = orderbookActive ? selectedOutcomeMarketId ?? terminalMarketId : null;
-  const orderbookSideLabel = ticketOutcomeSide === 'no' ? 'No' : 'Yes';
+  const orderbookSideLabel = marketType === 'binary'
+    ? 'Yes'
+    : ticketOutcomeSide === 'no'
+      ? 'No'
+      : 'Yes';
   const orderbookQuoteOutcomeId = orderbookActive
-    ? ticketOutcomeSide === 'no'
-      ? quoteOutcomeIdForTicketSide(selectedOutcome, 'no') ?? (marketType === 'binary' ? 'NO' : null)
-      : selectedQuoteOutcomeId ?? quoteOutcomeIdForTicketSide(selectedOutcome, 'yes') ?? (marketType === 'binary' ? 'YES' : null)
+    ? marketType === 'binary'
+      ? selectedQuoteOutcomeId ?? quoteOutcomeIdForTicketSide(selectedOutcome, 'yes') ?? 'YES'
+      : selectedQuoteOutcomeId ?? quoteOutcomeIdForTicketSide(selectedOutcome, 'yes') ?? null
     : null;
   const orderbookStreamMarketIds = useMemo(
     () => selectedOutcomeCanonicalMarketIds.length > 0
@@ -4034,35 +4035,6 @@ const InfraTradingTerminalInner = ({
     orderbookSnapshotStatus,
     selectedOutcomeSyncingVenueCount,
   ]);
-  const selectedOutcomeBookDisplay = useMemo(() => {
-    const sourceOrderbook = resolveSelectedOutcomeOrderbookDisplaySource({
-      live: orderbook,
-      visible: visibleSelectedOutcomeOrderbook,
-    });
-    if (!sourceOrderbook) {
-      return {
-        yesPrice: null as string | null,
-        noPrice: null as string | null,
-        probability: null as string | null,
-      };
-    }
-    const bestAsk = normalizedOrderbookProbability(sourceOrderbook.bestAsk);
-    const normalizedBestBid = normalizedOrderbookProbability(sourceOrderbook.bestBid);
-    const normalizedMidpoint = normalizedOrderbookProbability(sourceOrderbook.midpoint);
-    return {
-      yesPrice: bestAsk !== null ? formatProbabilityPrice(bestAsk) : null,
-      noPrice: normalizedBestBid !== null && marketType === 'binary' ? formatProbabilityPrice(1 - normalizedBestBid) : null,
-      probability: normalizedMidpoint !== null ? formatProbabilityPercent(normalizedMidpoint) : null,
-    };
-  }, [marketType, orderbook, visibleSelectedOutcomeOrderbook]);
-  const usableSelectedOutcomeBookDisplay = useMemo(() => {
-    if (!selectedOutcomeBookUsable) return null;
-    return {
-      yesPrice: normalizeTerminalDisplayValue(selectedOutcomeBookDisplay.yesPrice),
-      noPrice: normalizeTerminalDisplayValue(selectedOutcomeBookDisplay.noPrice),
-      probability: normalizeTerminalDisplayValue(selectedOutcomeBookDisplay.probability),
-    };
-  }, [selectedOutcomeBookDisplay, selectedOutcomeBookUsable]);
   const selectedOutcomeRowDisplay = useMemo<TerminalOutcomeDisplayValues | null>(() => (
     selectedOutcome
       ? {
@@ -4084,7 +4056,6 @@ const InfraTradingTerminalInner = ({
           probability: normalizeTerminalDisplayValue(row.prob),
         }
       : null;
-    setSelectedOutcomeDisplayFallback(nextDisplayValues);
     setSelectedOutcomeDisplayValues(nextDisplayValues);
   }, []);
   const cacheKeyForOutcome = useCallback((
@@ -4136,7 +4107,6 @@ const InfraTradingTerminalInner = ({
     })) {
       return;
     }
-    setSelectedOutcomeDisplayFallback(selectedOutcomeRowDisplay);
     setSelectedOutcomeDisplayValues(selectedOutcomeRowDisplay);
   }, [
     expandedOutcomeId,
@@ -4175,7 +4145,9 @@ const InfraTradingTerminalInner = ({
       if (selectedOutcomeRefreshKeyRef.current !== refreshKey) return;
       if (orderbook && selectedOutcomeRefreshKey && !selectedOutcomeRefreshKey.startsWith('none:')) {
         orderbookCacheRef.current.set(selectedOutcomeRefreshKey, orderbook);
-        outcomeDisplayCacheRef.current.set(selectedOutcomeRefreshKey, selectedOutcomeBookDisplay);
+        if (selectedOutcomeRowDisplay) {
+          outcomeDisplayCacheRef.current.set(selectedOutcomeRefreshKey, selectedOutcomeRowDisplay);
+        }
       }
       setVisibleSelectedOutcomeOrderbook((current) => resolveVisibleSelectedOutcomeOrderbook({
         current,
@@ -4183,15 +4155,9 @@ const InfraTradingTerminalInner = ({
         nextReady: true,
         nextUsable: true,
       }));
-      setSelectedOutcomeDisplayValues((current) => resolveSelectedOutcomeDisplayValues({
-        current,
-        fallback: selectedOutcomeDisplayFallback,
-        live: selectedOutcomeBookDisplay,
-        liveReady: true,
-      }));
     }, SELECTED_OUTCOME_BOOK_STABILIZE_DELAY_MS);
     return () => window.clearTimeout(timeout);
-  }, [orderbook, selectedOutcomeBookDisplay, selectedOutcomeBookReady, selectedOutcomeDisplayFallback, selectedOutcomeRefreshKey]);
+  }, [orderbook, selectedOutcomeBookReady, selectedOutcomeRefreshKey, selectedOutcomeRowDisplay]);
 
   const refreshOutcomes = useCallback(async () => {
     const fallbackRows = buildTerminalFallbackRows({
@@ -6541,8 +6507,8 @@ const InfraTradingTerminalInner = ({
         : ''
     }`
     : null;
-  const ticketSpotMidPrice = normalizedOrderbookProbability(displayOrderbook?.midpoint)
-    ?? parseProbabilityLabel(selectedOutcomeDisplayValues?.probability)
+  const ticketSpotMidPrice = parseProbabilityLabel(selectedOutcomeDisplayValues?.probability)
+    ?? normalizedOrderbookProbability(displayOrderbook?.midpoint)
     ?? ticketPriceForSide(selectedTicketOutcome, ticketOutcomeSide);
   const ticketExecutionPriceForImpact = executionOrchestratorEnabled && ticketOrchestratorOrder
     ? orderEffectivePrice(ticketOrchestratorOrder)
@@ -7482,19 +7448,16 @@ const InfraTradingTerminalInner = ({
                              : m.primaryVenue ?? venues[0] ?? 'lotus';
                            const rowYesPrice = isExpandedOutcome
                              ? normalizeTerminalDisplayValue(selectedOutcomeDisplayValues?.yesPrice)
-                               ?? usableSelectedOutcomeBookDisplay?.yesPrice
                                ?? normalizeTerminalDisplayValue(m.yesPrice)
                                ?? m.yesPrice
                              : m.yesPrice;
                            const rowNoPrice = isExpandedOutcome
                              ? normalizeTerminalDisplayValue(selectedOutcomeDisplayValues?.noPrice)
-                               ?? usableSelectedOutcomeBookDisplay?.noPrice
                                ?? normalizeTerminalDisplayValue(m.noPrice)
                                ?? m.noPrice
                              : m.noPrice;
                            const rowProbability = isExpandedOutcome
                              ? normalizeTerminalDisplayValue(selectedOutcomeDisplayValues?.probability)
-                               ?? usableSelectedOutcomeBookDisplay?.probability
                                ?? normalizeTerminalDisplayValue(m.prob)
                                ?? m.prob
                              : m.prob;
