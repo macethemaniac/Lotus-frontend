@@ -1,4 +1,4 @@
-export const TERMINAL_STREAM_RENDER_INTERVAL_MS = 120;
+export const TERMINAL_STREAM_RENDER_INTERVAL_MS = 1_000;
 
 export const bufferedRenderDelay = (
   lastRenderedAt: number | null,
