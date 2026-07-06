@@ -31,6 +31,10 @@ import {
   shouldResetExpandedOutcomeForMarketChange,
   type TerminalOutcomeDisplayValues,
 } from '@/design/mockups/terminal-outcome-display';
+import {
+  buildRelatedEventOutcomeFallbackSeeds,
+  terminalOutcomeNameForEventMarket,
+} from '@/design/mockups/terminal-outcome-fallback';
 import { shouldReuseLiveCanonicalChart } from '@/design/mockups/terminal-live-chart-props';
 import { bufferedRenderDelay, TERMINAL_STREAM_RENDER_INTERVAL_MS } from '@/design/mockups/terminal-live-update-scheduler';
 import { downsampleChartRows, maxChartPointsForTimeframe } from '@/design/mockups/terminal-chart-sampling';
@@ -125,7 +129,7 @@ const TERMINAL_LIVE_PRICE_BATCH_SIZE = 80;
 // selected market/orderbook path live, but disable the broader background loops.
 const TERMINAL_BACKGROUND_POLLING_ENABLED = env.lotusDeployEnv !== 'production';
 const TERMINAL_LIVE_ORDERBOOK_STREAM_ENABLED = env.lotusDeployEnv !== 'production';
-const TERMINAL_LIVE_CHART_ENABLED = env.lotusDeployEnv !== 'production';
+const TERMINAL_LIVE_CHART_ENABLED = true;
 
 const walletAddressEquals = (left?: string | null, right?: string | null): boolean => {
   if (!left || !right) return false;
@@ -671,13 +675,6 @@ const sameTerminalEvent = (market: TerminalMarketSelection, selected: TerminalMa
   const selectedEventIds = [selected.eventId, selected.canonicalEventId].filter(Boolean);
   const marketEventIds = [market.eventId, market.canonicalEventId].filter(Boolean);
   return selectedEventIds.length > 0 && marketEventIds.some((id) => selectedEventIds.includes(id));
-};
-
-const terminalOutcomeNameForEventMarket = (market: { title: string; displayOutcome?: string | null }): string => {
-  const displayOutcome = market.displayOutcome?.trim();
-  if (displayOutcome) return displayOutcome;
-  const suffix = market.title.match(/:\s*(.+)$/)?.[1]?.trim();
-  return suffix && suffix.length > 0 ? suffix : market.title.trim();
 };
 
 const terminalOutcomeSeedForEventMarket = (market: MarketCatalogMarket): TerminalOutcomeSeed => {
@@ -2539,31 +2536,11 @@ const buildTerminalFallbackRows = (input: {
   marketVenueList: string[];
 }): TerminalOutcomeRow[] => {
   const { hasCompoundEventOutcomes, relatedEventMarkets, terminalMarket, terminalMarketId, marketVenueList } = input;
-  if ((terminalMarket.outcomes?.length ?? 0) > 0) {
-    return initialOutcomeRows({
-      ...terminalMarket,
-      venues: terminalMarket.venues?.length ? terminalMarket.venues : marketVenueList,
-    });
-  }
-  const relatedEventOutcomeRows = hasCompoundEventOutcomes
-    ? relatedEventMarkets.map((market) => {
-        const marketId = executionMarketId(market) ?? market.canonicalMarketIds?.[0] ?? market.id ?? market.title;
-        const initialOutcome = market.outcomes?.find((outcome) => outcome.id === market.initialOutcomeId) ?? market.outcomes?.[0] ?? null;
-        return {
-          id: marketId,
-          marketId,
-          canonicalMarketIds: market.canonicalMarketIds ?? [],
-          quoteOutcomeId: 'YES',
-          name: terminalOutcomeNameForEventMarket(market),
-          prob: market.priceLabel ?? initialOutcome?.prob ?? 'Quote',
-          imageUrl: initialOutcome?.imageUrl ?? market.imageUrl,
-          iconUrl: initialOutcome?.iconUrl ?? market.iconUrl,
-          venues: market.venues ?? [],
-          volume: null as string | null,
-          volume24h: null as string | null,
-        };
-      })
-    : [];
+  const relatedEventOutcomeRows = buildRelatedEventOutcomeFallbackSeeds({
+    hasCompoundEventOutcomes,
+    relatedEventMarkets,
+    resolveMarketId: (market) => executionMarketId(market as TerminalMarketSelection) ?? market.canonicalMarketIds?.[0] ?? market.id ?? market.title,
+  });
 
   if (relatedEventOutcomeRows.length > 0) {
     return relatedEventOutcomeRows.map((outcome, index): TerminalOutcomeRow => ({
