@@ -238,6 +238,50 @@ const dashboardEventMediaKey = (market: Pick<DashboardMarketRow, 'eventId' | 'ca
 const dashboardMarketEventSlug = (market: Pick<DashboardMarketRow, 'title' | 'eventSlug'>): string =>
   market.eventSlug || eventSlugFromTitle(market.title);
 
+const titleFromEventSlug = (slug: string): string => {
+  const acronymMap: Record<string, string> = {
+    fifa: 'FIFA',
+    ufc: 'UFC',
+    nba: 'NBA',
+    nfl: 'NFL',
+    mlb: 'MLB',
+    nhl: 'NHL',
+    epl: 'EPL',
+    us: 'US',
+    usa: 'USA',
+    eu: 'EU',
+    uk: 'UK',
+    btc: 'BTC',
+    eth: 'ETH',
+  };
+  return slug
+    .split('-')
+    .filter(Boolean)
+    .map((segment) => acronymMap[segment] ?? formatTitleCase(segment))
+    .join(' ');
+};
+
+const buildOptimisticTerminalRouteSelection = (
+  routeEventSlug: string | null | undefined,
+): TerminalMarketSelection | null => {
+  if (!routeEventSlug) return null;
+  const title = titleFromEventSlug(routeEventSlug);
+  const marketType = /winner|champion|cup|election|nominee|mayor|league|season/i.test(title) ? 'multi' : 'binary';
+  const category = /world cup|cup|league|championship|winner|team|match|fifa|nba|nfl|mlb|nhl/i.test(title) ? 'Sports' : 'Markets';
+  return {
+    id: `route:${routeEventSlug}`,
+    eventSlug: routeEventSlug,
+    title,
+    category,
+    icon: marketType === 'multi' ? '🏆' : 'L',
+    volume: '',
+    venueCount: 0,
+    routeType: 'Pending',
+    marketType,
+    outcomes: [],
+  };
+};
+
 type TerminalRouteCandidate = {
   id?: string;
   marketId?: string;
@@ -1813,12 +1857,16 @@ export const DashboardV2Mockup = ({
     () => quotedMarketRows.map(toTerminalMarketSelection),
     [quotedMarketRows],
   );
+  const optimisticTerminalSelection = useMemo<TerminalMarketSelection | null>(
+    () => buildOptimisticTerminalRouteSelection(routeEventSlug),
+    [routeEventSlug],
+  );
   const immediateTerminalSelection = useMemo<TerminalMarketSelection | null>(() => {
     return buildAggregateTerminalRouteSelection(terminalMarketSelections, routeEventSlug);
   }, [routeEventSlug, terminalMarketSelections]);
-  const activeTerminalSelection = selectedTerminalMarket ?? immediateTerminalSelection;
-  const terminalRouteResolved = terminalRouteSelectionMatches(routeEventSlug, activeTerminalSelection);
-  const terminalRoutePending = activePage === 'terminal' && !activeTerminalSelection && !terminalRouteError;
+  const resolvedTerminalSelection = selectedTerminalMarket ?? immediateTerminalSelection;
+  const activeTerminalSelection = resolvedTerminalSelection ?? optimisticTerminalSelection;
+  const terminalRouteResolved = terminalRouteSelectionMatches(routeEventSlug, resolvedTerminalSelection);
 
   useEffect(() => {
     if (activePage !== 'terminal') return;
@@ -3210,19 +3258,6 @@ export const DashboardV2Mockup = ({
                     <div className="space-y-2">
                       <p className="text-lg font-semibold text-zinc-100">Terminal unavailable</p>
                       <p className="text-sm text-zinc-400">{terminalRouteError}</p>
-                    </div>
-                  </div>
-                </div>
-              ) : terminalRoutePending ? (
-                <div className="min-h-[calc(100vh-10rem)] rounded-[28px] border border-white/5 bg-[#0d0d10] p-6 shadow-[0_0_0_1px_rgba(255,255,255,0.03)]">
-                  <div className="flex h-full min-h-[32rem] flex-col gap-5 rounded-[24px] border border-white/6 bg-[#111115] p-6">
-                    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_420px]">
-                      <div className="h-28 animate-pulse rounded-[22px] border border-white/6 bg-[#171b22]" />
-                      <div className="h-28 animate-pulse rounded-[22px] border border-white/6 bg-[#171b22] lg:hidden" />
-                    </div>
-                    <div className="grid flex-1 gap-5 lg:grid-cols-[minmax(0,1fr)_420px]">
-                      <div className="min-h-[24rem] animate-pulse rounded-[26px] border border-white/6 bg-[#151b24]" />
-                      <div className="min-h-[24rem] animate-pulse rounded-[26px] border border-white/6 bg-[#111216]" />
                     </div>
                   </div>
                 </div>
