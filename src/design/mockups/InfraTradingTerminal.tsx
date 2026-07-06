@@ -31,6 +31,7 @@ import {
   shouldResetExpandedOutcomeForMarketChange,
   type TerminalOutcomeDisplayValues,
 } from '@/design/mockups/terminal-outcome-display';
+import { shouldReuseLiveCanonicalChart } from '@/design/mockups/terminal-live-chart-props';
 import { downsampleChartRows, maxChartPointsForTimeframe } from '@/design/mockups/terminal-chart-sampling';
 import { isTurnkeyProviderConfigured } from '@/app/turnkey-provider';
 import { env, lotusMarketDiagnosticsEnabled } from '@/config/env';
@@ -3467,13 +3468,7 @@ const LiveCanonicalChartImpl = ({
 
 const LiveCanonicalChart = React.memo(
   LiveCanonicalChartImpl,
-  (previousProps, nextProps) => (
-    previousProps.marketId === nextProps.marketId &&
-    previousProps.outcomeId === nextProps.outcomeId &&
-    previousProps.marketType === nextProps.marketType &&
-    previousProps.onMarketTypeChange === nextProps.onMarketTypeChange &&
-    previousProps.outcomes === nextProps.outcomes
-  ),
+  shouldReuseLiveCanonicalChart,
 );
 
 const TurnkeyUnavailableState = ({ title, detail }: { title: string; detail: string }) => (
@@ -3794,6 +3789,10 @@ const InfraTradingTerminalInner = ({
   const sortedTerminalOutcomes = useMemo(
     () => sortTerminalOutcomeRowsByProbability(terminalOutcomes),
     [terminalOutcomes],
+  );
+  const liveChartOutcomes = useMemo(
+    () => (marketType === 'binary' ? terminalOutcomes : EMPTY_TERMINAL_OUTCOMES),
+    [marketType, terminalOutcomes],
   );
   const quoteableTerminalOutcomes = useMemo(() => {
     if (sortedTerminalOutcomes.length === 0 && outcomesLoading) {
@@ -7373,7 +7372,7 @@ const InfraTradingTerminalInner = ({
                  outcomeId={selectedQuoteOutcomeId}
                  marketType={marketType}
                  onMarketTypeChange={setMarketType}
-                 outcomes={terminalOutcomes}
+                 outcomes={liveChartOutcomes}
                />
             </div>
 
