@@ -1818,6 +1818,7 @@ export const DashboardV2Mockup = ({
   }, [routeEventSlug, terminalMarketSelections]);
   const activeTerminalSelection = selectedTerminalMarket ?? immediateTerminalSelection;
   const terminalRouteResolved = terminalRouteSelectionMatches(routeEventSlug, activeTerminalSelection);
+  const terminalRoutePending = activePage === 'terminal' && !activeTerminalSelection && !terminalRouteError;
 
   useEffect(() => {
     if (activePage !== 'terminal') return;
@@ -3209,6 +3210,19 @@ export const DashboardV2Mockup = ({
                     <div className="space-y-2">
                       <p className="text-lg font-semibold text-zinc-100">Terminal unavailable</p>
                       <p className="text-sm text-zinc-400">{terminalRouteError}</p>
+                    </div>
+                  </div>
+                </div>
+              ) : terminalRoutePending ? (
+                <div className="min-h-[calc(100vh-10rem)] rounded-[28px] border border-white/5 bg-[#0d0d10] p-6 shadow-[0_0_0_1px_rgba(255,255,255,0.03)]">
+                  <div className="flex h-full min-h-[32rem] flex-col gap-5 rounded-[24px] border border-white/6 bg-[#111115] p-6">
+                    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_420px]">
+                      <div className="h-28 animate-pulse rounded-[22px] border border-white/6 bg-[#171b22]" />
+                      <div className="h-28 animate-pulse rounded-[22px] border border-white/6 bg-[#171b22] lg:hidden" />
+                    </div>
+                    <div className="grid flex-1 gap-5 lg:grid-cols-[minmax(0,1fr)_420px]">
+                      <div className="min-h-[24rem] animate-pulse rounded-[26px] border border-white/6 bg-[#151b24]" />
+                      <div className="min-h-[24rem] animate-pulse rounded-[26px] border border-white/6 bg-[#111216]" />
                     </div>
                   </div>
                 </div>
