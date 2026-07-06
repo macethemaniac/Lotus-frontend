@@ -112,6 +112,7 @@ import { openExecutionSocket, type ExecutionTopic, type ExecutionWsState } from 
 
 const ORDERBOOK_DISPLAY_REST_FALLBACK_DELAY_MS = 1_000;
 const ORDERBOOK_REST_RECOVERY_MIN_INTERVAL_MS = 45_000;
+const ORDERBOOK_REST_POLL_INTERVAL_MS = 15_000;
 const ORDERBOOK_STREAM_GAP_RECOVERY_DELAY_MS = 1_500;
 const SELECTED_OUTCOME_BOOK_STABILIZE_DELAY_MS = 250;
 const TERMINAL_CHART_REFRESH_INTERVAL_MS = 60_000;
@@ -123,6 +124,7 @@ const TERMINAL_LIVE_PRICE_BATCH_SIZE = 80;
 // crashing the renderer on repeated full-page terminal polling. Keep the
 // selected market/orderbook path live, but disable the broader background loops.
 const TERMINAL_BACKGROUND_POLLING_ENABLED = env.lotusDeployEnv !== 'production';
+const TERMINAL_LIVE_ORDERBOOK_STREAM_ENABLED = env.lotusDeployEnv !== 'production';
 
 const walletAddressEquals = (left?: string | null, right?: string | null): boolean => {
   if (!left || !right) return false;
@@ -5887,6 +5889,12 @@ const InfraTradingTerminalInner = ({
       if (cancelled || lastOrderbookWsUpdateAtRef.current !== null || hasUsableOrderbookDepth(orderbookRef.current)) return;
       void loadFallbackOrderbook({ markWsFresh: true });
     }, ORDERBOOK_DISPLAY_REST_FALLBACK_DELAY_MS);
+    const restPollInterval = !TERMINAL_LIVE_ORDERBOOK_STREAM_ENABLED
+      ? window.setInterval(() => {
+          if (document.visibilityState === 'hidden') return;
+          void loadFallbackOrderbook({ markWsFresh: true });
+        }, ORDERBOOK_REST_POLL_INTERVAL_MS)
+      : null;
     return () => {
       cancelled = true;
       if (orderbookRenderTimerRef.current !== null) {
@@ -5894,12 +5902,13 @@ const InfraTradingTerminalInner = ({
         orderbookRenderTimerRef.current = null;
       }
       pendingOrderbookRenderRef.current = null;
+      if (restPollInterval !== null) window.clearInterval(restPollInterval);
       window.clearTimeout(fallbackTimer);
     };
   }, [orderbookMarketId, orderbookNotFoundKey, orderbookQuoteOutcomeId, orderbookStreamMarketIdsKey]);
 
   React.useEffect(() => {
-    if (!orderbookMarketId || orderbookStreamTopics.length === 0) {
+    if (!TERMINAL_LIVE_ORDERBOOK_STREAM_ENABLED || !orderbookMarketId || orderbookStreamTopics.length === 0) {
       if (orderbookRenderTimerRef.current !== null) {
         window.clearTimeout(orderbookRenderTimerRef.current);
         orderbookRenderTimerRef.current = null;
