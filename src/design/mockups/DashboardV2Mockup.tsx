@@ -1651,8 +1651,23 @@ export const DashboardV2Mockup = ({
     () => quotedMarketRows.map(toTerminalMarketSelection),
     [quotedMarketRows],
   );
-  const terminalRouteResolved = terminalRouteSelectionMatches(routeEventSlug, selectedTerminalMarket);
-  const terminalRoutePending = activePage === 'terminal' && !terminalRouteResolved && !terminalRouteError;
+  const immediateTerminalSelection = useMemo<TerminalMarketSelection | null>(() => {
+    if (terminalMarketSelections.length === 0) return null;
+    if (!routeEventSlug) return terminalMarketSelections[0] ?? null;
+    return terminalMarketSelections.find((market) => market.eventSlug === routeEventSlug) ?? null;
+  }, [routeEventSlug, terminalMarketSelections]);
+  const activeTerminalSelection = selectedTerminalMarket ?? immediateTerminalSelection;
+  const terminalRouteResolved = terminalRouteSelectionMatches(routeEventSlug, activeTerminalSelection);
+
+  useEffect(() => {
+    if (activePage !== 'terminal') return;
+    if (!immediateTerminalSelection) return;
+    setSelectedTerminalMarket((current) => {
+      if (terminalRouteSelectionMatches(routeEventSlug, current)) return current;
+      return immediateTerminalSelection;
+    });
+  }, [activePage, immediateTerminalSelection, routeEventSlug]);
+
   useEffect(() => {
     if (activePage !== 'terminal') {
       setTerminalRouteError(null);
@@ -3021,21 +3036,7 @@ export const DashboardV2Mockup = ({
           </>
           ) : activePage === 'terminal' ? (
             <div className="min-w-0 flex-1">
-              {terminalRoutePending ? (
-                <div className="min-h-[calc(100vh-10rem)] rounded-[28px] border border-white/8 bg-[#0d0d10] p-6 shadow-[0_0_0_1px_rgba(255,255,255,0.03)]">
-                  <div className="flex h-full min-h-[32rem] flex-col items-center justify-center gap-4 rounded-[24px] border border-white/6 bg-[#111115] px-6 text-center">
-                    <div className="h-12 w-12 animate-pulse rounded-2xl border border-[#ccff00]/30 bg-[#ccff00]/10" />
-                    <div className="space-y-2">
-                      <p className="text-lg font-semibold text-zinc-100">Loading terminal market…</p>
-                      <p className="text-sm text-zinc-400">
-                        {routeEventSlug
-                          ? `Resolving ${routeEventSlug.replace(/-/g, ' ')}.`
-                          : 'Resolving the latest routeable market.'}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              ) : terminalRouteError ? (
+              {terminalRouteError && !activeTerminalSelection ? (
                 <div className="min-h-[calc(100vh-10rem)] rounded-[28px] border border-red-500/20 bg-[#0d0d10] p-6 shadow-[0_0_0_1px_rgba(255,255,255,0.03)]">
                   <div className="flex h-full min-h-[32rem] flex-col items-center justify-center gap-4 rounded-[24px] border border-red-500/20 bg-[#111115] px-6 text-center">
                     <AlertTriangle className="h-10 w-10 text-red-400" />
@@ -3049,7 +3050,7 @@ export const DashboardV2Mockup = ({
                 <InfraTradingTerminal
                   embedded
                   darkMode={isDarkMode}
-                  selectedMarket={selectedTerminalMarket}
+                  selectedMarket={activeTerminalSelection}
                   relatedMarkets={terminalMarketSelections}
                   session={session}
                   onRequireLogin={onRequireLogin}
