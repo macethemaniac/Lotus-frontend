@@ -3386,7 +3386,7 @@ const LiveCanonicalChartImpl = ({
                     fontWeight="500"
                     textAnchor="end"
                   >
-                    {Number(tick)}
+                    {formatChartAxisValue(Number(tick))}
                   </text>
                 </g>
               );
@@ -3418,9 +3418,9 @@ const LiveCanonicalChartImpl = ({
                 </g>
               );
             })}
-            {chartGeometry.lineSeries.map(({ item, points, latest }) => {
+            {chartGeometry.lineSeries.map(({ item, points }) => {
               if (points.length === 0) return null;
-              const linePath = buildLinearChartLinePath(points);
+              const linePath = buildSmoothChartLinePath(points);
               return (
                 <g key={item.id}>
                   <path
@@ -3432,14 +3432,6 @@ const LiveCanonicalChartImpl = ({
                     strokeLinejoin="miter"
                     strokeLinecap="round"
                   />
-                  {latest ? (
-                    <circle
-                      cx={latest.x}
-                      cy={latest.y}
-                      r="2.5"
-                      fill={item.color}
-                    />
-                  ) : null}
                 </g>
               );
             })}
