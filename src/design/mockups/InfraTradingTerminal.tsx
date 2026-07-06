@@ -4073,6 +4073,11 @@ const InfraTradingTerminalInner = ({
     outcomeId: string | null,
     outcomeRows?: TerminalOutcomeRow[],
   ) => {
+    const row = outcomeId
+      ? outcomeRows?.find((outcome) => outcome.id === outcomeId)
+        ?? terminalOutcomesRef.current.find((outcome) => outcome.id === outcomeId)
+        ?? null
+      : null;
     const cacheKey = cacheKeyForOutcome(outcomeId, outcomeRows);
     if (shouldReuseSelectedOutcomeState({
       currentOutcomeId: selectedOutcomeIdRef.current,
@@ -4082,6 +4087,9 @@ const InfraTradingTerminalInner = ({
     })) {
       return;
     }
+    selectedOutcomeRef.current = row;
+    selectedOutcomeIdRef.current = outcomeId;
+    selectedOutcomeRefreshKeyRef.current = cacheKey ?? 'none:none:none';
     latchSelectedOutcomeDisplayFallback(outcomeId, outcomeRows);
     setVisibleSelectedOutcomeOrderbook(cacheKey ? orderbookCacheRef.current.get(cacheKey) ?? null : null);
     if (cacheKey) {
