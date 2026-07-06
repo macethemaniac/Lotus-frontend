@@ -2918,22 +2918,32 @@ const useChartFrameSize = () => {
 
   React.useEffect(() => {
     const frame = frameRef.current;
-    if (!frame || typeof ResizeObserver === "undefined") return;
+    if (!frame || typeof window === "undefined") return;
+
+    let rafId = 0;
 
     const updateSize = () => {
-      const nextWidth = Math.max(0, Math.round(frame.clientWidth));
-      const nextHeight = Math.max(0, Math.round(frame.clientHeight));
-      setSize((current) =>
-        current.width === nextWidth && current.height === nextHeight
-          ? current
-          : { width: nextWidth, height: nextHeight }
-      );
+      if (rafId !== 0) window.cancelAnimationFrame(rafId);
+      rafId = window.requestAnimationFrame(() => {
+        rafId = 0;
+        const nextWidth = Math.max(0, Math.round(frame.clientWidth));
+        const nextHeight = Math.max(0, Math.round(frame.clientHeight));
+        setSize((current) =>
+          current.width === nextWidth && current.height === nextHeight
+            ? current
+            : { width: nextWidth, height: nextHeight }
+        );
+      });
     };
 
     updateSize();
-    const observer = new ResizeObserver(() => updateSize());
-    observer.observe(frame);
-    return () => observer.disconnect();
+    const settleTimer = window.setTimeout(updateSize, 250);
+    window.addEventListener('resize', updateSize);
+    return () => {
+      window.removeEventListener('resize', updateSize);
+      window.clearTimeout(settleTimer);
+      if (rafId !== 0) window.cancelAnimationFrame(rafId);
+    };
   }, []);
 
   return [frameRef, size] as const;
