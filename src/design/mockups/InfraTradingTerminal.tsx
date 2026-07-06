@@ -22,6 +22,7 @@ import {
   resolveOutcomeSeedMedia,
   resolveSelectedMarketSeedMedia,
   resolveInitialSelectedOutcomeId,
+  resolveSelectedOutcomeRow,
   resolveVisibleSelectedOutcomeOrderbook,
   shouldApplyLatchedOutcomeDisplay,
   shouldResetOrderbookForRequestChange,
@@ -3787,12 +3788,14 @@ const InfraTradingTerminalInner = ({
     return sortedTerminalOutcomes;
   }, [outcomesLoading, sortedTerminalOutcomes]);
   const activeOutcomeId = expandedOutcomeId ?? selectedOutcomeId ?? terminalMarket.initialOutcomeId ?? null;
-  const selectedOutcome = quoteableTerminalOutcomes.find((outcome) => outcome.id === activeOutcomeId)
-    ?? terminalOutcomes.find((outcome) => outcome.id === activeOutcomeId)
-    ?? sortedTerminalOutcomes.find((outcome) => outcome.id === activeOutcomeId)
-    ?? quoteableTerminalOutcomes[0]
-    ?? sortedTerminalOutcomes[0]
-    ?? null;
+  const selectedOutcome = useMemo(() => resolveSelectedOutcomeRow({
+    activeOutcomeId,
+    rowGroups: [
+      quoteableTerminalOutcomes,
+      terminalOutcomes,
+      sortedTerminalOutcomes,
+    ],
+  }), [activeOutcomeId, quoteableTerminalOutcomes, terminalOutcomes, sortedTerminalOutcomes]);
   const visibleOutcomeRows = useMemo(() => {
     if (showAllOutcomes || quoteableTerminalOutcomes.length <= 5) return quoteableTerminalOutcomes;
     const defaultRows = quoteableTerminalOutcomes.slice(0, 5);

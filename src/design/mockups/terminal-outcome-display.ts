@@ -267,6 +267,24 @@ export const resolveInitialSelectedOutcomeId = <T extends { id: string }>(
   return rows[0]?.id ?? null;
 };
 
+export const resolveSelectedOutcomeRow = <T extends { id: string }>(input: {
+  activeOutcomeId: string | null | undefined;
+  rowGroups: readonly (readonly T[])[];
+}): T | null => {
+  if (input.activeOutcomeId) {
+    for (const rows of input.rowGroups) {
+      const match = rows.find((row) => row.id === input.activeOutcomeId);
+      if (match) return match;
+    }
+    return null;
+  }
+
+  for (const rows of input.rowGroups) {
+    if (rows.length > 0) return rows[0] ?? null;
+  }
+  return null;
+};
+
 export const resolveOutcomeSummaryVenues = (
   livePrice: MarketLivePriceItem | null | undefined,
   fallbackVenues: readonly string[] = [],

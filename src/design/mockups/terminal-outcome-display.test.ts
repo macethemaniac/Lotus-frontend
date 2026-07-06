@@ -12,6 +12,7 @@ import {
   resolveSelectedMarketHydratedMedia,
   resolveSelectedMarketSeedMedia,
   resolveInitialSelectedOutcomeId,
+  resolveSelectedOutcomeRow,
   resolveSelectedOutcomeOrderbookDisplaySource,
   resolveSelectedOutcomeDisplayValues,
   resolveVisibleSelectedOutcomeOrderbook,
@@ -483,6 +484,37 @@ describe('resolveInitialSelectedOutcomeId', () => {
       { id: 'brazil' },
     ])).toBe('argentina');
     expect(resolveInitialSelectedOutcomeId(null, [])).toBeNull();
+  });
+});
+
+describe('resolveSelectedOutcomeRow', () => {
+  it('returns the requested row when it exists in any prioritized group', () => {
+    expect(resolveSelectedOutcomeRow({
+      activeOutcomeId: 'france',
+      rowGroups: [
+        [{ id: 'argentina' }],
+        [{ id: 'france' }, { id: 'brazil' }],
+      ],
+    })).toEqual({ id: 'france' });
+  });
+
+  it('does not substitute the first row when the requested outcome is temporarily missing', () => {
+    expect(resolveSelectedOutcomeRow({
+      activeOutcomeId: 'france',
+      rowGroups: [
+        [{ id: 'argentina' }, { id: 'brazil' }],
+      ],
+    })).toBeNull();
+  });
+
+  it('falls back to the first available row only when there is no active outcome request', () => {
+    expect(resolveSelectedOutcomeRow({
+      activeOutcomeId: null,
+      rowGroups: [
+        [],
+        [{ id: 'argentina' }, { id: 'brazil' }],
+      ],
+    })).toEqual({ id: 'argentina' });
   });
 });
 
