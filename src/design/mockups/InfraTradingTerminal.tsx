@@ -1558,6 +1558,25 @@ const isGenericBinaryOutcome = (label: string | null | undefined): boolean => {
   return normalized === 'YES' || normalized === 'NO' || normalized === 'UP' || normalized === 'DOWN';
 };
 
+const resolveTerminalOutcomeQuoteOutcomeId = (input: {
+  quoteOutcomeId?: string | null;
+  outcomeName?: string | null;
+  marketType?: 'binary' | 'multi';
+  siblingCount?: number;
+}): string => {
+  const normalizedQuoteOutcomeId = input.quoteOutcomeId
+    ? canonicalQuoteOutcomeId(input.quoteOutcomeId)
+    : null;
+  if (
+    input.marketType === 'binary' &&
+    (input.siblingCount ?? 0) > 1 &&
+    !isGenericBinaryOutcome(input.outcomeName)
+  ) {
+    return 'YES';
+  }
+  return normalizedQuoteOutcomeId ?? canonicalQuoteOutcomeId(input.outcomeName ?? 'YES');
+};
+
 const outcomeIdForTicketSide = (
   outcomes: readonly TerminalOutcomeRow[],
   side: TicketOutcomeSide,
@@ -2472,7 +2491,12 @@ const initialOutcomeRows = (market: TerminalMarketSelection): TerminalOutcomeRow
       market.canonicalMarketIds,
       rows.length,
     ),
-    quoteOutcomeId: outcome.quoteOutcomeId ?? canonicalQuoteOutcomeId(outcome.name),
+    quoteOutcomeId: resolveTerminalOutcomeQuoteOutcomeId({
+      quoteOutcomeId: outcome.quoteOutcomeId,
+      outcomeName: outcome.name,
+      marketType: market.marketType,
+      siblingCount: rows.length,
+    }),
     name: outcome.name,
     ...resolveOutcomeSeedMedia({
       imageUrl: outcome.imageUrl,
@@ -4232,7 +4256,12 @@ const InfraTradingTerminalInner = ({
             venues: outcome.venues ?? marketVenueList,
             marketId: outcome.marketId ?? terminalMarketId,
             canonicalMarketIds: outcome.canonicalMarketIds ?? [],
-            quoteOutcomeId: outcome.quoteOutcomeId ?? canonicalQuoteOutcomeId(outcome.name),
+            quoteOutcomeId: resolveTerminalOutcomeQuoteOutcomeId({
+              quoteOutcomeId: outcome.quoteOutcomeId,
+              outcomeName: outcome.name,
+              marketType: terminalMarket.marketType,
+              siblingCount: terminalMarket.outcomes?.length ?? 0,
+            }),
             imageUrl: outcome.imageUrl ?? null,
             iconUrl: outcome.iconUrl ?? null,
             volume: outcome.volume ?? null,
