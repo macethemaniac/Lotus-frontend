@@ -55,17 +55,14 @@ export const sanitizeTerminalChartResponse = (
 ): MarketChartResponse => {
   if (!input.productionSafeMode) return chart;
 
+  if (input.marketType !== 'binary') {
+    return chart;
+  }
+
   const sampledPoints = downsampleItems(
     chart.points,
     PRODUCTION_TERMINAL_CHART_POINT_LIMIT,
   );
-
-  if (input.marketType !== 'binary') {
-    return {
-      ...chart,
-      points: sampledPoints,
-    };
-  }
 
   const unifiedSeries = chart.series.filter((item) => item.id === 'unified' || chartSeriesKind(item) === 'unified').slice(0, 1);
   return {

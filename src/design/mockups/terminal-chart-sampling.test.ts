@@ -78,7 +78,7 @@ describe('sanitizeTerminalChartResponse', () => {
       productionSafeMode: true,
     });
 
-    expect(sanitized.points).toHaveLength(20);
+    expect(sanitized.points).toHaveLength(100);
     expect(sanitized.points[0]?.venues).toEqual({
       POLYMARKET: '0.3100',
     });

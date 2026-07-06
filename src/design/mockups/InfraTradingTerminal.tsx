@@ -2981,6 +2981,19 @@ const buildLinearChartLinePath = (points: ChartPointGeometry[]): string => {
   return points.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ');
 };
 
+const buildSteppedChartLinePath = (points: ChartPointGeometry[]): string => {
+  if (points.length === 0) return '';
+  if (points.length === 1) return `M ${points[0]!.x} ${points[0]!.y}`;
+
+  let path = `M ${points[0]!.x} ${points[0]!.y}`;
+  for (let index = 1; index < points.length; index += 1) {
+    const previous = points[index - 1]!;
+    const current = points[index]!;
+    path += ` L ${current.x} ${previous.y} L ${current.x} ${current.y}`;
+  }
+  return path;
+};
+
 const buildChartAreaPath = (points: ChartPointGeometry[], baselineY: number): string => {
   if (points.length === 0) return '';
   const linePath = buildSmoothChartLinePath(points);
@@ -3439,7 +3452,7 @@ const LiveCanonicalChartImpl = ({
             })}
             {chartGeometry.lineSeries.map(({ item, points, latest }) => {
               if (points.length === 0) return null;
-              const linePath = buildLinearChartLinePath(points);
+              const linePath = buildSteppedChartLinePath(points);
               return (
                 <g key={item.id}>
                   <path
