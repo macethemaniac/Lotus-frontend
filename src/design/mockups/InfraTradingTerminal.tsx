@@ -473,6 +473,7 @@ type OutcomeChartInput = {
   label: string;
   key: string;
   color: string;
+  emphasis?: boolean;
   latestValue: number | null;
 };
 
@@ -2961,6 +2962,41 @@ const buildChartYAxis = (
   return { domain: [0, upper], ticks: buildChartTicks(upper) };
 };
 
+type ChartPointGeometry = {
+  x: number;
+  y: number;
+  value: number;
+  timestamp: number;
+};
+
+const buildSmoothChartLinePath = (points: ChartPointGeometry[]): string => {
+  if (points.length === 0) return '';
+  if (points.length === 1) return `M ${points[0]!.x} ${points[0]!.y}`;
+
+  let path = `M ${points[0]!.x} ${points[0]!.y}`;
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const current = points[index]!;
+    const next = points[index + 1]!;
+    const previous = points[index - 1] ?? current;
+    const following = points[index + 2] ?? next;
+    const smoothing = 0.18;
+    const cp1x = current.x + (next.x - previous.x) * smoothing;
+    const cp1y = current.y + (next.y - previous.y) * smoothing;
+    const cp2x = next.x - (following.x - current.x) * smoothing;
+    const cp2y = next.y - (following.y - current.y) * smoothing;
+    path += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${next.x} ${next.y}`;
+  }
+  return path;
+};
+
+const buildChartAreaPath = (points: ChartPointGeometry[], baselineY: number): string => {
+  if (points.length === 0) return '';
+  const linePath = buildSmoothChartLinePath(points);
+  const last = points[points.length - 1]!;
+  const first = points[0]!;
+  return `${linePath} L ${last.x} ${baselineY} L ${first.x} ${baselineY} Z`;
+};
+
 type VenueChartMode = "aggregate" | "venues";
 
 const toVenueChartModel = (
@@ -3005,7 +3041,8 @@ const toOutcomeChartModel = (
   const series: TerminalChartSeries[] = charts.map((entry) => ({
     id: entry.key,
     label: entry.label,
-    color: entry.color
+    color: entry.color,
+    emphasis: entry.emphasis,
   }));
 
   for (const entry of charts) {
@@ -3124,6 +3161,7 @@ const LiveCanonicalChartImpl = ({
         label: outcome.name,
         key: normalizeChartKey('outcome', `${chartMarketId ?? 'market'}_${quoteOutcomeId}_${outcome.id}_${outcome.name}`),
         color: OUTCOME_CHART_COLORS[index % OUTCOME_CHART_COLORS.length]!,
+        emphasis: outcome.id === selectedChartOutcome?.id || (selectedChartOutcome === null && index === 0),
         latestValue: liveOutcomeChartPercent(outcome),
       };
     });
@@ -3339,70 +3377,104 @@ const LiveCanonicalChartImpl = ({
     );
   };
 
+  const highlightedLineSeries = chartGeometry?.lineSeries.find((entry) => entry.item.emphasis) ?? chartGeometry?.lineSeries[0] ?? null;
+  const highlightedLatest = highlightedLineSeries?.latest ?? null;
+  const highlightedLabel = highlightedLineSeries?.item.label ?? selectedChartOutcome?.name ?? 'Selected outcome';
+  const highlightedValue = highlightedLatest?.value ?? null;
+  const legendItems = series.slice(0, marketType === 'binary' ? 1 : 4).map((item) => {
+    const latest = [...rows].reverse().find((point) => typeof point[item.id] === 'number');
+    const value = typeof latest?.[item.id] === 'number' ? latest[item.id] as number : null;
+    return { ...item, value };
+  });
+
   return (
-    <div className="relative w-full h-full flex flex-col pt-2 pb-2 bg-[#0c0c0c] rounded-xl overflow-hidden">
-      <div className="flex items-center justify-between gap-3 px-4 pt-2">
-        <div className="flex items-center gap-2">
-          <Activity className="w-4 h-4 text-white" />
-          <span className="text-white font-bold text-sm">Probability</span>
+    <div className="relative w-full h-full overflow-hidden rounded-[28px] border border-white/6 bg-[#0b0c10]">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(102,179,255,0.12),transparent_34%),radial-gradient(circle_at_top_right,rgba(34,197,94,0.10),transparent_28%),linear-gradient(180deg,rgba(255,255,255,0.03),rgba(255,255,255,0))]" />
+      <div className="relative flex h-full flex-col px-4 pb-4 pt-4 sm:px-5 sm:pb-5 sm:pt-5">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2">
+            <div className="flex h-8 w-8 items-center justify-center rounded-2xl border border-white/8 bg-white/[0.04] text-zinc-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
+              <Activity className="h-4 w-4" />
+            </div>
+            <div>
+              <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-zinc-500">Probability</div>
+              <div className="mt-0.5 text-lg font-semibold text-zinc-100">{highlightedLabel}</div>
+            </div>
+          </div>
+          {highlightedValue !== null ? (
+            <div className="mt-3 flex items-end gap-3">
+              <div className="text-3xl font-semibold tracking-[-0.04em] text-white">
+                {highlightedValue.toFixed(highlightedValue >= 10 ? 1 : 2)}%
+              </div>
+              <div className="rounded-full border border-white/8 bg-white/[0.04] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-400">
+                {historyStatus === 'accumulating' ? 'Accumulating' : historyStatus === 'live' ? 'Live' : 'Snapshot'}
+              </div>
+            </div>
+          ) : null}
         </div>
-        {onMarketTypeChange && (
-          <div className="flex shrink-0 rounded-md border border-zinc-800 bg-zinc-900 p-1">
-            <button
-              type="button"
-              onClick={() => onMarketTypeChange('binary')}
-              className={`px-2 py-1 text-[10px] font-bold uppercase rounded ${marketType === 'binary' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
-            >
-              Binary
-            </button>
-            <button
-              type="button"
-              onClick={() => onMarketTypeChange('multi')}
-              className={`px-2 py-1 text-[10px] font-bold uppercase rounded ${marketType === 'multi' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
-            >
-              Multi
-            </button>
+        <div className="flex shrink-0 items-center gap-2">
+          <div className="flex rounded-2xl border border-white/8 bg-white/[0.04] p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+            {tabs.map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                onClick={() => setActiveTab(tab)}
+                className={`rounded-xl px-3 py-1.5 text-xs font-semibold tracking-[0.02em] transition-all ${
+                  activeTab === tab
+                    ? 'bg-white text-black shadow-[0_6px_24px_rgba(255,255,255,0.18)]'
+                    : 'text-zinc-500 hover:text-zinc-200'
+                }`}
+              >
+                {tab}
+              </button>
+            ))}
+          </div>
+          {onMarketTypeChange && (
+            <div className="flex rounded-2xl border border-white/8 bg-white/[0.04] p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+              <button
+                type="button"
+                onClick={() => onMarketTypeChange('binary')}
+                className={`rounded-xl px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] transition-all ${marketType === 'binary' ? 'bg-white text-black' : 'text-zinc-500 hover:text-zinc-200'}`}
+              >
+                Binary
+              </button>
+              <button
+                type="button"
+                onClick={() => onMarketTypeChange('multi')}
+                className={`rounded-xl px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] transition-all ${marketType === 'multi' ? 'bg-white text-black' : 'text-zinc-500 hover:text-zinc-200'}`}
+              >
+                Multi
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="mt-5 flex flex-wrap items-center gap-2">
+        {legendItems.map((item) => (
+          <div
+            key={item.id}
+            className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-[12px] shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] ${
+              item.emphasis ? 'border-white/12 bg-white/[0.06] text-white' : 'border-white/6 bg-white/[0.03] text-zinc-300'
+            }`}
+          >
+            <div className="flex items-center gap-1.5">
+              <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color, boxShadow: `0 0 12px ${item.color}55` }} />
+              <span className="font-medium">{item.label}</span>
+            </div>
+            <span className={`font-semibold ${item.emphasis ? 'text-white' : 'text-zinc-400'}`}>
+              {item.value === null ? 'pending' : `${item.value.toFixed(item.value >= 10 ? 1 : 2)}%`}
+            </span>
+          </div>
+        ))}
+        {historyStatus === 'accumulating' && (
+          <div className="rounded-full border border-amber-400/20 bg-amber-400/10 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-amber-200">
+            Live history accumulating
           </div>
         )}
       </div>
-      <div className="w-full bg-zinc-800 h-px mt-2" />
-      <div className="w-24 bg-white h-0.5" />
-      <div className="mt-3 overflow-x-auto px-2 sm:px-4 custom-scrollbar">
-        <div className="flex w-max min-w-0 items-center rounded-md bg-transparent space-x-1">
-          {tabs.map((tab) => (
-            <button
-              key={tab}
-              type="button"
-              onClick={() => setActiveTab(tab)}
-              className={`px-2.5 py-1 text-sm font-bold transition-colors sm:px-3 ${
-                activeTab === tab
-                  ? 'text-white border border-white bg-transparent rounded shadow-sm'
-                  : 'text-zinc-400 hover:text-white'
-              }`}
-            >
-              {tab}
-            </button>
-          ))}
-        </div>
-      </div>
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-3 mt-3 text-[12px] min-h-[20px] sm:px-4 sm:text-[13px]">
-        {series.slice(0, 5).map((item) => {
-          const latest = [...rows].reverse().find((point) => typeof point[item.id] === 'number');
-          const value = typeof latest?.[item.id] === 'number' ? latest[item.id] as number : null;
-          return (
-            <div key={item.id} className="flex items-center gap-1.5">
-              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: item.color }} />
-              <span className="text-white font-bold">
-                {item.label} {value === null ? 'pending' : `${value.toFixed(value >= 10 ? 1 : 2)}%`}
-              </span>
-            </div>
-          );
-        })}
-        {historyStatus === 'accumulating' && (
-          <div className="text-zinc-500 font-bold ml-2">Live history accumulating</div>
-        )}
-      </div>
-      <div ref={chartFrameRef} className="relative mt-4 min-h-[260px] w-full flex-1 pr-2 sm:mt-5 sm:min-h-[300px] sm:pr-4">
+      <div className="mt-5 rounded-[24px] border border-white/6 bg-[#090a0d]/85 px-3 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] sm:px-4">
+      <div ref={chartFrameRef} className="relative min-h-[280px] w-full flex-1">
         {loading && rows.length === 0 && (
           <div className="absolute inset-0 z-10 flex items-center justify-center text-xs font-bold uppercase tracking-[0.18em] text-zinc-500">
             Loading live chart
@@ -3427,6 +3499,23 @@ const LiveCanonicalChartImpl = ({
             aria-label="Probability chart"
             role="img"
           >
+            <defs>
+              {chartGeometry.lineSeries.map(({ item }) => (
+                <linearGradient key={`gradient-${item.id}`} id={`chart-gradient-${item.id}`} x1="0" x2="0" y1="0" y2="1">
+                  <stop offset="0%" stopColor={item.color} stopOpacity={item.emphasis ? "0.28" : "0.14"} />
+                  <stop offset="60%" stopColor={item.color} stopOpacity={item.emphasis ? "0.08" : "0.03"} />
+                  <stop offset="100%" stopColor={item.color} stopOpacity="0" />
+                </linearGradient>
+              ))}
+            </defs>
+            <rect
+              x={chartGeometry.margin.left}
+              y={chartGeometry.margin.top}
+              width={chartGeometry.plotWidth}
+              height={chartGeometry.plotHeight}
+              rx="18"
+              fill="rgba(255,255,255,0.015)"
+            />
             {yAxis.ticks.map((tick) => {
               const y = chartGeometry.yForValue(tick);
               return (
@@ -3436,15 +3525,15 @@ const LiveCanonicalChartImpl = ({
                     x2={chartGeometry.margin.left + chartGeometry.plotWidth}
                     y1={y}
                     y2={y}
-                    stroke="#27272A"
-                    strokeDasharray="3 3"
-                    opacity="0.6"
+                    stroke="rgba(148,163,184,0.14)"
+                    strokeDasharray="2 8"
                   />
                   <text
-                    x={chartGeometry.margin.left + chartGeometry.plotWidth + 8}
-                    y={y + 4}
-                    fill="#71717A"
+                    x={chartGeometry.margin.left + chartGeometry.plotWidth + 12}
+                    y={y + 4.5}
+                    fill="rgba(148,163,184,0.72)"
                     fontSize="11"
+                    fontWeight="500"
                     textAnchor="start"
                   >
                     {formatChartAxisValue(Number(tick))}
@@ -3458,9 +3547,10 @@ const LiveCanonicalChartImpl = ({
                 <text
                   key={`time-${row.timestamp}`}
                   x={chartGeometry.xForTimestamp(row.timestamp)}
-                  y={chartHeight - 8}
-                  fill="#71717A"
+                  y={chartHeight - 10}
+                  fill="rgba(148,163,184,0.72)"
                   fontSize="11"
+                  fontWeight="500"
                   textAnchor="middle"
                 >
                   {formatChartAxisTimeLabel(row.timestamp, activeTab)}
@@ -3469,33 +3559,64 @@ const LiveCanonicalChartImpl = ({
             })}
             {chartGeometry.lineSeries.map(({ item, points, latest }) => {
               if (points.length === 0) return null;
-              const polylinePoints = points.map((point) => `${point.x},${point.y}`).join(' ');
+              const linePath = buildSmoothChartLinePath(points);
+              const areaPath = buildChartAreaPath(points, chartGeometry.margin.top + chartGeometry.plotHeight);
               return (
                 <g key={item.id}>
-                  <polyline
+                  <path
+                    d={areaPath}
+                    fill={`url(#chart-gradient-${item.id})`}
+                    opacity={item.emphasis || series.length === 1 ? "1" : "0.8"}
+                  />
+                  <path
                     fill="none"
-                    points={polylinePoints}
+                    d={linePath}
                     stroke={item.color}
-                    strokeWidth={item.emphasis || series.length === 1 ? 2.5 : 1.8}
+                    strokeWidth={item.emphasis || series.length === 1 ? 3 : 2}
                     strokeDasharray={item.dashed ? '4 2' : undefined}
                     strokeLinejoin="round"
                     strokeLinecap="round"
                   />
                   {latest ? (
-                    <circle
-                      cx={latest.x}
-                      cy={latest.y}
-                      r={item.emphasis || series.length === 1 ? 5 : 4}
-                      fill={item.color}
-                      stroke="#0c0c0c"
-                      strokeWidth="2"
-                    />
+                    <g>
+                      {item.emphasis || series.length === 1 ? (
+                        <circle
+                          cx={latest.x}
+                          cy={latest.y}
+                          r="18"
+                          fill={item.color}
+                          opacity="0.14"
+                        />
+                      ) : null}
+                      <circle
+                        cx={latest.x}
+                        cy={latest.y}
+                        r={item.emphasis || series.length === 1 ? 5.5 : 4}
+                        fill={item.color}
+                        stroke="#0b0c10"
+                        strokeWidth="2"
+                      />
+                    </g>
                   ) : null}
                 </g>
               );
             })}
+            {highlightedLatest ? (
+              <g>
+                <line
+                  x1={highlightedLatest.x}
+                  x2={highlightedLatest.x}
+                  y1={chartGeometry.margin.top}
+                  y2={chartGeometry.margin.top + chartGeometry.plotHeight}
+                  stroke="rgba(255,255,255,0.12)"
+                  strokeDasharray="3 7"
+                />
+              </g>
+            ) : null}
           </svg>
         ) : null}
+      </div>
+      </div>
       </div>
     </div>
   );
