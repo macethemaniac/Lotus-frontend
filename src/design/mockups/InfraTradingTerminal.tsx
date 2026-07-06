@@ -3075,24 +3075,46 @@ const LiveCanonicalChartImpl = ({
   const tabs: MarketChartTimeframe[] = ['1H', '6H', '1D', '1W', '1M', 'ALL'];
   const requestKey = `${marketId ?? 'none'}:${outcomeId ?? 'none'}`;
   const selectedChartOutcome = useMemo(() => {
-    if (marketType !== 'binary' || outcomes.length === 0) return null;
+    if (outcomes.length === 0) return null;
     return outcomes.find((outcome) => outcome.id === outcomeId) ??
       outcomes.find((outcome) => marketId && outcome.marketId === marketId && streamOutcomeMatches(outcome.quoteOutcomeId, outcomeId)) ??
       outcomes.find((outcome) => marketId && outcome.marketId === marketId) ??
       outcomes.find((outcome) => streamOutcomeMatches(outcome.quoteOutcomeId, outcomeId)) ??
       outcomes[0] ??
       null;
-  }, [marketId, marketType, outcomeId, outcomes]);
-  const binaryOutcomeInputs = useMemo(() => {
-    if (marketType !== 'binary') return [];
-    const source = selectedChartOutcome
-      ? [selectedChartOutcome]
-      : outcomes.length > 0
-      ? [outcomes[0]!]
-      : [
-          { id: 'YES', marketId, quoteOutcomeId: 'YES', name: 'Yes' } as TerminalOutcomeRow,
-        ];
-    return source.slice(0, 1).map((outcome, index): OutcomeChartInput => {
+  }, [marketId, outcomeId, outcomes]);
+  const chartOutcomeInputs = useMemo(() => {
+    const sourceOutcomes = (() => {
+      if (marketType === 'binary') {
+        return selectedChartOutcome
+          ? [selectedChartOutcome]
+          : outcomes.length > 0
+            ? [outcomes[0]!]
+            : [{ id: 'YES', marketId, quoteOutcomeId: 'YES', name: 'Yes' } as TerminalOutcomeRow];
+      }
+
+      const ranked = outcomes
+        .map((outcome, index) => ({
+          outcome,
+          probability: liveOutcomeChartPercent(outcome),
+          index,
+        }))
+        .filter((entry) => entry.outcome.marketId && entry.outcome.quoteOutcomeId)
+        .sort((left, right) => {
+          const leftProbability = left.probability ?? -1;
+          const rightProbability = right.probability ?? -1;
+          if (leftProbability !== rightProbability) return rightProbability - leftProbability;
+          return left.index - right.index;
+        });
+
+      const topOutcomes = ranked.slice(0, 4).map((entry) => entry.outcome);
+      if (selectedChartOutcome && !topOutcomes.some((outcome) => outcome.id === selectedChartOutcome.id)) {
+        return [...topOutcomes.slice(0, 3), selectedChartOutcome];
+      }
+      return topOutcomes;
+    })();
+
+    return sourceOutcomes.map((outcome, index): OutcomeChartInput => {
       const chartMarketId = outcome.marketId ?? marketId;
       const quoteOutcomeId = outcome.quoteOutcomeId || canonicalQuoteOutcomeId(outcome.name || outcome.id);
       return {
@@ -3106,25 +3128,25 @@ const LiveCanonicalChartImpl = ({
       };
     });
   }, [marketId, marketType, outcomes, selectedChartOutcome]);
-  const binaryOutcomeFetchKey = useMemo(
-    () => binaryOutcomeInputs
+  const chartOutcomeFetchKey = useMemo(
+    () => chartOutcomeInputs
       .map((outcome) => `${outcome.id}:${outcome.marketId ?? ''}:${outcome.quoteOutcomeId}:${outcome.key}`)
       .join('|'),
-    [binaryOutcomeInputs]
+    [chartOutcomeInputs]
   );
-  const binaryOutcomeChartInputs = useMemo(
-    () => binaryOutcomeInputs.map(({ latestValue: _latestValue, ...outcome }) => outcome),
-    [binaryOutcomeFetchKey]
+  const chartOutcomeChartInputs = useMemo(
+    () => chartOutcomeInputs.map(({ latestValue: _latestValue, ...outcome }) => outcome),
+    [chartOutcomeFetchKey]
   );
   const liveOutcomeValuesByKey = useMemo(
-    () => new Map(binaryOutcomeInputs.map((outcome) => [outcome.key, outcome.latestValue])),
-    [binaryOutcomeInputs]
+    () => new Map(chartOutcomeInputs.map((outcome) => [outcome.key, outcome.latestValue])),
+    [chartOutcomeInputs]
   );
   const chartModel = useMemo(
-    () => marketType === 'binary'
+    () => (marketType === 'binary' || productionSafeMode)
       ? toOutcomeChartModel(outcomeCharts, liveOutcomeValuesByKey, activeTab)
       : toVenueChartModel(venueChart, activeTab, "venues"),
-    [activeTab, liveOutcomeValuesByKey, marketType, outcomeCharts, venueChart]
+    [activeTab, liveOutcomeValuesByKey, marketType, outcomeCharts, productionSafeMode, venueChart]
   );
   const { rows, series, historyStatus } = chartModel;
   const yAxis = useMemo(() => buildChartYAxis(rows, series), [rows, series]);
@@ -3193,13 +3215,6 @@ const LiveCanonicalChartImpl = ({
   React.useEffect(() => {
     let cancelled = false;
     const loadChart = async () => {
-      if (productionSafeMode) {
-        setVenueChart(null);
-        setOutcomeCharts([]);
-        setLoading(false);
-        setError(null);
-        return;
-      }
       if (!marketId) {
         setVenueChart(null);
         setOutcomeCharts([]);
@@ -3210,18 +3225,27 @@ const LiveCanonicalChartImpl = ({
       setLoading(true);
       setError(null);
       try {
-        if (marketType === 'binary') {
+        if (marketType === 'binary' || productionSafeMode) {
           const uniqueInputs = Array.from(new Map(
-            binaryOutcomeChartInputs
+            chartOutcomeChartInputs
               .filter((outcome) => outcome.marketId)
               .map((outcome) => [outcome.key, outcome])
           ).values());
+          if (uniqueInputs.length === 0) {
+            if (!cancelled) {
+              setVenueChart(null);
+              setOutcomeCharts([]);
+              setLoading(false);
+              setError(null);
+            }
+            return;
+          }
           const results = await Promise.allSettled(
             uniqueInputs.map(async (outcome): Promise<OutcomeChartEntry> => {
               const chart = sanitizeTerminalChartResponse(
                 await getMarketChart(outcome.marketId!, { outcomeId: outcome.quoteOutcomeId, timeframe: activeTab }),
                 {
-                  marketType: 'binary',
+                  marketType: marketType === 'binary' ? 'binary' : 'multi',
                   productionSafeMode,
                 },
               );
@@ -3293,125 +3317,7 @@ const LiveCanonicalChartImpl = ({
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [activeTab, binaryOutcomeChartInputs, marketId, marketType, notFoundKey, outcomeId, productionSafeMode, requestKey]);
-
-  if (productionSafeMode) {
-    const rankedSnapshots = outcomes
-      .map((outcome, index) => {
-        const probability = parseProbabilityLabel(normalizeTerminalDisplayValue(outcome.prob))
-          ?? chartPercentFromDisplayLabel(outcome.yesPrice);
-        return {
-          id: outcome.id,
-          name: outcome.name,
-          probability,
-          venues: outcome.venues.length,
-          rankSeed: index,
-        };
-      })
-      .filter((outcome): outcome is { id: string; name: string; probability: number; venues: number; rankSeed: number } => (
-        typeof outcome.probability === 'number' && Number.isFinite(outcome.probability)
-      ))
-      .sort((left, right) => right.probability - left.probability || left.rankSeed - right.rankSeed);
-    const highlightedSnapshot = rankedSnapshots.find((outcome) => outcome.id === outcomeId) ?? rankedSnapshots[0] ?? null;
-    const visibleSnapshots = highlightedSnapshot
-      ? (() => {
-          const top = rankedSnapshots.slice(0, 8);
-          if (top.some((outcome) => outcome.id === highlightedSnapshot.id)) return top;
-          return [...top.slice(0, 7), highlightedSnapshot].sort((left, right) =>
-            right.probability - left.probability || left.rankSeed - right.rankSeed
-          );
-        })()
-      : rankedSnapshots.slice(0, 8);
-    const leadingSnapshot = rankedSnapshots[0] ?? null;
-    const runnerUpSnapshot = rankedSnapshots[1] ?? null;
-    const leaderGap = leadingSnapshot && runnerUpSnapshot
-      ? Math.max(0, leadingSnapshot.probability - runnerUpSnapshot.probability)
-      : null;
-    return (
-      <div className="relative w-full h-full flex flex-col pt-2 pb-2 bg-[#0c0c0c] rounded-xl overflow-hidden">
-        <div className="flex items-center justify-between gap-3 px-4 pt-2">
-          <div className="flex items-center gap-2">
-            <Activity className="w-4 h-4 text-white" />
-            <span className="text-white font-bold text-sm">Probability</span>
-          </div>
-        </div>
-        <div className="w-full bg-zinc-800 h-px mt-2" />
-        <div className="w-24 bg-white h-0.5" />
-        <div className="flex flex-1 flex-col px-4 pb-4 pt-4">
-          <div className="grid gap-3 sm:grid-cols-3">
-            <div className="rounded-2xl border border-zinc-800 bg-zinc-950/80 px-4 py-3">
-              <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-zinc-500">Leader</div>
-              <div className="mt-2 text-lg font-semibold text-zinc-100">{leadingSnapshot?.name ?? 'Pending'}</div>
-              <div className="mt-1 text-2xl font-semibold text-emerald-400">
-                {leadingSnapshot ? `${leadingSnapshot.probability.toFixed(leadingSnapshot.probability >= 10 ? 1 : 2)}%` : '--'}
-              </div>
-            </div>
-            <div className="rounded-2xl border border-zinc-800 bg-zinc-950/80 px-4 py-3">
-              <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-zinc-500">Selected</div>
-              <div className="mt-2 text-lg font-semibold text-zinc-100">{highlightedSnapshot?.name ?? 'Pending'}</div>
-              <div className="mt-1 text-2xl font-semibold text-white">
-                {highlightedSnapshot ? `${highlightedSnapshot.probability.toFixed(highlightedSnapshot.probability >= 10 ? 1 : 2)}%` : '--'}
-              </div>
-            </div>
-            <div className="rounded-2xl border border-zinc-800 bg-zinc-950/80 px-4 py-3">
-              <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-zinc-500">Leader Gap</div>
-              <div className="mt-2 text-lg font-semibold text-zinc-100">Top vs. next</div>
-              <div className="mt-1 text-2xl font-semibold text-amber-300">
-                {leaderGap !== null ? `${leaderGap.toFixed(leaderGap >= 10 ? 1 : 2)} pts` : '--'}
-              </div>
-            </div>
-          </div>
-          <div className="mt-4 rounded-[24px] border border-zinc-900 bg-[#0a0a0a] p-4">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <div className="text-sm font-semibold text-zinc-100">Live Snapshot</div>
-                <div className="mt-1 text-xs text-zinc-500">
-                  Lightweight ranking chart from the current terminal outcome prices. No historical chart fetches or live chart renderer.
-                </div>
-              </div>
-              <div className="rounded-full border border-zinc-800 bg-zinc-950 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">
-                Stable Mode
-              </div>
-            </div>
-            <div className="mt-5 space-y-3">
-              {visibleSnapshots.length > 0 ? visibleSnapshots.map((outcome, index) => {
-                const isHighlighted = highlightedSnapshot?.id === outcome.id;
-                const width = Math.max(6, Math.min(100, outcome.probability));
-                return (
-                  <div key={outcome.id} className={`rounded-2xl border px-3 py-3 ${isHighlighted ? 'border-emerald-500/40 bg-emerald-500/8' : 'border-zinc-900 bg-zinc-950/60'}`}>
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex min-w-0 items-center gap-3">
-                        <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${isHighlighted ? 'bg-emerald-400 text-black' : 'bg-zinc-800 text-zinc-300'}`}>
-                          {index + 1}
-                        </div>
-                        <div className="min-w-0">
-                          <div className={`truncate text-sm font-semibold ${isHighlighted ? 'text-emerald-100' : 'text-zinc-100'}`}>{outcome.name}</div>
-                          <div className="text-[11px] text-zinc-500">{outcome.venues} venue{outcome.venues === 1 ? '' : 's'}</div>
-                        </div>
-                      </div>
-                      <div className={`shrink-0 text-lg font-semibold ${isHighlighted ? 'text-emerald-300' : 'text-white'}`}>
-                        {outcome.probability.toFixed(outcome.probability >= 10 ? 1 : 2)}%
-                      </div>
-                    </div>
-                    <div className="mt-3 h-2.5 overflow-hidden rounded-full bg-zinc-900">
-                      <div
-                        className={`h-full rounded-full ${isHighlighted ? 'bg-gradient-to-r from-emerald-300 via-emerald-400 to-emerald-500' : 'bg-gradient-to-r from-zinc-500 via-zinc-300 to-white'}`}
-                        style={{ width: `${width}%` }}
-                      />
-                    </div>
-                  </div>
-                );
-              }) : (
-                <div className="rounded-2xl border border-zinc-900 bg-zinc-950/60 px-4 py-8 text-center text-sm font-medium text-zinc-500">
-                  Outcome prices are still loading.
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  }, [activeTab, chartOutcomeChartInputs, marketId, marketType, notFoundKey, outcomeId, productionSafeMode, requestKey]);
 
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (!active || !payload?.length) return null;
