@@ -3093,7 +3093,6 @@ const LiveCanonicalChartImpl = ({
   marketId,
   outcomeId,
   marketType,
-  onMarketTypeChange,
   outcomes = EMPTY_TERMINAL_OUTCOMES,
 }: {
   marketId: string | null;
@@ -3102,14 +3101,11 @@ const LiveCanonicalChartImpl = ({
   onMarketTypeChange?: (value: 'binary' | 'multi') => void;
   outcomes?: TerminalOutcomeRow[];
 }) => {
-  const [activeTab, setActiveTab] = useState<MarketChartTimeframe>('1D');
-  const [venueChart, setVenueChart] = useState<MarketChartResponse | null>(null);
+  const chartTimeframe: MarketChartTimeframe = 'ALL';
   const [outcomeCharts, setOutcomeCharts] = useState<OutcomeChartEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notFoundKey, setNotFoundKey] = useState<string | null>(null);
-  const productionSafeMode = env.lotusDeployEnv === 'production';
-  const tabs: MarketChartTimeframe[] = ['1H', '6H', '1D', '1W', '1M', 'ALL'];
   const requestKey = `${marketId ?? 'none'}:${outcomeId ?? 'none'}`;
   const selectedChartOutcome = useMemo(() => {
     if (outcomes.length === 0) return null;
@@ -3130,25 +3126,9 @@ const LiveCanonicalChartImpl = ({
             : [{ id: 'YES', marketId, quoteOutcomeId: 'YES', name: 'Yes' } as TerminalOutcomeRow];
       }
 
-      const ranked = outcomes
-        .map((outcome, index) => ({
-          outcome,
-          probability: liveOutcomeChartPercent(outcome),
-          index,
-        }))
-        .filter((entry) => entry.outcome.marketId && entry.outcome.quoteOutcomeId)
-        .sort((left, right) => {
-          const leftProbability = left.probability ?? -1;
-          const rightProbability = right.probability ?? -1;
-          if (leftProbability !== rightProbability) return rightProbability - leftProbability;
-          return left.index - right.index;
-        });
-
-      const topOutcomes = ranked.slice(0, 4).map((entry) => entry.outcome);
-      if (selectedChartOutcome && !topOutcomes.some((outcome) => outcome.id === selectedChartOutcome.id)) {
-        return [...topOutcomes.slice(0, 3), selectedChartOutcome];
-      }
-      return topOutcomes;
+      return sortTerminalOutcomeRowsByProbability(
+        outcomes.filter((outcome) => Boolean(outcome.marketId ?? marketId) && Boolean(outcome.quoteOutcomeId || outcome.name || outcome.id))
+      );
     })();
 
     return sourceOutcomes.map((outcome, index): OutcomeChartInput => {
@@ -3181,10 +3161,8 @@ const LiveCanonicalChartImpl = ({
     [chartOutcomeInputs]
   );
   const chartModel = useMemo(
-    () => (marketType === 'binary' || productionSafeMode)
-      ? toOutcomeChartModel(outcomeCharts, liveOutcomeValuesByKey, activeTab)
-      : toVenueChartModel(venueChart, activeTab, "venues"),
-    [activeTab, liveOutcomeValuesByKey, marketType, outcomeCharts, productionSafeMode, venueChart]
+    () => toOutcomeChartModel(outcomeCharts, liveOutcomeValuesByKey, chartTimeframe),
+    [chartTimeframe, liveOutcomeValuesByKey, outcomeCharts]
   );
   const { rows, series, historyStatus } = chartModel;
   const yAxis = useMemo(() => buildChartYAxis(rows, series), [rows, series]);
@@ -3254,7 +3232,6 @@ const LiveCanonicalChartImpl = ({
     let cancelled = false;
     const loadChart = async () => {
       if (!marketId) {
-        setVenueChart(null);
         setOutcomeCharts([]);
         setError(null);
         return;
@@ -3263,74 +3240,55 @@ const LiveCanonicalChartImpl = ({
       setLoading(true);
       setError(null);
       try {
-        if (marketType === 'binary' || productionSafeMode) {
-          const uniqueInputs = Array.from(new Map(
-            chartOutcomeChartInputs
-              .filter((outcome) => outcome.marketId)
-              .map((outcome) => [outcome.key, outcome])
-          ).values());
-          if (uniqueInputs.length === 0) {
-            if (!cancelled) {
-              setVenueChart(null);
-              setOutcomeCharts([]);
-              setLoading(false);
-              setError(null);
-            }
-            return;
-          }
-          const results = await Promise.allSettled(
-            uniqueInputs.map(async (outcome): Promise<OutcomeChartEntry> => {
-              const chart = sanitizeTerminalChartResponse(
-                await getMarketChart(outcome.marketId!, { outcomeId: outcome.quoteOutcomeId, timeframe: activeTab }),
-                {
-                  marketType: marketType === 'binary' ? 'binary' : 'multi',
-                  productionSafeMode,
-                },
-              );
-              return {
-                id: outcome.id,
-                marketId: outcome.marketId,
-                quoteOutcomeId: outcome.quoteOutcomeId,
-                label: outcome.label,
-                key: outcome.key,
-                color: outcome.color,
-                chart,
-              };
-            })
-          );
-          const fulfilled = results.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
+        const uniqueInputs = Array.from(new Map(
+          chartOutcomeChartInputs
+            .filter((outcome) => outcome.marketId)
+            .map((outcome) => [outcome.key, outcome])
+        ).values());
+        if (uniqueInputs.length === 0) {
           if (!cancelled) {
-            setVenueChart(null);
-            setOutcomeCharts(fulfilled);
-            if (fulfilled.length > 0) {
-              setNotFoundKey(null);
-            }
-            if (fulfilled.length === 0) {
-              const rejected = results.find((result) => result.status === 'rejected');
-              if (rejected?.reason && isApiNotFound(rejected.reason, 'MARKET_NOT_FOUND')) {
-                setNotFoundKey(requestKey);
-              }
-              setError(safeMarketDataError(rejected?.reason, 'chart'));
-            }
+            setOutcomeCharts([]);
+            setLoading(false);
+            setError(null);
           }
           return;
         }
-
-        const response = sanitizeTerminalChartResponse(
-          await getMarketChart(marketId, { outcomeId, timeframe: activeTab }),
-          {
-            marketType,
-            productionSafeMode,
-          },
+        const results = await Promise.allSettled(
+          uniqueInputs.map(async (outcome): Promise<OutcomeChartEntry> => {
+            const chart = sanitizeTerminalChartResponse(
+              await getMarketChart(outcome.marketId!, { outcomeId: outcome.quoteOutcomeId, timeframe: chartTimeframe }),
+              {
+                marketType: marketType === 'binary' ? 'binary' : 'multi',
+                productionSafeMode: true,
+              },
+            );
+            return {
+              id: outcome.id,
+              marketId: outcome.marketId,
+              quoteOutcomeId: outcome.quoteOutcomeId,
+              label: outcome.label,
+              key: outcome.key,
+              color: outcome.color,
+              chart,
+            };
+          })
         );
+        const fulfilled = results.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
         if (!cancelled) {
-          setOutcomeCharts([]);
-          setVenueChart(response);
-          setNotFoundKey(null);
+          setOutcomeCharts(fulfilled);
+          if (fulfilled.length > 0) {
+            setNotFoundKey(null);
+          }
+          if (fulfilled.length === 0) {
+            const rejected = results.find((result) => result.status === 'rejected');
+            if (rejected?.reason && isApiNotFound(rejected.reason, 'MARKET_NOT_FOUND')) {
+              setNotFoundKey(requestKey);
+            }
+            setError(safeMarketDataError(rejected?.reason, 'chart'));
+          }
         }
       } catch (err) {
         if (!cancelled) {
-          setVenueChart(null);
           setOutcomeCharts([]);
           if (isApiNotFound(err, 'MARKET_NOT_FOUND')) {
             setNotFoundKey(requestKey);
@@ -3355,14 +3313,14 @@ const LiveCanonicalChartImpl = ({
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [activeTab, chartOutcomeChartInputs, marketId, marketType, notFoundKey, outcomeId, productionSafeMode, requestKey]);
+  }, [chartOutcomeChartInputs, chartTimeframe, marketId, marketType, notFoundKey, requestKey]);
 
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (!active || !payload?.length) return null;
     return (
       <div className="bg-[#18181b]/95 border border-zinc-800 rounded-lg p-3 shadow-2xl z-50 min-w-[200px]">
         <div className="text-zinc-400 text-[11px] mb-3 font-sans">
-          {formatChartAxisTimeLabel(Number(label), activeTab) || String(label)}
+          {formatChartAxisTimeLabel(Number(label), chartTimeframe) || String(label)}
         </div>
         <div className="flex flex-col gap-2">
           {[...payload].filter((entry: any) => typeof entry.value === 'number').sort((a: any, b: any) => b.value - a.value).map((entry: any) => (
@@ -3381,7 +3339,7 @@ const LiveCanonicalChartImpl = ({
   const highlightedLatest = highlightedLineSeries?.latest ?? null;
   const highlightedLabel = highlightedLineSeries?.item.label ?? selectedChartOutcome?.name ?? 'Selected outcome';
   const highlightedValue = highlightedLatest?.value ?? null;
-  const legendItems = series.slice(0, marketType === 'binary' ? 1 : 4).map((item) => {
+  const legendItems = series.map((item) => {
     const latest = [...rows].reverse().find((point) => typeof point[item.id] === 'number');
     const value = typeof latest?.[item.id] === 'number' ? latest[item.id] as number : null;
     return { ...item, value };
@@ -3392,7 +3350,7 @@ const LiveCanonicalChartImpl = ({
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(102,179,255,0.12),transparent_34%),radial-gradient(circle_at_top_right,rgba(34,197,94,0.10),transparent_28%),linear-gradient(180deg,rgba(255,255,255,0.03),rgba(255,255,255,0))]" />
       <div className="relative flex h-full flex-col px-4 pb-4 pt-4 sm:px-5 sm:pb-5 sm:pt-5">
       <div className="flex items-start justify-between gap-3">
-        <div>
+        <div className="max-w-[70rem]">
           <div className="flex items-center gap-2">
             <div className="flex h-8 w-8 items-center justify-center rounded-2xl border border-white/8 bg-white/[0.04] text-zinc-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
               <Activity className="h-4 w-4" />
@@ -3403,8 +3361,8 @@ const LiveCanonicalChartImpl = ({
             </div>
           </div>
           {highlightedValue !== null ? (
-            <div className="mt-3 flex items-end gap-3">
-              <div className="text-3xl font-semibold tracking-[-0.04em] text-white">
+            <div className="mt-4 flex flex-wrap items-end gap-3">
+              <div className="text-4xl font-semibold tracking-[-0.05em] text-white sm:text-5xl">
                 {highlightedValue.toFixed(highlightedValue >= 10 ? 1 : 2)}%
               </div>
               <div className="rounded-full border border-white/8 bg-white/[0.04] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-400">
@@ -3413,55 +3371,20 @@ const LiveCanonicalChartImpl = ({
             </div>
           ) : null}
         </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <div className="flex rounded-2xl border border-white/8 bg-white/[0.04] p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
-            {tabs.map((tab) => (
-              <button
-                key={tab}
-                type="button"
-                onClick={() => setActiveTab(tab)}
-                className={`rounded-xl px-3 py-1.5 text-xs font-semibold tracking-[0.02em] transition-all ${
-                  activeTab === tab
-                    ? 'bg-white text-black shadow-[0_6px_24px_rgba(255,255,255,0.18)]'
-                    : 'text-zinc-500 hover:text-zinc-200'
-                }`}
-              >
-                {tab}
-              </button>
-            ))}
-          </div>
-          {onMarketTypeChange && (
-            <div className="flex rounded-2xl border border-white/8 bg-white/[0.04] p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
-              <button
-                type="button"
-                onClick={() => onMarketTypeChange('binary')}
-                className={`rounded-xl px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] transition-all ${marketType === 'binary' ? 'bg-white text-black' : 'text-zinc-500 hover:text-zinc-200'}`}
-              >
-                Binary
-              </button>
-              <button
-                type="button"
-                onClick={() => onMarketTypeChange('multi')}
-                className={`rounded-xl px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] transition-all ${marketType === 'multi' ? 'bg-white text-black' : 'text-zinc-500 hover:text-zinc-200'}`}
-              >
-                Multi
-              </button>
-            </div>
-          )}
+        <div className="shrink-0 rounded-full border border-white/8 bg-white/[0.04] px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-400">
+          All outcomes
         </div>
       </div>
-      <div className="mt-5 flex flex-wrap items-center gap-2">
+      <div className="mt-5 flex flex-wrap items-center gap-x-4 gap-y-2">
         {legendItems.map((item) => (
           <div
             key={item.id}
             className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-[12px] shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] ${
-              item.emphasis ? 'border-white/12 bg-white/[0.06] text-white' : 'border-white/6 bg-white/[0.03] text-zinc-300'
+              item.emphasis ? 'border-white/14 bg-white/[0.07] text-white' : 'border-white/6 bg-white/[0.03] text-zinc-300'
             }`}
           >
-            <div className="flex items-center gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color, boxShadow: `0 0 12px ${item.color}55` }} />
-              <span className="font-medium">{item.label}</span>
-            </div>
+            <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color, boxShadow: `0 0 12px ${item.color}55` }} />
+            <span className="font-medium">{item.label}</span>
             <span className={`font-semibold ${item.emphasis ? 'text-white' : 'text-zinc-400'}`}>
               {item.value === null ? 'pending' : `${item.value.toFixed(item.value >= 10 ? 1 : 2)}%`}
             </span>
@@ -3548,12 +3471,12 @@ const LiveCanonicalChartImpl = ({
                   key={`time-${row.timestamp}`}
                   x={chartGeometry.xForTimestamp(row.timestamp)}
                   y={chartHeight - 10}
-                  fill="rgba(148,163,184,0.72)"
-                  fontSize="11"
-                  fontWeight="500"
-                  textAnchor="middle"
-                >
-                  {formatChartAxisTimeLabel(row.timestamp, activeTab)}
+                fill="rgba(148,163,184,0.72)"
+                fontSize="11"
+                fontWeight="500"
+                textAnchor="middle"
+              >
+                  {formatChartAxisTimeLabel(row.timestamp, chartTimeframe)}
                 </text>
               );
             })}
