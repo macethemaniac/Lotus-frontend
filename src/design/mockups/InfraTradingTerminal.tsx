@@ -6075,7 +6075,6 @@ const InfraTradingTerminalInner = ({
               orderbookRef.current = nextOrderbook;
               setOrderbook(nextOrderbook);
               validateStreamChecksumOrRecover(nextOrderbook, payload);
-              applyStreamPriceToOutcomes(payload);
               setOrderbookLoading(false);
               setOrderbookError(null);
               return;
@@ -6086,7 +6085,6 @@ const InfraTradingTerminalInner = ({
             orderbookRef.current = nextOrderbook;
             setOrderbook(nextOrderbook);
             validateStreamChecksumOrRecover(nextOrderbook, payload);
-            applyStreamPriceToOutcomes(payload);
             setOrderbookLoading(false);
             setOrderbookError(null);
             return;

@@ -232,7 +232,7 @@ describe('shouldSyncSelectedOutcomeRowDisplay', () => {
     })).toBe(true);
   });
 
-  it('keeps the selected row quote synced even while a usable expanded orderbook is visible', () => {
+  it('stops relatching expanded selected-row quotes once a usable orderbook is visible', () => {
     expect(shouldSyncSelectedOutcomeRowDisplay({
       current: {
         yesPrice: '35c',
@@ -246,7 +246,7 @@ describe('shouldSyncSelectedOutcomeRowDisplay', () => {
       },
       outcomeExpanded: true,
       orderbookUsable: true,
-    })).toBe(true);
+    })).toBe(false);
   });
 
   it('does not keep re-latching collapsed selected rows on background price refreshes', () => {
