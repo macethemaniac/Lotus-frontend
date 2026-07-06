@@ -3760,22 +3760,24 @@ const InfraTradingTerminalInner = ({
     }
     return sortedTerminalOutcomes;
   }, [outcomesLoading, sortedTerminalOutcomes]);
-  const selectedOutcome = quoteableTerminalOutcomes.find((outcome) => outcome.id === selectedOutcomeId)
+  const activeOutcomeId = expandedOutcomeId ?? selectedOutcomeId ?? terminalMarket.initialOutcomeId ?? null;
+  const selectedOutcome = quoteableTerminalOutcomes.find((outcome) => outcome.id === activeOutcomeId)
+    ?? terminalOutcomes.find((outcome) => outcome.id === activeOutcomeId)
+    ?? sortedTerminalOutcomes.find((outcome) => outcome.id === activeOutcomeId)
     ?? quoteableTerminalOutcomes[0]
-    ?? terminalOutcomes.find((outcome) => outcome.id === selectedOutcomeId)
     ?? sortedTerminalOutcomes[0]
     ?? null;
   const visibleOutcomeRows = useMemo(() => {
     if (showAllOutcomes || quoteableTerminalOutcomes.length <= 5) return quoteableTerminalOutcomes;
     const defaultRows = quoteableTerminalOutcomes.slice(0, 5);
-    const pinnedOutcomeId = expandedOutcomeId ?? selectedOutcomeId ?? terminalMarket.initialOutcomeId ?? null;
+    const pinnedOutcomeId = activeOutcomeId;
     if (!pinnedOutcomeId) return defaultRows;
     const pinnedIndex = quoteableTerminalOutcomes.findIndex((outcome) => outcome.id === pinnedOutcomeId);
     if (pinnedIndex < 0 || pinnedIndex < 5) return defaultRows;
     return [...quoteableTerminalOutcomes.slice(0, 4), quoteableTerminalOutcomes[pinnedIndex]!];
-  }, [expandedOutcomeId, quoteableTerminalOutcomes, selectedOutcomeId, showAllOutcomes, terminalMarket.initialOutcomeId]);
+  }, [activeOutcomeId, quoteableTerminalOutcomes, showAllOutcomes]);
   const selectedOutcomeMarketId = selectedOutcome?.marketId ?? terminalMarketId;
-  const selectedQuoteOutcomeId = selectedOutcome?.quoteOutcomeId ?? selectedOutcomeId;
+  const selectedQuoteOutcomeId = selectedOutcome?.quoteOutcomeId ?? activeOutcomeId;
   const selectedOutcomeRefreshKey = `${selectedOutcome?.id ?? 'none'}:${selectedOutcomeMarketId ?? 'none'}:${selectedQuoteOutcomeId ?? 'none'}`;
   const selectedOutcomeCanonicalMarketIds = useMemo(
     () => canonicalIdsForTerminalOutcome(
@@ -3824,7 +3826,7 @@ const InfraTradingTerminalInner = ({
     () => orderbookStreamTopics.join('|'),
     [orderbookStreamTopics],
   );
-  const selectedTicketOutcomeId = outcomeIdForTicketSide(terminalOutcomes, ticketOutcomeSide, selectedOutcomeId);
+  const selectedTicketOutcomeId = outcomeIdForTicketSide(terminalOutcomes, ticketOutcomeSide, activeOutcomeId);
   const selectedTicketOutcome = terminalOutcomes.find((outcome) => outcome.id === selectedTicketOutcomeId) ?? selectedOutcome;
   const selectedTicketMarketId = selectedTicketOutcome?.marketId ?? selectedOutcomeMarketId ?? terminalMarketId;
   const selectedTicketQuoteOutcomeId = quoteOutcomeIdForTicketSide(selectedTicketOutcome, ticketOutcomeSide)
@@ -7445,7 +7447,7 @@ const InfraTradingTerminalInner = ({
                          )}
                          {visibleOutcomeRows.map((m) => {
                            const venues = m.venues.length ? m.venues : marketVenueList;
-                           const isSelectedOutcome = selectedOutcomeId ? selectedOutcomeId === m.id : m.active;
+                           const isSelectedOutcome = activeOutcomeId ? activeOutcomeId === m.id : m.active;
                            const isExpandedOutcome = expandedOutcomeId === m.id;
                            const rowVenueList = isExpandedOutcome && selectedOutcomeVisibleVenues.length > 0
                              ? selectedOutcomeVisibleVenues
