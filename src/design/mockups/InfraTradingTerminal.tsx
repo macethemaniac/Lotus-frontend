@@ -474,10 +474,9 @@ type OutcomeChartInput = {
   key: string;
   color: string;
   emphasis?: boolean;
-  latestValue: number | null;
 };
 
-type OutcomeChartEntry = Omit<OutcomeChartInput, "latestValue"> & {
+type OutcomeChartEntry = OutcomeChartInput & {
   chart: MarketChartResponse;
 };
 
@@ -2838,18 +2837,6 @@ const OUTCOME_CHART_COLORS = ["#1F7AFF", "#FF8A00", "#4DCC63", "#7C4DFF", "#FF4F
 const normalizeChartKey = (prefix: string, value: string): string =>
   `${prefix}_${value.replace(/[^a-zA-Z0-9_]/g, "_")}`;
 
-const chartPercentFromDisplayLabel = (value: string | null | undefined): number | null => {
-  if (!value || value === 'Quote') return null;
-  const cleaned = value.replace(/[^0-9.-]/g, '');
-  const parsed = Number(cleaned);
-  if (!Number.isFinite(parsed) || parsed <= 0) return null;
-  const isAlreadyPercentScale = /[%c]/i.test(value) || value.includes('\u00A2') || value.includes('\u00C2');
-  return isAlreadyPercentScale ? parsed : parsed <= 1 ? parsed * 100 : parsed;
-};
-
-const liveOutcomeChartPercent = (outcome: TerminalOutcomeRow): number | null =>
-  chartPercentFromDisplayLabel(outcome.prob) ?? chartPercentFromDisplayLabel(outcome.yesPrice);
-
 const chartSeriesLabel = (item: { id: string; label: string }): string => {
   if (item.id === "unified") return "Lotus canonical";
   return formatVenueLabel(item.label || item.id);
@@ -3039,7 +3026,6 @@ const toVenueChartModel = (
 
 const toOutcomeChartModel = (
   charts: OutcomeChartEntry[],
-  latestValuesByKey: Map<string, number | null>,
   timeframe: MarketChartTimeframe
 ): { rows: TerminalChartRow[]; series: TerminalChartSeries[]; historyStatus: MarketChartResponse["historyStatus"] | null } => {
   const rowsByBucket = new Map<number, TerminalChartRow>();
@@ -3064,22 +3050,6 @@ const toOutcomeChartModel = (
     }
   }
 
-  const liveEntries = charts
-    .map((entry) => ({ ...entry, latestValue: latestValuesByKey.get(entry.key) ?? null }))
-    .filter((entry) => typeof entry.latestValue === 'number' && Number.isFinite(entry.latestValue));
-  if (liveEntries.length > 0) {
-    const now = new Date();
-    const bucket = bucketChartTimestamp(now.toISOString());
-    const liveRow = rowsByBucket.get(bucket) ?? {
-      label: formatChartTimeLabel(now.toISOString(), timeframe),
-      timestamp: bucket
-    };
-    for (const entry of liveEntries) {
-      liveRow[entry.key] = entry.latestValue as number;
-    }
-    rowsByBucket.set(bucket, liveRow);
-  }
-
   const rows = downsampleChartRows(
     [...rowsByBucket.values()].sort((left, right) => Number(left.timestamp ?? 0) - Number(right.timestamp ?? 0)),
     maxChartPointsForTimeframe(timeframe),
@@ -3092,6 +3062,28 @@ const toOutcomeChartModel = (
         ? "unavailable"
         : null;
   return { rows, series, historyStatus };
+};
+
+const latestOutcomeChartPercent = (entry: OutcomeChartEntry): number | null => {
+  for (let index = entry.chart.points.length - 1; index >= 0; index -= 1) {
+    const value = chartPointValue(entry.chart.points[index]?.unified, { zeroAsMissing: true });
+    if (value !== null) return value;
+  }
+  return null;
+};
+
+const compareOutcomeChartsByLatestValue = (
+  left: OutcomeChartEntry,
+  right: OutcomeChartEntry,
+): number => {
+  const leftValue = latestOutcomeChartPercent(left);
+  const rightValue = latestOutcomeChartPercent(right);
+  if (leftValue !== null && rightValue !== null && leftValue !== rightValue) {
+    return rightValue - leftValue;
+  }
+  if (leftValue !== null) return -1;
+  if (rightValue !== null) return 1;
+  return left.label.localeCompare(right.label);
 };
 
 const LiveCanonicalChartImpl = ({
@@ -3107,6 +3099,8 @@ const LiveCanonicalChartImpl = ({
   outcomes?: TerminalOutcomeRow[];
 }) => {
   const chartTimeframe: MarketChartTimeframe = 'ALL';
+  const chartFetchOutcomeLimit = marketType === 'multi' ? 8 : 4;
+  const chartDisplayOutcomeLimit = marketType === 'multi' ? 4 : 1;
   const [outcomeCharts, setOutcomeCharts] = useState<OutcomeChartEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -3127,9 +3121,9 @@ const LiveCanonicalChartImpl = ({
     );
     const sourceOutcomes = (() => {
       if (rankedOutcomes.length > 1) {
-        const topOutcomes = rankedOutcomes.slice(0, 4);
+        const topOutcomes = rankedOutcomes.slice(0, chartFetchOutcomeLimit);
         if (selectedChartOutcome && !topOutcomes.some((outcome) => outcome.id === selectedChartOutcome.id)) {
-          return [...topOutcomes.slice(0, 3), selectedChartOutcome];
+          return [...topOutcomes.slice(0, Math.max(chartFetchOutcomeLimit - 1, 0)), selectedChartOutcome];
         }
         return topOutcomes;
       }
@@ -3150,27 +3144,34 @@ const LiveCanonicalChartImpl = ({
         key: normalizeChartKey('outcome', `${chartMarketId ?? 'market'}_${quoteOutcomeId}_${outcome.id}_${outcome.name}`),
         color: OUTCOME_CHART_COLORS[index % OUTCOME_CHART_COLORS.length]!,
         emphasis: outcome.id === selectedChartOutcome?.id || (selectedChartOutcome === null && index === 0),
-        latestValue: liveOutcomeChartPercent(outcome),
       };
     });
-  }, [marketId, marketType, outcomes, selectedChartOutcome]);
+  }, [chartFetchOutcomeLimit, marketId, outcomes, selectedChartOutcome]);
   const chartOutcomeFetchKey = useMemo(
     () => chartOutcomeInputs
       .map((outcome) => `${outcome.id}:${outcome.marketId ?? ''}:${outcome.quoteOutcomeId}:${outcome.key}`)
       .join('|'),
     [chartOutcomeInputs]
   );
+  const visibleOutcomeCharts = useMemo(() => {
+    const rankedCharts = [...outcomeCharts].sort(compareOutcomeChartsByLatestValue);
+    if (rankedCharts.length <= chartDisplayOutcomeLimit) return rankedCharts;
+    const topCharts = rankedCharts.slice(0, chartDisplayOutcomeLimit);
+    if (selectedChartOutcome && !topCharts.some((entry) => entry.id === selectedChartOutcome.id)) {
+      const selectedEntry = rankedCharts.find((entry) => entry.id === selectedChartOutcome.id);
+      if (selectedEntry) {
+        return [...topCharts.slice(0, Math.max(chartDisplayOutcomeLimit - 1, 0)), selectedEntry];
+      }
+    }
+    return topCharts;
+  }, [chartDisplayOutcomeLimit, outcomeCharts, selectedChartOutcome]);
   const chartOutcomeChartInputs = useMemo(
-    () => chartOutcomeInputs.map(({ latestValue: _latestValue, ...outcome }) => outcome),
+    () => chartOutcomeInputs,
     [chartOutcomeFetchKey]
   );
-  const liveOutcomeValuesByKey = useMemo(
-    () => new Map(chartOutcomeInputs.map((outcome) => [outcome.key, outcome.latestValue])),
-    [chartOutcomeInputs]
-  );
   const chartModel = useMemo(
-    () => toOutcomeChartModel(outcomeCharts, liveOutcomeValuesByKey, chartTimeframe),
-    [chartTimeframe, liveOutcomeValuesByKey, outcomeCharts]
+    () => toOutcomeChartModel(visibleOutcomeCharts, chartTimeframe),
+    [chartTimeframe, visibleOutcomeCharts]
   );
   const { rows, series, historyStatus } = chartModel;
   const yAxis = useMemo(() => buildChartYAxis(rows, series), [rows, series]);
@@ -3345,7 +3346,7 @@ const LiveCanonicalChartImpl = ({
           ))}
         </div>
         <div className="text-[16px] font-semibold tracking-[-0.02em] text-[#2D3A4C] sm:text-[18px]">
-          Polymarket
+          Lotus
         </div>
       </div>
       <div ref={chartFrameRef} className="relative min-h-[360px] w-full">
