@@ -3038,10 +3038,8 @@ const LiveCanonicalChart = ({
   const prefersPolymarketBinaryHistory = marketType === 'binary' && Boolean(polymarketMarketSlug);
   const prefersPolymarketMultiHistory = marketType === 'multi' && Boolean(polymarketMarketSlug || polymarketEventSlug);
   const liveOutcomeValuesByKey = useMemo(
-    () => marketType === 'binary' && !prefersPolymarketBinaryHistory
-      ? new Map(chartOutcomeInputs.map((outcome) => [outcome.key, outcome.latestValue]))
-      : new Map<string, number | null>(),
-    [chartOutcomeInputs, marketType, prefersPolymarketBinaryHistory]
+    () => new Map(chartOutcomeInputs.map((outcome) => [outcome.key, outcome.latestValue])),
+    [chartOutcomeInputs]
   );
   const prefersOutcomeChart = marketType === 'multi'
     ? prefersPolymarketMultiHistory || chartOutcomeInputs.length > 0
@@ -3126,16 +3124,17 @@ const LiveCanonicalChart = ({
               timeframe: activeTab,
               outcomeId,
             });
+            const chartInput = chartOutcomeInputs[0] ?? null;
             if (!cancelled) {
               setVenueChart(null);
               setOutcomeCharts([{
                 id: `${chart.chart.marketId}:${chart.chart.outcomeId ?? 'YES'}`,
                 marketId: chart.chart.marketId,
                 quoteOutcomeId: chart.chart.outcomeId ?? 'YES',
-                label: chart.label,
-                key: normalizeChartKey('polymarket', `${chart.chart.marketId}_${chart.chart.outcomeId ?? 'YES'}`),
+                label: chartInput?.label ?? chart.label,
+                key: chartInput?.key ?? normalizeChartKey('polymarket', `${chart.chart.marketId}_${chart.chart.outcomeId ?? 'YES'}`),
                 color: OUTCOME_CHART_COLORS[0]!,
-                latestValue: chartOutcomeInputs[0]?.latestValue ?? null,
+                latestValue: chartInput?.latestValue ?? null,
                 chart: chart.chart,
               }]);
               setNotFoundKey(null);
@@ -3161,15 +3160,18 @@ const LiveCanonicalChart = ({
                 if (!label || tokenIds.length === 0 || outcomePrices.length === 0) return [];
                 const yesPrice = outcomePrices[0];
                 if (typeof yesPrice !== 'number' || !Number.isFinite(yesPrice) || yesPrice <= 0 || yesPrice >= 0.95) return [];
+                const matchedOutcome = chartOutcomeInputs.find((outcome) =>
+                  normalizeOutcomeChartLabel(outcome.label) === normalizeOutcomeChartLabel(label)
+                );
                 return [{
                   id: `${market.slug}:${label}`,
                   marketId: market.slug,
                   quoteOutcomeId: 'YES',
-                  label,
-                  key: normalizeChartKey('polymarket', market.slug || `${label}_${index}`),
+                  label: matchedOutcome?.label ?? label,
+                  key: matchedOutcome?.key ?? normalizeChartKey('polymarket', market.slug || `${label}_${index}`),
                   color: OUTCOME_CHART_COLORS[index % OUTCOME_CHART_COLORS.length]!,
                   tokenId: tokenIds[0]!,
-                  latestValue: yesPrice * 100,
+                  latestValue: matchedOutcome?.latestValue ?? yesPrice * 100,
                 }];
               })
               .sort((left, right) => right.latestValue - left.latestValue)
