@@ -32,6 +32,7 @@ import {
   type TerminalOutcomeDisplayValues,
 } from '@/design/mockups/terminal-outcome-display';
 import { shouldReuseLiveCanonicalChart } from '@/design/mockups/terminal-live-chart-props';
+import { bufferedRenderDelay, TERMINAL_STREAM_RENDER_INTERVAL_MS } from '@/design/mockups/terminal-live-update-scheduler';
 import { downsampleChartRows, maxChartPointsForTimeframe } from '@/design/mockups/terminal-chart-sampling';
 import { isTurnkeyProviderConfigured } from '@/app/turnkey-provider';
 import { env, lotusMarketDiagnosticsEnabled } from '@/config/env';
@@ -3590,6 +3591,7 @@ const InfraTradingTerminalInner = ({
   const [orderbookWsState, setOrderbookWsState] = useState<ExecutionWsState>('idle');
   const [orderbookStreamTopics, setOrderbookStreamTopics] = useState<ExecutionTopic[]>([]);
   const [latestOrderbookStream, setLatestOrderbookStream] = useState<MarketOrderbookStreamPayload | null>(null);
+  const latestOrderbookStreamRef = React.useRef<MarketOrderbookStreamPayload | null>(null);
   const lastOrderbookWsUpdateAtRef = React.useRef<number | null>(null);
   const orderbookStreamSeqRef = React.useRef<Map<string, number>>(new Map());
   const orderbookRef = React.useRef<MarketOrderbookResponse | null>(null);
@@ -3597,6 +3599,12 @@ const InfraTradingTerminalInner = ({
   const lastOrderbookRestRecoveryAtRef = React.useRef<number | null>(null);
   const orderbookRestRecoveryInFlightRef = React.useRef(false);
   const orderbookRestRecoveryTimerRef = React.useRef<number | null>(null);
+  const orderbookRenderTimerRef = React.useRef<number | null>(null);
+  const orderbookRenderLastCommitAtRef = React.useRef<number | null>(null);
+  const pendingOrderbookRenderRef = React.useRef<{
+    orderbook: MarketOrderbookResponse | null;
+    latestOrderbookStream: MarketOrderbookStreamPayload | null;
+  } | null>(null);
   const orderbookRequestKeyRef = React.useRef<string | null>(null);
   const terminalLivePriceRefreshInFlightRef = React.useRef(false);
   const terminalLivePriceRefreshQueuedRef = React.useRef(false);
@@ -3727,6 +3735,10 @@ const InfraTradingTerminalInner = ({
   }, [orderbook]);
 
   React.useEffect(() => {
+    latestOrderbookStreamRef.current = latestOrderbookStream;
+  }, [latestOrderbookStream]);
+
+  React.useEffect(() => {
     terminalOutcomesRef.current = terminalOutcomes;
   }, [terminalOutcomes]);
 
@@ -3786,6 +3798,13 @@ const InfraTradingTerminalInner = ({
     terminalMarketId,
     marketVenueList,
   }));
+  const setTerminalOutcomesInBackground = React.useEffectEvent((
+    updater: React.SetStateAction<TerminalOutcomeRow[]>,
+  ) => {
+    React.startTransition(() => {
+      setTerminalOutcomes(updater);
+    });
+  });
   const sortedTerminalOutcomes = useMemo(
     () => sortTerminalOutcomeRowsByProbability(terminalOutcomes),
     [terminalOutcomes],
@@ -4508,7 +4527,7 @@ const InfraTradingTerminalInner = ({
             prices.push(...response.prices);
           }
           const priceByKey = new Map(prices.map((price) => [`${price.marketId}:${price.outcomeId ?? ''}`, price]));
-          setTerminalOutcomes((current) => {
+          setTerminalOutcomesInBackground((current) => {
             let changed = false;
             const nextOutcomes = current.map((outcome) => {
             const outcomeMarketId = outcome.marketId ?? terminalMarketId;
@@ -4577,7 +4596,7 @@ const InfraTradingTerminalInner = ({
     } finally {
       terminalLivePriceRefreshInFlightRef.current = false;
     }
-  }, [terminalMarket.canonicalMarketIds, terminalMarket.marketType, terminalMarketId]);
+  }, [setTerminalOutcomesInBackground, terminalMarket.canonicalMarketIds, terminalMarket.marketType, terminalMarketId]);
 
   React.useEffect(() => {
     setShowAllOutcomes(hasCompoundEventOutcomes);
@@ -5744,6 +5763,12 @@ const InfraTradingTerminalInner = ({
     let cancelled = false;
     const requestKey = `${orderbookMarketId ?? 'none'}:${orderbookQuoteOutcomeId ?? 'none'}:${orderbookStreamMarketIdsKey}`;
     if (!orderbookMarketId) {
+      if (orderbookRenderTimerRef.current !== null) {
+        window.clearTimeout(orderbookRenderTimerRef.current);
+        orderbookRenderTimerRef.current = null;
+      }
+      pendingOrderbookRenderRef.current = null;
+      orderbookRenderLastCommitAtRef.current = null;
       orderbookRequestKeyRef.current = null;
       orderbookRef.current = null;
       orderbookChecksumValidationSeqRef.current += 1;
@@ -5776,6 +5801,12 @@ const InfraTradingTerminalInner = ({
           if (hasUsableOrderbookDepth(mergedResponse) || !options.snapshotOnly) {
             orderbookRef.current = mergedResponse;
           }
+          if (orderbookRenderTimerRef.current !== null) {
+            window.clearTimeout(orderbookRenderTimerRef.current);
+            orderbookRenderTimerRef.current = null;
+          }
+          pendingOrderbookRenderRef.current = null;
+          orderbookRenderLastCommitAtRef.current = Date.now();
           setOrderbook(mergedResponse);
           const nextTopics = mergeOrderbookStreamTopics(localTopics, normalizeOrderbookStreamTopics(response.stream?.topics));
           setOrderbookStreamTopics((current) => sameTopicList(current, nextTopics) ? current : nextTopics);
@@ -5786,6 +5817,12 @@ const InfraTradingTerminalInner = ({
         return response;
       } catch (error) {
         if (!cancelled) {
+          if (orderbookRenderTimerRef.current !== null) {
+            window.clearTimeout(orderbookRenderTimerRef.current);
+            orderbookRenderTimerRef.current = null;
+          }
+          pendingOrderbookRenderRef.current = null;
+          orderbookRenderLastCommitAtRef.current = Date.now();
           orderbookRef.current = null;
           setOrderbook(null);
           if (isApiNotFound(error, 'MARKET_NOT_FOUND')) {
@@ -5804,6 +5841,12 @@ const InfraTradingTerminalInner = ({
     };
 
     const refreshOrderbook = () => {
+      if (orderbookRenderTimerRef.current !== null) {
+        window.clearTimeout(orderbookRenderTimerRef.current);
+        orderbookRenderTimerRef.current = null;
+      }
+      pendingOrderbookRenderRef.current = null;
+      orderbookRenderLastCommitAtRef.current = null;
       setLatestOrderbookStream(null);
       setOrderbookStreamTopics((current) => sameTopicList(current, localTopics) ? current : localTopics);
       setOrderbookError(null);
@@ -5837,12 +5880,23 @@ const InfraTradingTerminalInner = ({
     }, ORDERBOOK_DISPLAY_REST_FALLBACK_DELAY_MS);
     return () => {
       cancelled = true;
+      if (orderbookRenderTimerRef.current !== null) {
+        window.clearTimeout(orderbookRenderTimerRef.current);
+        orderbookRenderTimerRef.current = null;
+      }
+      pendingOrderbookRenderRef.current = null;
       window.clearTimeout(fallbackTimer);
     };
   }, [orderbookMarketId, orderbookNotFoundKey, orderbookQuoteOutcomeId, orderbookStreamMarketIdsKey]);
 
   React.useEffect(() => {
     if (!orderbookMarketId || orderbookStreamTopics.length === 0) {
+      if (orderbookRenderTimerRef.current !== null) {
+        window.clearTimeout(orderbookRenderTimerRef.current);
+        orderbookRenderTimerRef.current = null;
+      }
+      pendingOrderbookRenderRef.current = null;
+      orderbookRenderLastCommitAtRef.current = null;
       setOrderbookWsState('idle');
       setLatestOrderbookStream(null);
       return;
@@ -5858,6 +5912,42 @@ const InfraTradingTerminalInner = ({
     const expectedMarketAliases = new Set(orderbookStreamMarketIds);
     const expectedOutcomeId = orderbookQuoteOutcomeId ?? null;
     const localTopics = orderbookStreamMarketIds.map((marketId) => orderbookTopicForSelection(marketId, expectedOutcomeId));
+
+    const flushBufferedOrderbookRender = () => {
+      if (!active) return;
+      const pending = pendingOrderbookRenderRef.current;
+      orderbookRenderTimerRef.current = null;
+      if (!pending) return;
+      pendingOrderbookRenderRef.current = null;
+      orderbookRenderLastCommitAtRef.current = Date.now();
+      React.startTransition(() => {
+        setLatestOrderbookStream(pending.latestOrderbookStream);
+        setOrderbook(pending.orderbook);
+      });
+      setOrderbookLoading(false);
+      setOrderbookError(null);
+    };
+
+    const queueBufferedOrderbookRender = (
+      nextOrderbook: MarketOrderbookResponse,
+      nextStream: MarketOrderbookStreamPayload,
+    ) => {
+      pendingOrderbookRenderRef.current = {
+        orderbook: nextOrderbook,
+        latestOrderbookStream: nextStream,
+      };
+      if (orderbookRenderTimerRef.current !== null) return;
+      const delayMs = bufferedRenderDelay(
+        orderbookRenderLastCommitAtRef.current,
+        Date.now(),
+        TERMINAL_STREAM_RENDER_INTERVAL_MS,
+      );
+      if (delayMs === 0) {
+        flushBufferedOrderbookRender();
+        return;
+      }
+      orderbookRenderTimerRef.current = window.setTimeout(flushBufferedOrderbookRender, delayMs);
+    };
 
     const clearScheduledRestRecovery = () => {
       if (orderbookRestRecoveryTimerRef.current !== null) {
@@ -5885,6 +5975,12 @@ const InfraTradingTerminalInner = ({
         if (!active) return;
         const mergedResponse = mergeOrderbookSnapshots(orderbookRef.current, response);
         orderbookRef.current = mergedResponse;
+        if (orderbookRenderTimerRef.current !== null) {
+          window.clearTimeout(orderbookRenderTimerRef.current);
+          orderbookRenderTimerRef.current = null;
+        }
+        pendingOrderbookRenderRef.current = null;
+        orderbookRenderLastCommitAtRef.current = Date.now();
         setOrderbook(mergedResponse);
         const nextTopics = mergeOrderbookStreamTopics(localTopics, normalizeOrderbookStreamTopics(response.stream?.topics));
         setOrderbookStreamTopics((current) => sameTopicList(current, nextTopics) ? current : nextTopics);
@@ -5907,14 +6003,23 @@ const InfraTradingTerminalInner = ({
     };
 
     const markStreamResyncing = () => {
-      setLatestOrderbookStream((current) => current
-        ? { ...current, snapshotStatus: 'resyncing' }
+      const currentStream = pendingOrderbookRenderRef.current?.latestOrderbookStream ?? latestOrderbookStreamRef.current;
+      const nextStream = currentStream
+        ? { ...currentStream, snapshotStatus: 'resyncing' as const }
         : {
             marketId: expectedMarketId,
             outcomeId: expectedOutcomeId,
-            snapshotStatus: 'resyncing',
+            snapshotStatus: 'resyncing' as const,
             blockers: [],
-          });
+          };
+      if (pendingOrderbookRenderRef.current) {
+        pendingOrderbookRenderRef.current = {
+          orderbook: pendingOrderbookRenderRef.current.orderbook,
+          latestOrderbookStream: nextStream,
+        };
+        return;
+      }
+      setLatestOrderbookStream(nextStream);
     };
 
     const validateStreamChecksumOrRecover = (
@@ -5958,7 +6063,7 @@ const InfraTradingTerminalInner = ({
       const effectiveOutcomeId = streamPayloadOutcomeId(payload) ?? expectedOutcomeId ?? (marketType === 'binary' ? 'YES' : null);
       if (!effectiveOutcomeId && marketType !== 'binary') return;
       const displayBlocker = diagnosticsEnabled ? blocker : null;
-      setTerminalOutcomes((current) => {
+      setTerminalOutcomesInBackground((current) => {
         let changed = false;
         const nextOutcomes = current.map((outcome) => {
         const payloadMarketId = streamPayloadMarketId(payload);
@@ -6083,6 +6188,12 @@ const InfraTradingTerminalInner = ({
                 ),
               );
               orderbookRef.current = nextOrderbook;
+              if (orderbookRenderTimerRef.current !== null) {
+                window.clearTimeout(orderbookRenderTimerRef.current);
+                orderbookRenderTimerRef.current = null;
+              }
+              pendingOrderbookRenderRef.current = null;
+              orderbookRenderLastCommitAtRef.current = Date.now();
               setOrderbook(nextOrderbook);
               validateStreamChecksumOrRecover(nextOrderbook, payload);
               setOrderbookLoading(false);
@@ -6090,13 +6201,10 @@ const InfraTradingTerminalInner = ({
               return;
             }
             if (!payload.venue) return;
-            setLatestOrderbookStream(payload);
             const nextOrderbook = mergeOrderbookStreamUpdate(orderbookRef.current, payload);
             orderbookRef.current = nextOrderbook;
-            setOrderbook(nextOrderbook);
+            queueBufferedOrderbookRender(nextOrderbook, payload);
             validateStreamChecksumOrRecover(nextOrderbook, payload);
-            setOrderbookLoading(false);
-            setOrderbookError(null);
             return;
           }
 
@@ -6115,6 +6223,11 @@ const InfraTradingTerminalInner = ({
 
     return () => {
       active = false;
+      if (orderbookRenderTimerRef.current !== null) {
+        window.clearTimeout(orderbookRenderTimerRef.current);
+        orderbookRenderTimerRef.current = null;
+      }
+      pendingOrderbookRenderRef.current = null;
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
       clearScheduledRestRecovery();
       if (client) {
