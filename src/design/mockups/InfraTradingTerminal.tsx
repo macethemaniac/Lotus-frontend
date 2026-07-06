@@ -3122,18 +3122,21 @@ const LiveCanonicalChartImpl = ({
       null;
   }, [marketId, outcomeId, outcomes]);
   const chartOutcomeInputs = useMemo(() => {
+    const rankedOutcomes = sortTerminalOutcomeRowsByProbability(
+      outcomes.filter((outcome) => Boolean(outcome.marketId ?? marketId) && Boolean(outcome.quoteOutcomeId || outcome.name || outcome.id))
+    );
     const sourceOutcomes = (() => {
-      if (marketType === 'binary') {
-        return selectedChartOutcome
-          ? [selectedChartOutcome]
-          : outcomes.length > 0
-            ? [outcomes[0]!]
-            : [{ id: 'YES', marketId, quoteOutcomeId: 'YES', name: 'Yes' } as TerminalOutcomeRow];
+      if (rankedOutcomes.length > 1) {
+        const topOutcomes = rankedOutcomes.slice(0, 4);
+        if (selectedChartOutcome && !topOutcomes.some((outcome) => outcome.id === selectedChartOutcome.id)) {
+          return [...topOutcomes.slice(0, 3), selectedChartOutcome];
+        }
+        return topOutcomes;
       }
-
-      return sortTerminalOutcomeRowsByProbability(
-        outcomes.filter((outcome) => Boolean(outcome.marketId ?? marketId) && Boolean(outcome.quoteOutcomeId || outcome.name || outcome.id))
-      );
+      if (selectedChartOutcome) return [selectedChartOutcome];
+      if (rankedOutcomes.length > 0) return rankedOutcomes;
+      if (outcomes.length > 0) return [outcomes[0]!];
+      return [{ id: 'YES', marketId, quoteOutcomeId: 'YES', name: 'Yes' } as TerminalOutcomeRow];
     })();
 
     return sourceOutcomes.map((outcome, index): OutcomeChartInput => {
@@ -3170,10 +3173,7 @@ const LiveCanonicalChartImpl = ({
     [chartTimeframe, liveOutcomeValuesByKey, outcomeCharts]
   );
   const { rows, series, historyStatus } = chartModel;
-  const yAxis = useMemo(
-    () => ({ domain: [0, 100] as [number, number], ticks: [0, 20, 40, 60, 80, 100] }),
-    []
-  );
+  const yAxis = useMemo(() => buildChartYAxis(rows, series), [rows, series]);
   const [chartFrameRef, chartFrameSize] = useChartFrameSize();
   const chartReady = chartFrameSize.width > 0 && chartFrameSize.height > 0;
   const chartHeight = Math.max(chartFrameSize.height, 320);
@@ -3196,7 +3196,7 @@ const LiveCanonicalChartImpl = ({
   const chartGeometry = useMemo(() => {
     if (!chartReady) return null;
 
-    const margin = { top: 18, right: 18, bottom: 46, left: 48 };
+    const margin = { top: 20, right: 42, bottom: 44, left: 14 };
     const plotWidth = Math.max(1, chartFrameSize.width - margin.left - margin.right);
     const plotHeight = Math.max(1, chartHeight - margin.top - margin.bottom);
     const timestamps = rows
@@ -3332,20 +3332,35 @@ const LiveCanonicalChartImpl = ({
   }));
 
   return (
-    <div className="relative w-full h-full overflow-hidden rounded-[24px] border border-[#d9dce5] bg-[#f4f5f9] px-5 py-5 sm:px-6 sm:py-6">
+    <div className="relative w-full h-full overflow-hidden rounded-[24px] bg-[#151a20] px-5 py-5 sm:px-6 sm:py-6">
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-[14px] text-[#97A3B6]">
+          {legendItems.map((item) => (
+            <div key={item.id} className="flex items-center gap-2">
+              <span className="h-3.5 w-3.5 rounded-full" style={{ backgroundColor: item.color }} />
+              <span className="font-medium">
+                {item.label}{typeof item.value === 'number' ? ` ${item.value.toFixed(item.value >= 10 ? 1 : 2)}%` : ''}
+              </span>
+            </div>
+          ))}
+        </div>
+        <div className="text-[16px] font-semibold tracking-[-0.02em] text-[#2D3A4C] sm:text-[18px]">
+          Polymarket
+        </div>
+      </div>
       <div ref={chartFrameRef} className="relative min-h-[360px] w-full">
         {loading && rows.length === 0 && (
-          <div className="absolute inset-0 z-10 flex items-center justify-center text-sm font-medium text-[#8f939d]">
+          <div className="absolute inset-0 z-10 flex items-center justify-center text-sm font-medium text-[#7E8A9C]">
             Loading chart
           </div>
         )}
         {error && rows.length === 0 && (
-          <div className="absolute inset-0 z-10 flex items-center justify-center px-6 text-center text-sm font-medium text-[#c35d2c]">
+          <div className="absolute inset-0 z-10 flex items-center justify-center px-6 text-center text-sm font-medium text-[#D28762]">
             {error}
           </div>
         )}
         {!loading && !error && rows.length === 0 && (
-          <div className="absolute inset-0 z-10 flex items-center justify-center px-6 text-center text-sm font-medium text-[#8f939d]">
+          <div className="absolute inset-0 z-10 flex items-center justify-center px-6 text-center text-sm font-medium text-[#7E8A9C]">
             Chart history will appear once venue data is available.
           </div>
         )}
@@ -3364,7 +3379,7 @@ const LiveCanonicalChartImpl = ({
               width={chartFrameSize.width}
               height={chartHeight}
               rx="18"
-              fill="#f4f5f9"
+              fill="#151a20"
             />
             {yAxis.ticks.map((tick) => {
               const y = chartGeometry.yForValue(tick);
@@ -3375,16 +3390,17 @@ const LiveCanonicalChartImpl = ({
                     x2={chartGeometry.margin.left + chartGeometry.plotWidth}
                     y1={y}
                     y2={y}
-                    stroke="#c4c8d2"
+                    stroke="#334155"
                     strokeWidth="1"
+                    strokeDasharray="2 8"
                   />
                   <text
-                    x={chartGeometry.margin.left - 10}
+                    x={chartGeometry.margin.left + chartGeometry.plotWidth + 10}
                     y={y + 4.5}
-                    fill="#8f939d"
+                    fill="#94A3B8"
                     fontSize="11"
                     fontWeight="500"
-                    textAnchor="end"
+                    textAnchor="start"
                   >
                     {formatChartAxisValue(Number(tick))}
                   </text>
@@ -3401,24 +3417,25 @@ const LiveCanonicalChartImpl = ({
                     x2={x}
                     y1={chartGeometry.margin.top}
                     y2={chartGeometry.margin.top + chartGeometry.plotHeight}
-                    stroke="#b5bac5"
+                    stroke="#243041"
                     strokeDasharray="4 4"
                     strokeWidth="1"
+                    opacity="0.45"
                   />
                   <text
                     x={x}
                     y={chartHeight - 12}
-                    fill="#8f939d"
+                    fill="#334155"
                     fontSize="11"
                     fontWeight="500"
                     textAnchor="middle"
                   >
-                    {new Intl.DateTimeFormat('en-US', { month: 'short' }).format(new Date(row.timestamp)).toUpperCase()}
+                    {new Intl.DateTimeFormat('en-US', { month: 'short' }).format(new Date(row.timestamp))}
                   </text>
                 </g>
               );
             })}
-            {chartGeometry.lineSeries.map(({ item, points }) => {
+            {chartGeometry.lineSeries.map(({ item, points, latest }) => {
               if (points.length === 0) return null;
               const linePath = buildSmoothChartLinePath(points);
               return (
@@ -3429,25 +3446,36 @@ const LiveCanonicalChartImpl = ({
                     stroke={item.color}
                     strokeWidth={item.emphasis ? 2.25 : 1.9}
                     strokeDasharray={item.dashed ? '4 2' : undefined}
-                    strokeLinejoin="miter"
+                    strokeLinejoin="round"
                     strokeLinecap="round"
                   />
+                  {latest ? (
+                    <>
+                      <circle
+                        cx={latest.x}
+                        cy={latest.y}
+                        r="14"
+                        fill={item.color}
+                        opacity="0.12"
+                      />
+                      <circle
+                        cx={latest.x}
+                        cy={latest.y}
+                        r="4.5"
+                        fill={item.color}
+                        stroke="#151a20"
+                        strokeWidth="2"
+                      />
+                    </>
+                  ) : null}
                 </g>
               );
             })}
           </svg>
         ) : null}
       </div>
-      <div className="mt-4 flex flex-wrap items-center justify-center gap-x-6 gap-y-3 text-[14px] text-[#8f939d]">
-        {legendItems.map((item) => (
-          <div key={item.id} className="flex items-center gap-2">
-            <span className="h-px w-6" style={{ backgroundColor: item.color }} />
-            <span>{item.label}{typeof item.value === 'number' ? ` ${item.value.toFixed(item.value >= 10 ? 1 : 2)}%` : ''}</span>
-          </div>
-        ))}
-      </div>
       {historyStatus === 'accumulating' ? (
-        <div className="mt-3 text-center text-[12px] font-medium uppercase tracking-[0.08em] text-[#8f939d]">
+        <div className="mt-3 text-center text-[12px] font-medium uppercase tracking-[0.08em] text-[#7E8A9C]">
           Live history accumulating
         </div>
       ) : null}
