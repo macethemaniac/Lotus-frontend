@@ -300,22 +300,7 @@ const buildOptimisticTerminalRouteSelection = (
 ): TerminalMarketSelection | null => {
   if (!routeEventSlug) return null;
   const cachedSelection = loadCachedTerminalRouteSelection(routeEventSlug);
-  if (cachedSelection) return cachedSelection;
-  const title = titleFromEventSlug(routeEventSlug);
-  const marketType = /winner|champion|cup|election|nominee|mayor|league|season/i.test(title) ? 'multi' : 'binary';
-  const category = /world cup|cup|league|championship|winner|team|match|fifa|nba|nfl|mlb|nhl/i.test(title) ? 'Sports' : 'Markets';
-  return {
-    id: `route:${routeEventSlug}`,
-    eventSlug: routeEventSlug,
-    title,
-    category,
-    icon: marketType === 'multi' ? '🏆' : 'L',
-    volume: '',
-    venueCount: 0,
-    routeType: 'Pending',
-    marketType,
-    outcomes: [],
-  };
+  return cachedSelection;
 };
 
 type TerminalRouteCandidate = {
@@ -1913,6 +1898,10 @@ export const DashboardV2Mockup = ({
   const resolvedTerminalSelection = selectedTerminalMarket ?? immediateTerminalSelection;
   const activeTerminalSelection = resolvedTerminalSelection ?? optimisticTerminalSelection;
   const terminalRouteResolved = terminalRouteSelectionMatches(routeEventSlug, resolvedTerminalSelection);
+  const terminalRoutePending = activePage === 'terminal'
+    && Boolean(routeEventSlug)
+    && !activeTerminalSelection
+    && !terminalRouteError;
 
   useEffect(() => {
     if (activePage !== 'terminal') return;
@@ -3304,7 +3293,9 @@ export const DashboardV2Mockup = ({
           </>
           ) : activePage === 'terminal' ? (
             <div className="min-w-0 flex-1">
-              {terminalRouteError && !activeTerminalSelection ? (
+              {terminalRoutePending ? (
+                <div className="min-h-[calc(100vh-10rem)]" aria-hidden="true" />
+              ) : terminalRouteError && !activeTerminalSelection ? (
                 <div className="min-h-[calc(100vh-10rem)] rounded-[28px] border border-red-500/20 bg-[#0d0d10] p-6 shadow-[0_0_0_1px_rgba(255,255,255,0.03)]">
                   <div className="flex h-full min-h-[32rem] flex-col items-center justify-center gap-4 rounded-[24px] border border-red-500/20 bg-[#111115] px-6 text-center">
                     <AlertTriangle className="h-10 w-10 text-red-400" />
