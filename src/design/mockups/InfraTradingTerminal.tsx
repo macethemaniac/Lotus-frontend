@@ -4635,6 +4635,10 @@ const InfraTradingTerminalInner = ({
       const stableFallbackRows = firstStableOutcomeRows(previousRows, fallbackRows, polymarketSeedRows, seedRows);
       const seedDisplayRows = firstStableOutcomeRows(polymarketSeedRows, stableFallbackRows, seedRows);
       setTerminalOutcomes(seedDisplayRows);
+      const usingPolymarketEventPrices = hasResolvedOutcomeProbabilitySet(polymarketSeedRows)
+        && isSaneMultiOutcomeProbabilitySet(polymarketSeedRows)
+        && chartMarketType === 'multi'
+        && Boolean(terminalPolymarketEventSlug || terminalPolymarketMarketSlug);
       const currentSelectedOutcomeId = selectedOutcomeIdRef.current;
       const nextSelectedOutcomeId = selectedOutcomeAutoFollowRef.current
         ? defaultTerminalOutcomeId(seedDisplayRows) ?? resolveInitialSelectedOutcomeId(terminalMarket.initialOutcomeId, seedDisplayRows)
@@ -4643,6 +4647,9 @@ const InfraTradingTerminalInner = ({
           : defaultTerminalOutcomeId(seedDisplayRows) ?? resolveInitialSelectedOutcomeId(terminalMarket.initialOutcomeId, seedDisplayRows);
       if (nextSelectedOutcomeId !== currentSelectedOutcomeId) {
         selectTerminalOutcome(nextSelectedOutcomeId, seedDisplayRows);
+      }
+      if (usingPolymarketEventPrices) {
+        return;
       }
 
       try {
@@ -4758,6 +4765,7 @@ const InfraTradingTerminalInner = ({
       do {
         terminalLivePriceRefreshQueuedRef.current = false;
         const currentOutcomes = terminalOutcomesRef.current;
+        if (chartMarketType === 'multi' && (terminalPolymarketEventSlug || terminalPolymarketMarketSlug)) return;
         if (!terminalMarketId || currentOutcomes.length === 0) return;
         const requestItems = currentOutcomes
           .map((outcome) => {
@@ -4861,7 +4869,14 @@ const InfraTradingTerminalInner = ({
     } finally {
       terminalLivePriceRefreshInFlightRef.current = false;
     }
-  }, [terminalMarket.canonicalMarketIds, terminalMarket.marketType, terminalMarketId]);
+  }, [
+    chartMarketType,
+    terminalMarket.canonicalMarketIds,
+    terminalMarket.marketType,
+    terminalMarketId,
+    terminalPolymarketEventSlug,
+    terminalPolymarketMarketSlug,
+  ]);
 
   React.useEffect(() => {
     setShowAllOutcomes(false);
