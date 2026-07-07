@@ -1537,6 +1537,10 @@ const toOutcomeQuoteFromBatch = (quote: MarketBatchQuoteItem): DashboardOutcomeQ
 const displayableLivePriceValue = (
   livePrice: MarketLivePriceItem | null | undefined,
 ): number | null => {
+  const averagePrice = livePrice?.averagePrice !== null && livePrice?.averagePrice !== undefined ? Number(livePrice.averagePrice) : NaN;
+  if (Number.isFinite(averagePrice) && averagePrice > 0) return averagePrice;
+  const price = livePrice?.price !== null && livePrice?.price !== undefined ? Number(livePrice.price) : NaN;
+  if (Number.isFinite(price) && price > 0) return price;
   const midpoint = livePrice?.midpoint !== null && livePrice?.midpoint !== undefined ? Number(livePrice.midpoint) : NaN;
   if (Number.isFinite(midpoint) && midpoint > 0) return midpoint;
   const bestAsk = livePrice?.bestAsk !== null && livePrice?.bestAsk !== undefined ? Number(livePrice.bestAsk) : NaN;

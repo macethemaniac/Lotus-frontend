@@ -573,6 +573,10 @@ const displayableLivePriceValue = (
   livePrice: MarketLivePriceItem | null | undefined,
   referencePrice?: string | number | null,
 ): number | null => {
+  const averagePrice = livePrice?.averagePrice !== null && livePrice?.averagePrice !== undefined ? Number(livePrice.averagePrice) : NaN;
+  if (isReasonableLivePriceValue(averagePrice, referencePrice)) return averagePrice;
+  const price = livePrice?.price !== null && livePrice?.price !== undefined ? Number(livePrice.price) : NaN;
+  if (isReasonableLivePriceValue(price, referencePrice)) return price;
   const midpoint = livePrice?.midpoint !== null && livePrice?.midpoint !== undefined ? Number(livePrice.midpoint) : NaN;
   if (isReasonableLivePriceValue(midpoint, referencePrice)) return midpoint;
   const bestAsk = livePrice?.bestAsk !== null && livePrice?.bestAsk !== undefined ? Number(livePrice.bestAsk) : NaN;
