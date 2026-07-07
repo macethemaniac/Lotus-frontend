@@ -122,16 +122,16 @@ const ORDERBOOK_LEVEL_RENDER_DEPTH = env.lotusDeployEnv === 'production' ? 8 : 2
 const ORDERBOOK_STREAM_RENDER_THROTTLE_MS = env.lotusDeployEnv === 'production' ? 320 : 80;
 const ORDERBOOK_SELECTED_DISPLAY_RENDER_THROTTLE_MS = env.lotusDeployEnv === 'production' ? 320 : 90;
 const SELECTED_OUTCOME_BOOK_STABILIZE_DELAY_MS = 250;
-const TERMINAL_CHART_REFRESH_INTERVAL_MS = 60_000;
+const TERMINAL_CHART_REFRESH_INTERVAL_MS = env.lotusDeployEnv === 'production' ? 45_000 : 60_000;
 const TERMINAL_ACCOUNT_REFRESH_INTERVAL_MS = 30_000;
-const TERMINAL_ALL_OUTCOME_PRICE_REFRESH_INTERVAL_MS = 12_000;
-const TERMINAL_FULL_OUTCOME_REFRESH_INTERVAL_MS = 120_000;
+const TERMINAL_ALL_OUTCOME_PRICE_REFRESH_INTERVAL_MS = env.lotusDeployEnv === 'production' ? 20_000 : 12_000;
+const TERMINAL_FULL_OUTCOME_REFRESH_INTERVAL_MS = env.lotusDeployEnv === 'production' ? 180_000 : 120_000;
 const TERMINAL_LIVE_PRICE_BATCH_SIZE = 80;
 const ORDERBOOK_STREAM_CHECKSUM_VALIDATION_ENABLED = env.lotusDeployEnv !== 'production';
-// Production Chrome profiles with multiple injected extensions have been
-// crashing the renderer on repeated full-page terminal polling. Keep the
-// selected market/orderbook path live, but disable the broader background loops.
-const TERMINAL_BACKGROUND_POLLING_ENABLED = env.lotusDeployEnv !== 'production';
+const TERMINAL_CHART_POLLING_ENABLED = true;
+const TERMINAL_LIVE_PRICE_POLLING_ENABLED = true;
+// Keep heavier catalog/outcome reconciliation out of production; live price and chart polling stay on.
+const TERMINAL_FULL_OUTCOME_POLLING_ENABLED = env.lotusDeployEnv !== 'production';
 
 const walletAddressEquals = (left?: string | null, right?: string | null): boolean => {
   if (!left || !right) return false;
@@ -541,13 +541,42 @@ const formatProbabilityPercent = (price: number | null | undefined): string => {
   return `${percent >= 10 ? percent.toFixed(0) : percent.toFixed(1)}%`;
 };
 
+const LIVE_PRICE_OUTLIER_DIFF_THRESHOLD = 0.45;
+const LIVE_PRICE_EXTREME_THRESHOLD = 0.95;
+
+const parseDisplayProbabilityValue = (value: string | number | null | undefined): number | null => {
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || value <= 0) return null;
+    return value > 1 ? value / 100 : value;
+  }
+  if (!value || value === 'Quote') return null;
+  const hasDisplayUnit = /[%c¢]/i.test(value) || value.includes('Â');
+  const parsed = Number(value.replace(/[^0-9.-]/g, ''));
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return hasDisplayUnit || parsed > 1 ? parsed / 100 : parsed;
+};
+
+const isReasonableLivePriceValue = (
+  price: number,
+  referencePrice: string | number | null | undefined,
+): boolean => {
+  if (!Number.isFinite(price) || price <= 0) return false;
+  const normalizedPrice = price > 1 ? price / 100 : price;
+  const normalizedReference = parseDisplayProbabilityValue(referencePrice);
+  if (normalizedReference === null) return normalizedPrice > 0 && normalizedPrice < LIVE_PRICE_EXTREME_THRESHOLD;
+  if (Math.abs(normalizedPrice - normalizedReference) > LIVE_PRICE_OUTLIER_DIFF_THRESHOLD) return false;
+  if (normalizedPrice >= LIVE_PRICE_EXTREME_THRESHOLD && normalizedReference < 0.75) return false;
+  return normalizedPrice <= 1;
+};
+
 const displayableLivePriceValue = (
   livePrice: MarketLivePriceItem | null | undefined,
+  referencePrice?: string | number | null,
 ): number | null => {
   const midpoint = livePrice?.midpoint !== null && livePrice?.midpoint !== undefined ? Number(livePrice.midpoint) : NaN;
-  if (Number.isFinite(midpoint) && midpoint > 0) return midpoint;
+  if (isReasonableLivePriceValue(midpoint, referencePrice)) return midpoint;
   const bestAsk = livePrice?.bestAsk !== null && livePrice?.bestAsk !== undefined ? Number(livePrice.bestAsk) : NaN;
-  if (Number.isFinite(bestAsk) && bestAsk > 0) return bestAsk;
+  if (isReasonableLivePriceValue(bestAsk, referencePrice)) return bestAsk;
   return null;
 };
 
@@ -3240,7 +3269,7 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
       }
     };
     void loadChart();
-    if (!TERMINAL_BACKGROUND_POLLING_ENABLED) {
+    if (!TERMINAL_CHART_POLLING_ENABLED) {
       return () => {
         cancelled = true;
       };
@@ -4212,6 +4241,20 @@ const InfraTradingTerminalInner = ({
     setBottomTab('Outcomes');
   }, [selectTerminalOutcome]);
 
+  const toggleTerminalOutcomeOrderbook = useCallback((outcomeId: string) => {
+    if (expandedOutcomeId === outcomeId) {
+      setExpandedOutcomeId(null);
+      return;
+    }
+    setExpandedOutcomeId(outcomeId);
+    setBottomTab('Outcomes');
+    window.requestAnimationFrame(() => {
+      React.startTransition(() => {
+        selectTerminalOutcome(outcomeId, undefined, { manual: true });
+      });
+    });
+  }, [expandedOutcomeId, selectTerminalOutcome]);
+
   const inlineOrderbookLiveVenueCount = useMemo(() => {
     return (orderbook?.venues ?? []).filter((venue) => {
       return venue.blockers.length === 0 && (venue.bids.length > 0 || venue.asks.length > 0 || Boolean(venue.bestBid || venue.bestAsk));
@@ -4428,7 +4471,7 @@ const InfraTradingTerminalInner = ({
           const quoteVenues = quoteVenueListFromLivePrice(livePrice, row.venues);
           const summaryVenues = resolveOutcomeSummaryVenues(livePrice, row.venues);
           const summaryVenueCount = resolveOutcomeSummaryVenueCount(livePrice, row.venues);
-          const parsedPrice = displayableLivePriceValue(livePrice);
+          const parsedPrice = displayableLivePriceValue(livePrice, row.prob);
           if (parsedPrice === null) {
             if (!livePrice) return row;
             return {
@@ -4551,7 +4594,7 @@ const InfraTradingTerminalInner = ({
             const quoteVenues = quoteVenueListFromLivePrice(livePrice, outcome.venues);
             const summaryVenues = resolveOutcomeSummaryVenues(livePrice, outcome.venues);
             const summaryVenueCount = resolveOutcomeSummaryVenueCount(livePrice, outcome.venues);
-            const parsedPrice = displayableLivePriceValue(livePrice);
+            const parsedPrice = displayableLivePriceValue(livePrice, outcome.prob);
             if (parsedPrice === null) {
               if (!livePrice) return outcome;
               const nextOutcome = mergeTerminalOutcomeRowDisplay(outcome, {
@@ -5737,7 +5780,7 @@ const InfraTradingTerminalInner = ({
 
   React.useEffect(() => {
     void refreshOutcomes();
-    if (!TERMINAL_BACKGROUND_POLLING_ENABLED) return;
+    if (!TERMINAL_FULL_OUTCOME_POLLING_ENABLED) return;
     const fullOutcomeInterval = window.setInterval(() => {
       if (document.visibilityState === 'hidden') return;
       void refreshOutcomes();
@@ -5750,7 +5793,7 @@ const InfraTradingTerminalInner = ({
   React.useEffect(() => {
     if (!terminalMarketId || selectedOutcomeRefreshKey.startsWith('none:')) return;
     void refreshAllOutcomePrices();
-    if (!TERMINAL_BACKGROUND_POLLING_ENABLED) return;
+    if (!TERMINAL_LIVE_PRICE_POLLING_ENABLED) return;
     const activeMarketPriceInterval = window.setInterval(() => {
       if (document.visibilityState === 'hidden') return;
       void refreshAllOutcomePrices();
@@ -7725,7 +7768,7 @@ const InfraTradingTerminalInner = ({
                             >
                                  <button
                                    type="button"
-                                   onClick={() => focusTerminalOutcomeOrderbook(m.id)}
+                                   onClick={() => toggleTerminalOutcomeOrderbook(m.id)}
                                    className="flex min-w-0 flex-1 items-center justify-between gap-6 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
                                    aria-pressed={isSelectedOutcome}
                                  >
@@ -7780,11 +7823,7 @@ const InfraTradingTerminalInner = ({
                                             type="button"
                                             onClick={(event) => {
                                               event.stopPropagation();
-                                              if (expandedOutcomeId === m.id) {
-                                                setExpandedOutcomeId(null);
-                                                return;
-                                              }
-                                              focusTerminalOutcomeOrderbook(m.id);
+                                              toggleTerminalOutcomeOrderbook(m.id);
                                             }}
                                             aria-label={`Open ${m.name} outcome details`}
                                             className="ml-1 flex h-8 w-8 items-center justify-center rounded-lg text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"

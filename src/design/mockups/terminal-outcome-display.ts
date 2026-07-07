@@ -304,8 +304,10 @@ export const resolveLivePriceForTerminalOutcome = (input: {
   );
   if (directMatch) return directMatch;
 
+  if (normalizedOutcomeId !== null) return null;
+
   return input.prices.find((price) =>
     candidateMarketIds.has(price.marketId) &&
-    (normalizedOutcomeId === null || normalizeOutcomeId(price.outcomeId) === normalizedOutcomeId)
+    normalizeOutcomeId(price.outcomeId) === normalizedOutcomeId
   ) ?? null;
 };

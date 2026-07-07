@@ -389,6 +389,29 @@ describe('resolveLivePriceForTerminalOutcome', () => {
       outcomeId: 'ARGENTINA',
     })?.marketId).toBe('market-argentina');
   });
+
+  it('does not borrow another outcome price from the same market when the requested outcome is missing', () => {
+    expect(resolveLivePriceForTerminalOutcome({
+      prices: [{
+        marketId: 'event-world-cup',
+        outcomeId: 'BELGIUM',
+        generatedAt: new Date().toISOString(),
+        status: 'live',
+        price: '0.98',
+        bestBid: '0.97',
+        bestAsk: '0.99',
+        midpoint: '0.98',
+        spread: '0.02',
+        bestVenue: 'POLYMARKET',
+        venueCount: 1,
+        venues: ['POLYMARKET'],
+        freshnessMs: 1000,
+      }],
+      marketId: 'event-world-cup',
+      canonicalMarketIds: ['event-world-cup'],
+      outcomeId: 'FRANCE',
+    })).toBeNull();
+  });
 });
 
 describe('resolveSelectedMarketSeedMedia', () => {
