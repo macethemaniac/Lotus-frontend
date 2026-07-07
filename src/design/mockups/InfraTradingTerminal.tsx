@@ -1488,6 +1488,13 @@ const compareOutcomeRowsByProbability = (
   return left.name.localeCompare(right.name);
 };
 
+const isDisplayableMultiOutcomeRow = (outcome: TerminalOutcomeRow, outcomeCount: number): boolean => {
+  const probability = parseProbabilityLabel(normalizeTerminalDisplayValue(outcome.prob));
+  if (probability === null) return true;
+  if (outcomeCount > 2 && probability >= LIVE_PRICE_EXTREME_THRESHOLD) return false;
+  return true;
+};
+
 const quoteVenueListFromLivePrice = (
   livePrice: MarketLivePriceItem | null | undefined,
   fallbackVenues: readonly string[] = [],
@@ -3893,18 +3900,28 @@ const InfraTradingTerminalInner = ({
     marketVenueList,
   }));
   const defaultTerminalOutcomeId = useCallback((rows: readonly TerminalOutcomeRow[]): string | null => {
-    return [...rows].sort(compareOutcomeRowsByProbability)[0]?.id ?? null;
+    const displayableRows = rows.filter((outcome) => isDisplayableMultiOutcomeRow(outcome, rows.length));
+    return [...(displayableRows.length > 0 ? displayableRows : rows)].sort(compareOutcomeRowsByProbability)[0]?.id ?? null;
   }, []);
   const sortedTerminalOutcomes = useMemo(
     () => [...terminalOutcomes].sort(compareOutcomeRowsByProbability),
     [terminalOutcomes],
   );
+  const displayableSortedTerminalOutcomes = useMemo(
+    () => {
+      const filtered = sortedTerminalOutcomes.filter((outcome) =>
+        isDisplayableMultiOutcomeRow(outcome, sortedTerminalOutcomes.length)
+      );
+      return filtered.length > 0 ? filtered : sortedTerminalOutcomes;
+    },
+    [sortedTerminalOutcomes],
+  );
   const quoteableTerminalOutcomes = useMemo(() => {
-    if (sortedTerminalOutcomes.length === 0 && outcomesLoading) {
+    if (displayableSortedTerminalOutcomes.length === 0 && outcomesLoading) {
       return [];
     }
-    return sortedTerminalOutcomes;
-  }, [outcomesLoading, sortedTerminalOutcomes]);
+    return displayableSortedTerminalOutcomes;
+  }, [displayableSortedTerminalOutcomes, outcomesLoading]);
   const selectedOutcome = quoteableTerminalOutcomes.find((outcome) => outcome.id === selectedOutcomeId)
     ?? quoteableTerminalOutcomes[0]
     ?? terminalOutcomes.find((outcome) => outcome.id === selectedOutcomeId)
@@ -3970,7 +3987,7 @@ const InfraTradingTerminalInner = ({
     () => orderbookStreamTopics.join('|'),
     [orderbookStreamTopics],
   );
-  const selectedTicketOutcomeId = outcomeIdForTicketSide(terminalOutcomes, ticketOutcomeSide, selectedOutcomeId);
+  const selectedTicketOutcomeId = outcomeIdForTicketSide(quoteableTerminalOutcomes, ticketOutcomeSide, selectedOutcome?.id ?? selectedOutcomeId);
   const selectedTicketOutcome = terminalOutcomes.find((outcome) => outcome.id === selectedTicketOutcomeId) ?? selectedOutcome;
   const selectedTicketMarketId = selectedTicketOutcome?.marketId ?? selectedOutcomeMarketId ?? terminalMarketId;
   const selectedTicketQuoteOutcomeId = quoteOutcomeIdForTicketSide(selectedTicketOutcome, ticketOutcomeSide)
@@ -7461,7 +7478,7 @@ const InfraTradingTerminalInner = ({
                  marketId={selectedOutcomeMarketId}
                  outcomeId={selectedQuoteOutcomeId}
                  marketType={chartMarketType}
-                 outcomes={terminalOutcomes}
+                 outcomes={quoteableTerminalOutcomes}
                  polymarketEventSlug={terminalMarket.venueMarkets?.find((market) => market.venue === 'POLYMARKET' && market.eventSlug)?.eventSlug
                    ?? terminalMarket.eventSlug
                    ?? selectedMarket?.venueMarkets?.find((market) => market.venue === 'POLYMARKET' && market.eventSlug)?.eventSlug
