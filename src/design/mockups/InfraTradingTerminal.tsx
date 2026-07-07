@@ -3188,7 +3188,7 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
             ]
       : [...outcomes]
           .sort(compareOutcomeRowsByProbability)
-          .filter((outcome) => outcome.marketId)
+          .filter((outcome) => outcome.marketId && liveOutcomeChartPercent(outcome) !== null)
           .slice(0, MULTI_OUTCOME_CHART_LIMIT);
     return source.map((outcome, index): OutcomeChartInput => {
       const chartMarketId = outcome.marketId ?? marketId;
