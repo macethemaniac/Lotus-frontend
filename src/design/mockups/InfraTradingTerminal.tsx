@@ -4001,10 +4001,6 @@ const InfraTradingTerminalInner = ({
   const ticketPolymarketTokenId = ticketQuote?.legs.find((leg) =>
     toBackendVenueId(leg.venue) === 'POLYMARKET' && /^\d+$/.test(String(leg.venueOutcomeId ?? ''))
   )?.venueOutcomeId;
-  const ticketEffectivePrice = executionOrchestratorEnabled
-    ? orderEffectivePrice(ticketOrchestratorOrder) ?? ticketPriceForSide(selectedTicketOutcome, ticketOutcomeSide)
-    : ticketQuote?.effectivePrice ?? ticketPriceForSide(selectedTicketOutcome, ticketOutcomeSide);
-  const ticketEstimatedShares = estimateShares(ticketAmount, ticketEffectivePrice);
   const ticketShareImprovement = routeShareImprovement(ticketAmount, ticketQuote, ticketLiveCandidates);
   const accountEmptyCopy = !token ? 'Log in to load your Lotus execution records for this market.' : 'No backend records for this market yet.';
   const selectedSellPositions = positions.filter((position) =>
@@ -4260,6 +4256,12 @@ const InfraTradingTerminalInner = ({
   const selectedTicketNoPrice = selectedTicketUsesLatchedOutcomeDisplay
     ? selectedOutcomeOrderbookDisplayValues?.noPrice ?? selectedOutcomeDisplayValues?.noPrice ?? selectedTicketOutcome?.noPrice ?? null
     : selectedTicketOutcome?.noPrice ?? null;
+  const selectedTicketDisplayPrice = parseProbabilityLabel(ticketOutcomeSide === 'yes' ? selectedTicketYesPrice : selectedTicketNoPrice);
+  const selectedTicketFallbackPrice = ticketPriceForSide(selectedTicketOutcome, ticketOutcomeSide);
+  const ticketEffectivePrice = executionOrchestratorEnabled
+    ? orderEffectivePrice(ticketOrchestratorOrder) ?? selectedTicketDisplayPrice ?? selectedTicketFallbackPrice
+    : ticketQuote?.effectivePrice ?? selectedTicketDisplayPrice ?? selectedTicketFallbackPrice;
+  const ticketEstimatedShares = estimateShares(ticketAmount, ticketEffectivePrice);
 
   React.useEffect(() => {
     if (!shouldSyncSelectedOutcomeRowDisplay({
