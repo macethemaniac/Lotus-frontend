@@ -544,8 +544,8 @@ const formatProbabilityPercent = (price: number | null | undefined): string => {
 const LIVE_PRICE_OUTLIER_DIFF_THRESHOLD = 0.45;
 const LIVE_PRICE_EXTREME_THRESHOLD = 0.95;
 const MULTI_OUTCOME_DOMINANT_PRICE_THRESHOLD = 0.5;
-const MULTI_OUTCOME_VISIBLE_PROBABILITY_SUM_LIMIT = 1.15;
-const MULTI_OUTCOME_VISIBLE_PROBABILITY_SAMPLE_SIZE = 4;
+const MULTI_OUTCOME_VISIBLE_PROBABILITY_SUM_LIMIT = 1.1;
+const MULTI_OUTCOME_VISIBLE_PROBABILITY_SAMPLE_SIZE = 5;
 const LIVE_PRICE_VENUE_MAX_SPREAD = 0.25;
 
 const parseDisplayProbabilityValue = (value: string | number | null | undefined): number | null => {
@@ -1506,6 +1506,27 @@ const isSaneMultiOutcomeProbabilitySet = (outcomes: readonly TerminalOutcomeRow[
     .slice(0, Math.min(MULTI_OUTCOME_VISIBLE_PROBABILITY_SAMPLE_SIZE, probabilities.length))
     .reduce((sum, value) => sum + value, 0);
   return visibleSum <= MULTI_OUTCOME_VISIBLE_PROBABILITY_SUM_LIMIT;
+};
+
+const hasResolvedOutcomeProbabilitySet = (outcomes: readonly TerminalOutcomeRow[]): boolean => {
+  if (outcomes.length === 0) return false;
+  const resolvedCount = outcomes.filter((outcome) => outcomeProbabilityValue(outcome) !== null).length;
+  return resolvedCount >= (outcomes.length > 2 ? Math.min(3, outcomes.length) : 1);
+};
+
+const firstStableOutcomeRows = (
+  ...candidates: Array<readonly TerminalOutcomeRow[] | null | undefined>
+): TerminalOutcomeRow[] => {
+  for (const rows of candidates) {
+    if (!rows?.length) continue;
+    if (!hasResolvedOutcomeProbabilitySet(rows)) continue;
+    if (!isSaneMultiOutcomeProbabilitySet(rows)) continue;
+    return [...rows];
+  }
+  for (const rows of candidates) {
+    if (rows?.length && !hasResolvedOutcomeProbabilitySet(rows)) return [...rows];
+  }
+  return [];
 };
 
 const isDisplayableMultiOutcomeRow = (outcome: TerminalOutcomeRow, outcomeCount: number): boolean => {
@@ -4377,6 +4398,7 @@ const InfraTradingTerminalInner = ({
   }, [orderbook, selectedOutcomeBookReady, selectedOutcomeDisplayValues, selectedOutcomeRefreshKey, selectedOutcomeRowDisplay]);
 
   const refreshOutcomes = useCallback(async () => {
+    const previousRows = terminalOutcomesRef.current;
     const fallbackRows = buildTerminalFallbackRows({
       hasCompoundEventOutcomes,
       relatedEventMarkets,
@@ -4516,15 +4538,17 @@ const InfraTradingTerminalInner = ({
         };
       });
 
-      setTerminalOutcomes(seedRows);
+      const stableFallbackRows = firstStableOutcomeRows(previousRows, fallbackRows, seedRows);
+      const seedDisplayRows = firstStableOutcomeRows(seedRows, stableFallbackRows);
+      setTerminalOutcomes(seedDisplayRows);
       const currentSelectedOutcomeId = selectedOutcomeIdRef.current;
       const nextSelectedOutcomeId = selectedOutcomeAutoFollowRef.current
-        ? defaultTerminalOutcomeId(seedRows) ?? resolveInitialSelectedOutcomeId(terminalMarket.initialOutcomeId, seedRows)
-        : currentSelectedOutcomeId && seedRows.some((row) => row.id === currentSelectedOutcomeId)
+        ? defaultTerminalOutcomeId(seedDisplayRows) ?? resolveInitialSelectedOutcomeId(terminalMarket.initialOutcomeId, seedDisplayRows)
+        : currentSelectedOutcomeId && seedDisplayRows.some((row) => row.id === currentSelectedOutcomeId)
           ? currentSelectedOutcomeId
-          : defaultTerminalOutcomeId(seedRows) ?? resolveInitialSelectedOutcomeId(terminalMarket.initialOutcomeId, seedRows);
+          : defaultTerminalOutcomeId(seedDisplayRows) ?? resolveInitialSelectedOutcomeId(terminalMarket.initialOutcomeId, seedDisplayRows);
       if (nextSelectedOutcomeId !== currentSelectedOutcomeId) {
-        selectTerminalOutcome(nextSelectedOutcomeId, seedRows);
+        selectTerminalOutcome(nextSelectedOutcomeId, seedDisplayRows);
       }
 
       try {
@@ -4588,7 +4612,9 @@ const InfraTradingTerminalInner = ({
         });
 
         const saneRows = isSaneMultiOutcomeProbabilitySet(rows);
-        const nextRows = saneRows ? rows : seedRows;
+        const nextRows = saneRows && hasResolvedOutcomeProbabilitySet(rows)
+          ? rows
+          : stableFallbackRows;
         setTerminalOutcomes(nextRows);
         if (selectedOutcomeAutoFollowRef.current) {
           const nextSelectedOutcomeId = defaultTerminalOutcomeId(nextRows) ?? resolveInitialSelectedOutcomeId(terminalMarket.initialOutcomeId, nextRows);
