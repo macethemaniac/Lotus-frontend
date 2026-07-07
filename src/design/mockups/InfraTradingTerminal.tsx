@@ -603,14 +603,14 @@ const displayableLivePriceValue = (
   livePrice: MarketLivePriceItem | null | undefined,
   referencePrice?: string | number | null,
 ): number | null => {
-  const averagePrice = livePrice?.averagePrice !== null && livePrice?.averagePrice !== undefined ? Number(livePrice.averagePrice) : NaN;
-  if (isReasonableLivePriceValue(averagePrice, referencePrice) && isConsistentWithVenueBreakdown(averagePrice, livePrice)) return averagePrice;
-  const price = livePrice?.price !== null && livePrice?.price !== undefined ? Number(livePrice.price) : NaN;
-  if (isReasonableLivePriceValue(price, referencePrice) && isConsistentWithVenueBreakdown(price, livePrice)) return price;
-  const midpoint = livePrice?.midpoint !== null && livePrice?.midpoint !== undefined ? Number(livePrice.midpoint) : NaN;
-  if (isReasonableLivePriceValue(midpoint, referencePrice) && isConsistentWithVenueBreakdown(midpoint, livePrice)) return midpoint;
   const bestAsk = livePrice?.bestAsk !== null && livePrice?.bestAsk !== undefined ? Number(livePrice.bestAsk) : NaN;
   if (isReasonableLivePriceValue(bestAsk, referencePrice) && isConsistentWithVenueBreakdown(bestAsk, livePrice)) return bestAsk;
+  const price = livePrice?.price !== null && livePrice?.price !== undefined ? Number(livePrice.price) : NaN;
+  if (isReasonableLivePriceValue(price, referencePrice) && isConsistentWithVenueBreakdown(price, livePrice)) return price;
+  const averagePrice = livePrice?.averagePrice !== null && livePrice?.averagePrice !== undefined ? Number(livePrice.averagePrice) : NaN;
+  if (isReasonableLivePriceValue(averagePrice, referencePrice) && isConsistentWithVenueBreakdown(averagePrice, livePrice)) return averagePrice;
+  const midpoint = livePrice?.midpoint !== null && livePrice?.midpoint !== undefined ? Number(livePrice.midpoint) : NaN;
+  if (isReasonableLivePriceValue(midpoint, referencePrice) && isConsistentWithVenueBreakdown(midpoint, livePrice)) return midpoint;
   return null;
 };
 
@@ -4635,10 +4635,6 @@ const InfraTradingTerminalInner = ({
       const stableFallbackRows = firstStableOutcomeRows(previousRows, fallbackRows, polymarketSeedRows, seedRows);
       const seedDisplayRows = firstStableOutcomeRows(polymarketSeedRows, stableFallbackRows, seedRows);
       setTerminalOutcomes(seedDisplayRows);
-      const usingPolymarketEventPrices = hasResolvedOutcomeProbabilitySet(polymarketSeedRows)
-        && isSaneMultiOutcomeProbabilitySet(polymarketSeedRows)
-        && chartMarketType === 'multi'
-        && Boolean(terminalPolymarketEventSlug || terminalPolymarketMarketSlug);
       const currentSelectedOutcomeId = selectedOutcomeIdRef.current;
       const nextSelectedOutcomeId = selectedOutcomeAutoFollowRef.current
         ? defaultTerminalOutcomeId(seedDisplayRows) ?? resolveInitialSelectedOutcomeId(terminalMarket.initialOutcomeId, seedDisplayRows)
@@ -4647,9 +4643,6 @@ const InfraTradingTerminalInner = ({
           : defaultTerminalOutcomeId(seedDisplayRows) ?? resolveInitialSelectedOutcomeId(terminalMarket.initialOutcomeId, seedDisplayRows);
       if (nextSelectedOutcomeId !== currentSelectedOutcomeId) {
         selectTerminalOutcome(nextSelectedOutcomeId, seedDisplayRows);
-      }
-      if (usingPolymarketEventPrices) {
-        return;
       }
 
       try {
@@ -4765,7 +4758,6 @@ const InfraTradingTerminalInner = ({
       do {
         terminalLivePriceRefreshQueuedRef.current = false;
         const currentOutcomes = terminalOutcomesRef.current;
-        if (chartMarketType === 'multi' && (terminalPolymarketEventSlug || terminalPolymarketMarketSlug)) return;
         if (!terminalMarketId || currentOutcomes.length === 0) return;
         const requestItems = currentOutcomes
           .map((outcome) => {
@@ -4870,12 +4862,9 @@ const InfraTradingTerminalInner = ({
       terminalLivePriceRefreshInFlightRef.current = false;
     }
   }, [
-    chartMarketType,
     terminalMarket.canonicalMarketIds,
     terminalMarket.marketType,
     terminalMarketId,
-    terminalPolymarketEventSlug,
-    terminalPolymarketMarketSlug,
   ]);
 
   React.useEffect(() => {
