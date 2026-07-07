@@ -3219,27 +3219,14 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
     () => new Map(chartOutcomeInputs.map((outcome) => [outcome.key, outcome.latestValue])),
     [chartOutcomeInputs]
   );
-  const hasLiveOutcomeValues = useMemo(
-    () => chartOutcomeInputs.some((outcome) => typeof outcome.latestValue === 'number' && Number.isFinite(outcome.latestValue)),
-    [chartOutcomeInputs],
-  );
   const prefersOutcomeChart = marketType === 'multi'
     ? prefersPolymarketMultiHistory || chartOutcomeInputs.length > 0
     : prefersPolymarketBinaryHistory || chartOutcomeInputs.length > 0;
-  const shouldSuppressOutcomeHistoryUntilLive =
-    marketType === 'multi'
-    && prefersPolymarketMultiHistory
-    && !hasLiveOutcomeValues;
   const chartModel = useMemo(
-    () => {
-      if (shouldSuppressOutcomeHistoryUntilLive) {
-        return { rows: [], series: [], historyStatus: 'accumulating' as MarketChartResponse["historyStatus"] };
-      }
-      return prefersOutcomeChart
-        ? toOutcomeChartModel(outcomeCharts, liveOutcomeValuesByKey, activeTab)
-        : toVenueChartModel(venueChart, activeTab, "venues");
-    },
-    [activeTab, liveOutcomeValuesByKey, outcomeCharts, prefersOutcomeChart, shouldSuppressOutcomeHistoryUntilLive, venueChart]
+    () => prefersOutcomeChart
+      ? toOutcomeChartModel(outcomeCharts, liveOutcomeValuesByKey, activeTab)
+      : toVenueChartModel(venueChart, activeTab, "venues"),
+    [activeTab, liveOutcomeValuesByKey, outcomeCharts, prefersOutcomeChart, venueChart]
   );
   const { rows, series, historyStatus } = chartModel;
   const chartSourceLabel = 'Lotus';
@@ -3354,7 +3341,7 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
                 const matchedOutcome = chartOutcomeInputs.find((outcome) =>
                   normalizeOutcomeChartLabel(outcome.label) === normalizeOutcomeChartLabel(label)
                 );
-                if (!matchedOutcome || typeof matchedOutcome.latestValue !== 'number' || !Number.isFinite(matchedOutcome.latestValue)) {
+                if (!matchedOutcome) {
                   return [];
                 }
                 return [{
@@ -3365,7 +3352,7 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
                   key: matchedOutcome.key,
                   color: OUTCOME_CHART_COLORS[index % OUTCOME_CHART_COLORS.length]!,
                   tokenId: tokenIds[0]!,
-                  latestValue: matchedOutcome.latestValue,
+                  latestValue: matchedOutcome.latestValue ?? null,
                 }];
               })
               .sort((left, right) => (right.latestValue ?? 0) - (left.latestValue ?? 0))
