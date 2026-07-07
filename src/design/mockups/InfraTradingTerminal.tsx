@@ -3562,6 +3562,7 @@ const InfraTradingTerminalInner = ({
   const missingRiskProfileKeysRef = React.useRef<Set<string>>(new Set());
   const selectedOutcomeRef = React.useRef<TerminalOutcomeRow | null>(null);
   const selectedOutcomeIdRef = React.useRef<string | null>(null);
+  const selectedOutcomeAutoFollowRef = React.useRef(true);
   const selectedOutcomeRefreshKeyRef = React.useRef('none:none:none');
   const terminalOutcomesRef = React.useRef<TerminalOutcomeRow[]>([]);
   const orderbookCacheRef = React.useRef<Map<string, MarketOrderbookResponse>>(new Map());
@@ -4151,6 +4152,7 @@ const InfraTradingTerminalInner = ({
   const selectTerminalOutcome = useCallback((
     outcomeId: string | null,
     outcomeRows?: TerminalOutcomeRow[],
+    options?: { manual?: boolean },
   ) => {
     const cacheKey = cacheKeyForOutcome(outcomeId, outcomeRows);
     if (shouldReuseSelectedOutcomeState({
@@ -4166,6 +4168,9 @@ const InfraTradingTerminalInner = ({
     if (cacheKey) {
       const cachedDisplay = outcomeDisplayCacheRef.current.get(cacheKey) ?? null;
       if (cachedDisplay) setSelectedOutcomeDisplayValues(cachedDisplay);
+    }
+    if (options?.manual) {
+      selectedOutcomeAutoFollowRef.current = false;
     }
     setSelectedOutcomeId(outcomeId);
   }, [cacheKeyForOutcome, latchSelectedOutcomeDisplayFallback]);
@@ -4196,7 +4201,7 @@ const InfraTradingTerminalInner = ({
   ]);
 
   const focusTerminalOutcomeOrderbook = useCallback((outcomeId: string) => {
-    selectTerminalOutcome(outcomeId);
+    selectTerminalOutcome(outcomeId, undefined, { manual: true });
     setExpandedOutcomeId(outcomeId);
     setBottomTab('Outcomes');
   }, [selectTerminalOutcome]);
@@ -4249,7 +4254,9 @@ const InfraTradingTerminalInner = ({
     });
     if (!terminalMarketId) {
       setTerminalOutcomes(fallbackRows);
-      const nextSelectedOutcomeId = selectedOutcomeIdRef.current ?? defaultTerminalOutcomeId(fallbackRows) ?? resolveInitialSelectedOutcomeId(terminalMarket.initialOutcomeId, fallbackRows);
+      const nextSelectedOutcomeId = selectedOutcomeAutoFollowRef.current
+        ? defaultTerminalOutcomeId(fallbackRows) ?? resolveInitialSelectedOutcomeId(terminalMarket.initialOutcomeId, fallbackRows)
+        : selectedOutcomeIdRef.current ?? defaultTerminalOutcomeId(fallbackRows) ?? resolveInitialSelectedOutcomeId(terminalMarket.initialOutcomeId, fallbackRows);
       if (nextSelectedOutcomeId !== selectedOutcomeIdRef.current) {
         selectTerminalOutcome(nextSelectedOutcomeId, fallbackRows);
       }
@@ -4379,9 +4386,11 @@ const InfraTradingTerminalInner = ({
 
       setTerminalOutcomes(seedRows);
       const currentSelectedOutcomeId = selectedOutcomeIdRef.current;
-      const nextSelectedOutcomeId = currentSelectedOutcomeId && seedRows.some((row) => row.id === currentSelectedOutcomeId)
-        ? currentSelectedOutcomeId
-        : defaultTerminalOutcomeId(seedRows) ?? resolveInitialSelectedOutcomeId(terminalMarket.initialOutcomeId, seedRows);
+      const nextSelectedOutcomeId = selectedOutcomeAutoFollowRef.current
+        ? defaultTerminalOutcomeId(seedRows) ?? resolveInitialSelectedOutcomeId(terminalMarket.initialOutcomeId, seedRows)
+        : currentSelectedOutcomeId && seedRows.some((row) => row.id === currentSelectedOutcomeId)
+          ? currentSelectedOutcomeId
+          : defaultTerminalOutcomeId(seedRows) ?? resolveInitialSelectedOutcomeId(terminalMarket.initialOutcomeId, seedRows);
       if (nextSelectedOutcomeId !== currentSelectedOutcomeId) {
         selectTerminalOutcome(nextSelectedOutcomeId, seedRows);
       }
@@ -4447,15 +4456,23 @@ const InfraTradingTerminalInner = ({
         });
 
         setTerminalOutcomes(rows);
+        if (selectedOutcomeAutoFollowRef.current) {
+          const nextSelectedOutcomeId = defaultTerminalOutcomeId(rows) ?? resolveInitialSelectedOutcomeId(terminalMarket.initialOutcomeId, rows);
+          if (nextSelectedOutcomeId !== selectedOutcomeIdRef.current) {
+            selectTerminalOutcome(nextSelectedOutcomeId, rows);
+          }
+        }
       } catch (livePriceError) {
         setOutcomesError(livePriceError instanceof Error ? livePriceError.message : 'Unable to refresh live outcome quotes');
       }
     } catch (error) {
       setTerminalOutcomes(fallbackRows);
       const currentSelectedOutcomeId = selectedOutcomeIdRef.current;
-      const nextSelectedOutcomeId = currentSelectedOutcomeId
-        ? currentSelectedOutcomeId
-        : defaultTerminalOutcomeId(fallbackRows) ?? resolveInitialSelectedOutcomeId(terminalMarket.initialOutcomeId, fallbackRows);
+      const nextSelectedOutcomeId = selectedOutcomeAutoFollowRef.current
+        ? defaultTerminalOutcomeId(fallbackRows) ?? resolveInitialSelectedOutcomeId(terminalMarket.initialOutcomeId, fallbackRows)
+        : currentSelectedOutcomeId
+          ? currentSelectedOutcomeId
+          : defaultTerminalOutcomeId(fallbackRows) ?? resolveInitialSelectedOutcomeId(terminalMarket.initialOutcomeId, fallbackRows);
       if (nextSelectedOutcomeId !== currentSelectedOutcomeId) {
         selectTerminalOutcome(nextSelectedOutcomeId, fallbackRows);
       }
@@ -4591,6 +4608,7 @@ const InfraTradingTerminalInner = ({
     terminalMarketResetKeyRef.current = terminalMarketResetKey;
 
     const fallbackRows = seedTerminalOutcomeRows();
+    selectedOutcomeAutoFollowRef.current = true;
     setTerminalOutcomes(fallbackRows);
     const nextSelectedOutcomeId = defaultTerminalOutcomeId(fallbackRows) ?? resolveInitialSelectedOutcomeId(terminalMarket.initialOutcomeId, fallbackRows);
     selectTerminalOutcome(nextSelectedOutcomeId, fallbackRows);
@@ -4622,7 +4640,7 @@ const InfraTradingTerminalInner = ({
     setTicketStatusMessage(null);
     setTicketError(null);
     if (fallbackOutcomeId) {
-      selectTerminalOutcome(fallbackOutcomeId);
+      selectTerminalOutcome(fallbackOutcomeId, undefined, { manual: true });
     }
   }, [selectTerminalOutcome]);
 
