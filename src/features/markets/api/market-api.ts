@@ -522,7 +522,7 @@ export function getMarketLivePrices(input: { items: MarketLivePriceRequestItem[]
       method: "POST",
       body,
     }),
-    { ttlMs: 2_000, maxStaleMs: 15_000 }
+    { ttlMs: 0, maxStaleMs: 0 }
   );
 }
 
