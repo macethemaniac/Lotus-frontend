@@ -4069,6 +4069,15 @@ const InfraTradingTerminalInner = ({
     ),
     [displayOrderbook],
   );
+  const selectedOutcomeOrderbookDisplayValues = useMemo<TerminalOutcomeDisplayValues | null>(() => {
+    const bestAsk = normalizedOrderbookProbability(displayOrderbook?.bestAsk);
+    if (bestAsk === null) return null;
+    return {
+      yesPrice: formatProbabilityPrice(bestAsk),
+      noPrice: terminalMarket.marketType === 'binary' ? formatProbabilityPrice(1 - bestAsk) : '-',
+      probability: formatProbabilityPercent(bestAsk),
+    };
+  }, [displayOrderbook?.bestAsk, terminalMarket.marketType]);
   const selectedOutcomeVisibleVenues = useMemo(() => {
     const venues = new Map<string, string>();
     const addVenue = (value: string | null | undefined) => {
@@ -4246,10 +4255,10 @@ const InfraTradingTerminalInner = ({
   }, [quoteableTerminalOutcomes, selectTerminalOutcome]);
   const selectedTicketUsesLatchedOutcomeDisplay = selectedTicketOutcome?.id === selectedOutcome?.id;
   const selectedTicketYesPrice = selectedTicketUsesLatchedOutcomeDisplay
-    ? selectedOutcomeDisplayValues?.yesPrice ?? selectedTicketOutcome?.yesPrice ?? null
+    ? selectedOutcomeOrderbookDisplayValues?.yesPrice ?? selectedOutcomeDisplayValues?.yesPrice ?? selectedTicketOutcome?.yesPrice ?? null
     : selectedTicketOutcome?.yesPrice ?? null;
   const selectedTicketNoPrice = selectedTicketUsesLatchedOutcomeDisplay
-    ? selectedOutcomeDisplayValues?.noPrice ?? selectedTicketOutcome?.noPrice ?? null
+    ? selectedOutcomeOrderbookDisplayValues?.noPrice ?? selectedOutcomeDisplayValues?.noPrice ?? selectedTicketOutcome?.noPrice ?? null
     : selectedTicketOutcome?.noPrice ?? null;
 
   React.useEffect(() => {
@@ -7647,17 +7656,20 @@ const InfraTradingTerminalInner = ({
                              ? rowVenueList[0]!
                              : m.primaryVenue ?? venues[0] ?? 'lotus';
                            const rowYesPrice = isExpandedOutcome
-                             ? normalizeTerminalDisplayValue(selectedOutcomeDisplayValues?.yesPrice)
+                             ? normalizeTerminalDisplayValue(selectedOutcomeOrderbookDisplayValues?.yesPrice)
+                               ?? normalizeTerminalDisplayValue(selectedOutcomeDisplayValues?.yesPrice)
                                ?? normalizeTerminalDisplayValue(m.yesPrice)
                                ?? m.yesPrice
                              : m.yesPrice;
                            const rowNoPrice = isExpandedOutcome
-                             ? normalizeTerminalDisplayValue(selectedOutcomeDisplayValues?.noPrice)
+                             ? normalizeTerminalDisplayValue(selectedOutcomeOrderbookDisplayValues?.noPrice)
+                               ?? normalizeTerminalDisplayValue(selectedOutcomeDisplayValues?.noPrice)
                                ?? normalizeTerminalDisplayValue(m.noPrice)
                                ?? m.noPrice
                              : m.noPrice;
                            const rowProbability = isExpandedOutcome
-                             ? normalizeTerminalDisplayValue(selectedOutcomeDisplayValues?.probability)
+                             ? normalizeTerminalDisplayValue(selectedOutcomeOrderbookDisplayValues?.probability)
+                               ?? normalizeTerminalDisplayValue(selectedOutcomeDisplayValues?.probability)
                                ?? normalizeTerminalDisplayValue(m.prob)
                                ?? m.prob
                              : m.prob;
