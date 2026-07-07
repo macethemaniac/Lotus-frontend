@@ -249,9 +249,11 @@ const loadCachedTerminalRouteSelection = (
     if (!raw) return null;
     const parsed = JSON.parse(raw) as TerminalMarketSelection | null;
     if (!parsed || typeof parsed !== 'object' || !parsed.title) return null;
+    const firstOutcomeId = parsed.outcomes?.[0]?.id ?? null;
     return {
       ...parsed,
       eventSlug: parsed.eventSlug ?? routeEventSlug,
+      initialOutcomeId: firstOutcomeId ?? parsed.initialOutcomeId ?? null,
     };
   } catch {
     return null;
@@ -2612,6 +2614,14 @@ export const DashboardV2Mockup = ({
       <div className="flex h-full min-h-0 w-full bg-[#F7F8FA] dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 font-sans overflow-hidden">
         {/* Sidebar */}
       <aside className="w-12 bg-white dark:bg-zinc-900 border-r border-zinc-200 dark:border-zinc-800 flex flex-col items-center gap-6 z-50 shrink-0 pb-14 pt-5">
+        <button
+          type="button"
+          aria-label="Lotus home"
+          onClick={() => onNavigate?.('home')}
+          className="flex h-8 w-8 items-center justify-center rounded-xl text-[#ccff00] transition hover:bg-zinc-100 dark:hover:bg-zinc-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
+        >
+          <LotusLogo className="h-6 w-6" />
+        </button>
         <nav className="flex flex-col gap-5 w-full items-center">
           <NavItem icon={<Home className="w-4 h-4" />} active={activePage === 'home'} label="Home" onClick={() => onNavigate?.('home')} />
           <NavItem icon={<BarChart2 className="w-4 h-4" />} active={activePage === 'markets'} label="Markets" onClick={() => onNavigate?.('markets')} />

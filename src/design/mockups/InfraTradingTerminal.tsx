@@ -4246,7 +4246,7 @@ const InfraTradingTerminalInner = ({
     });
     if (!terminalMarketId) {
       setTerminalOutcomes(fallbackRows);
-      const nextSelectedOutcomeId = selectedOutcomeIdRef.current ?? resolveInitialSelectedOutcomeId(terminalMarket.initialOutcomeId, fallbackRows);
+      const nextSelectedOutcomeId = selectedOutcomeIdRef.current ?? fallbackRows[0]?.id ?? resolveInitialSelectedOutcomeId(terminalMarket.initialOutcomeId, fallbackRows);
       if (nextSelectedOutcomeId !== selectedOutcomeIdRef.current) {
         selectTerminalOutcome(nextSelectedOutcomeId, fallbackRows);
       }
@@ -4378,7 +4378,7 @@ const InfraTradingTerminalInner = ({
       const currentSelectedOutcomeId = selectedOutcomeIdRef.current;
       const nextSelectedOutcomeId = currentSelectedOutcomeId && seedRows.some((row) => row.id === currentSelectedOutcomeId)
         ? currentSelectedOutcomeId
-        : resolveInitialSelectedOutcomeId(terminalMarket.initialOutcomeId, seedRows);
+        : seedRows[0]?.id ?? resolveInitialSelectedOutcomeId(terminalMarket.initialOutcomeId, seedRows);
       if (nextSelectedOutcomeId !== currentSelectedOutcomeId) {
         selectTerminalOutcome(nextSelectedOutcomeId, seedRows);
       }
@@ -4452,7 +4452,7 @@ const InfraTradingTerminalInner = ({
       const currentSelectedOutcomeId = selectedOutcomeIdRef.current;
       const nextSelectedOutcomeId = currentSelectedOutcomeId
         ? currentSelectedOutcomeId
-        : resolveInitialSelectedOutcomeId(terminalMarket.initialOutcomeId, fallbackRows);
+        : fallbackRows[0]?.id ?? resolveInitialSelectedOutcomeId(terminalMarket.initialOutcomeId, fallbackRows);
       if (nextSelectedOutcomeId !== currentSelectedOutcomeId) {
         selectTerminalOutcome(nextSelectedOutcomeId, fallbackRows);
       }
@@ -4589,7 +4589,7 @@ const InfraTradingTerminalInner = ({
 
     const fallbackRows = seedTerminalOutcomeRows();
     setTerminalOutcomes(fallbackRows);
-    const nextSelectedOutcomeId = resolveInitialSelectedOutcomeId(terminalMarket.initialOutcomeId, fallbackRows);
+    const nextSelectedOutcomeId = fallbackRows[0]?.id ?? resolveInitialSelectedOutcomeId(terminalMarket.initialOutcomeId, fallbackRows);
     selectTerminalOutcome(nextSelectedOutcomeId, fallbackRows);
     setExpandedOutcomeId(null);
     setTicketOutcomeSide(terminalMarket.initialOutcomeSide ?? 'yes');
@@ -6787,7 +6787,7 @@ const InfraTradingTerminalInner = ({
       Boolean(side === 'buy' && !ticketQuote && fundingLoading);
   const ticketActionLabel = executionOrchestratorEnabled
     ? ticketLoginRequired
-      ? 'Login'
+      ? 'Deposit'
       : ticketActivationPolling
       ? 'Confirming venue readiness...'
       : ticketOrchestratorSigning
@@ -6822,7 +6822,7 @@ const InfraTradingTerminalInner = ({
         ? 'Refresh route'
       : 'Place order'
     : ticketLoginRequired
-    ? 'Login'
+    ? 'Deposit'
     : ticketActivationPolling
     ? 'Confirming Polymarket readiness...'
     : ticketLoading
