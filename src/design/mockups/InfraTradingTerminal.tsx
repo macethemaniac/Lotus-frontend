@@ -543,6 +543,7 @@ const formatProbabilityPercent = (price: number | null | undefined): string => {
 
 const LIVE_PRICE_OUTLIER_DIFF_THRESHOLD = 0.45;
 const LIVE_PRICE_EXTREME_THRESHOLD = 0.95;
+const MULTI_OUTCOME_DOMINANT_PRICE_THRESHOLD = 0.5;
 const LIVE_PRICE_VENUE_MAX_SPREAD = 0.25;
 
 const parseDisplayProbabilityValue = (value: string | number | null | undefined): number | null => {
@@ -1491,7 +1492,7 @@ const compareOutcomeRowsByProbability = (
 const isDisplayableMultiOutcomeRow = (outcome: TerminalOutcomeRow, outcomeCount: number): boolean => {
   const probability = parseProbabilityLabel(normalizeTerminalDisplayValue(outcome.prob));
   if (probability === null) return true;
-  if (outcomeCount > 2 && probability >= LIVE_PRICE_EXTREME_THRESHOLD) return false;
+  if (outcomeCount > 2 && probability >= MULTI_OUTCOME_DOMINANT_PRICE_THRESHOLD) return false;
   return true;
 };
 
