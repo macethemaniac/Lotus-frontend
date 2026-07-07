@@ -564,9 +564,25 @@ const isReasonableLivePriceValue = (
   const normalizedPrice = price > 1 ? price / 100 : price;
   const normalizedReference = parseDisplayProbabilityValue(referencePrice);
   if (normalizedReference === null) return normalizedPrice > 0 && normalizedPrice < LIVE_PRICE_EXTREME_THRESHOLD;
-  if (Math.abs(normalizedPrice - normalizedReference) > LIVE_PRICE_OUTLIER_DIFF_THRESHOLD) return false;
+  if (normalizedPrice - normalizedReference > LIVE_PRICE_OUTLIER_DIFF_THRESHOLD) return false;
   if (normalizedPrice >= LIVE_PRICE_EXTREME_THRESHOLD && normalizedReference < 0.75) return false;
   return normalizedPrice <= 1;
+};
+
+const isConsistentWithVenueBreakdown = (
+  price: number,
+  livePrice: MarketLivePriceItem | null | undefined,
+): boolean => {
+  if (!Number.isFinite(price) || price <= 0) return false;
+  const normalizedPrice = price > 1 ? price / 100 : price;
+  const venuePrices = (livePrice?.venueBreakdown ?? [])
+    .map((venue) => parseDisplayProbabilityValue(venue.price))
+    .filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0)
+    .sort((left, right) => left - right);
+  if (venuePrices.length === 0) return true;
+  const medianVenuePrice = venuePrices[Math.floor(venuePrices.length / 2)]!;
+  const allowedDrift = Math.max(0.08, medianVenuePrice * 1.5);
+  return Math.abs(normalizedPrice - medianVenuePrice) <= allowedDrift;
 };
 
 const displayableLivePriceValue = (
@@ -574,13 +590,13 @@ const displayableLivePriceValue = (
   referencePrice?: string | number | null,
 ): number | null => {
   const averagePrice = livePrice?.averagePrice !== null && livePrice?.averagePrice !== undefined ? Number(livePrice.averagePrice) : NaN;
-  if (isReasonableLivePriceValue(averagePrice, referencePrice)) return averagePrice;
+  if (isReasonableLivePriceValue(averagePrice, referencePrice) && isConsistentWithVenueBreakdown(averagePrice, livePrice)) return averagePrice;
   const price = livePrice?.price !== null && livePrice?.price !== undefined ? Number(livePrice.price) : NaN;
-  if (isReasonableLivePriceValue(price, referencePrice)) return price;
+  if (isReasonableLivePriceValue(price, referencePrice) && isConsistentWithVenueBreakdown(price, livePrice)) return price;
   const midpoint = livePrice?.midpoint !== null && livePrice?.midpoint !== undefined ? Number(livePrice.midpoint) : NaN;
-  if (isReasonableLivePriceValue(midpoint, referencePrice)) return midpoint;
+  if (isReasonableLivePriceValue(midpoint, referencePrice) && isConsistentWithVenueBreakdown(midpoint, livePrice)) return midpoint;
   const bestAsk = livePrice?.bestAsk !== null && livePrice?.bestAsk !== undefined ? Number(livePrice.bestAsk) : NaN;
-  if (isReasonableLivePriceValue(bestAsk, referencePrice)) return bestAsk;
+  if (isReasonableLivePriceValue(bestAsk, referencePrice) && isConsistentWithVenueBreakdown(bestAsk, livePrice)) return bestAsk;
   return null;
 };
 

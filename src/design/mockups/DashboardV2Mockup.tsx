@@ -631,6 +631,34 @@ const formatProbabilityPercent = (price: number | null | undefined): string => {
   return `${percent >= 10 ? percent.toFixed(0) : percent.toFixed(1)}%`;
 };
 
+const parseDisplayProbabilityValue = (value: string | number | null | undefined): number | null => {
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || value <= 0) return null;
+    return value > 1 ? value / 100 : value;
+  }
+  if (!value || value === 'Quote') return null;
+  const hasDisplayUnit = /[%c¢]/i.test(value) || value.includes('Â');
+  const parsed = Number(value.replace(/[^0-9.-]/g, ''));
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return hasDisplayUnit || parsed > 1 ? parsed / 100 : parsed;
+};
+
+const isConsistentWithVenueBreakdown = (
+  price: number,
+  livePrice: MarketLivePriceItem | null | undefined,
+): boolean => {
+  if (!Number.isFinite(price) || price <= 0) return false;
+  const normalizedPrice = price > 1 ? price / 100 : price;
+  const venuePrices = (livePrice?.venueBreakdown ?? [])
+    .map((venue) => parseDisplayProbabilityValue(venue.price))
+    .filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0)
+    .sort((left, right) => left - right);
+  if (venuePrices.length === 0) return true;
+  const medianVenuePrice = venuePrices[Math.floor(venuePrices.length / 2)]!;
+  const allowedDrift = Math.max(0.08, medianVenuePrice * 1.5);
+  return Math.abs(normalizedPrice - medianVenuePrice) <= allowedDrift;
+};
+
 const formatCompactMetric = (value: string | number | null | undefined): string | null => {
   const parsed = typeof value === 'number' ? value : typeof value === 'string' ? Number(value.replace(/[$,\s]/g, '')) : NaN;
   if (!Number.isFinite(parsed) || parsed <= 0) return null;
@@ -1538,13 +1566,13 @@ const displayableLivePriceValue = (
   livePrice: MarketLivePriceItem | null | undefined,
 ): number | null => {
   const averagePrice = livePrice?.averagePrice !== null && livePrice?.averagePrice !== undefined ? Number(livePrice.averagePrice) : NaN;
-  if (Number.isFinite(averagePrice) && averagePrice > 0) return averagePrice;
+  if (Number.isFinite(averagePrice) && averagePrice > 0 && isConsistentWithVenueBreakdown(averagePrice, livePrice)) return averagePrice;
   const price = livePrice?.price !== null && livePrice?.price !== undefined ? Number(livePrice.price) : NaN;
-  if (Number.isFinite(price) && price > 0) return price;
+  if (Number.isFinite(price) && price > 0 && isConsistentWithVenueBreakdown(price, livePrice)) return price;
   const midpoint = livePrice?.midpoint !== null && livePrice?.midpoint !== undefined ? Number(livePrice.midpoint) : NaN;
-  if (Number.isFinite(midpoint) && midpoint > 0) return midpoint;
+  if (Number.isFinite(midpoint) && midpoint > 0 && isConsistentWithVenueBreakdown(midpoint, livePrice)) return midpoint;
   const bestAsk = livePrice?.bestAsk !== null && livePrice?.bestAsk !== undefined ? Number(livePrice.bestAsk) : NaN;
-  if (Number.isFinite(bestAsk) && bestAsk > 0) return bestAsk;
+  if (Number.isFinite(bestAsk) && bestAsk > 0 && isConsistentWithVenueBreakdown(bestAsk, livePrice)) return bestAsk;
   return null;
 };
 
