@@ -599,10 +599,24 @@ const isConsistentWithVenueBreakdown = (
   return Math.abs(normalizedPrice - medianVenuePrice) <= allowedDrift;
 };
 
+const bestVenueAskFromBreakdown = (livePrice: MarketLivePriceItem | null | undefined): number | null => {
+  const asks = (livePrice?.venueBreakdown ?? [])
+    .flatMap((venue) => {
+      const ask = parseDisplayProbabilityValue(venue.bestAsk);
+      if (ask === null || ask <= 0 || ask >= 1) return [];
+      const bid = parseDisplayProbabilityValue(venue.bestBid);
+      if (bid !== null && (ask < bid || ask - bid > LIVE_PRICE_VENUE_MAX_SPREAD)) return [];
+      return [ask];
+    });
+  return asks.length > 0 ? Math.min(...asks) : null;
+};
+
 const displayableLivePriceValue = (
   livePrice: MarketLivePriceItem | null | undefined,
   referencePrice?: string | number | null,
 ): number | null => {
+  const venueBestAsk = bestVenueAskFromBreakdown(livePrice);
+  if (venueBestAsk !== null && isReasonableLivePriceValue(venueBestAsk, referencePrice)) return venueBestAsk;
   const bestAsk = livePrice?.bestAsk !== null && livePrice?.bestAsk !== undefined ? Number(livePrice.bestAsk) : NaN;
   if (isReasonableLivePriceValue(bestAsk, referencePrice) && isConsistentWithVenueBreakdown(bestAsk, livePrice)) return bestAsk;
   const price = livePrice?.price !== null && livePrice?.price !== undefined ? Number(livePrice.price) : NaN;
