@@ -544,6 +544,8 @@ const formatProbabilityPercent = (price: number | null | undefined): string => {
 const LIVE_PRICE_OUTLIER_DIFF_THRESHOLD = 0.45;
 const LIVE_PRICE_EXTREME_THRESHOLD = 0.95;
 const MULTI_OUTCOME_DOMINANT_PRICE_THRESHOLD = 0.5;
+const MULTI_OUTCOME_VISIBLE_PROBABILITY_SUM_LIMIT = 1.15;
+const MULTI_OUTCOME_VISIBLE_PROBABILITY_SAMPLE_SIZE = 4;
 const LIVE_PRICE_VENUE_MAX_SPREAD = 0.25;
 
 const parseDisplayProbabilityValue = (value: string | number | null | undefined): number | null => {
@@ -1489,8 +1491,25 @@ const compareOutcomeRowsByProbability = (
   return left.name.localeCompare(right.name);
 };
 
+const outcomeProbabilityValue = (outcome: Pick<TerminalOutcomeRow, 'prob' | 'yesPrice'>): number | null =>
+  parseProbabilityLabel(normalizeTerminalDisplayValue(outcome.prob))
+    ?? parseProbabilityLabel(normalizeTerminalDisplayValue(outcome.yesPrice));
+
+const isSaneMultiOutcomeProbabilitySet = (outcomes: readonly TerminalOutcomeRow[]): boolean => {
+  if (outcomes.length <= 2) return true;
+  const probabilities = outcomes
+    .map(outcomeProbabilityValue)
+    .filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0)
+    .sort((left, right) => right - left);
+  if (probabilities.length < 3) return true;
+  const visibleSum = probabilities
+    .slice(0, Math.min(MULTI_OUTCOME_VISIBLE_PROBABILITY_SAMPLE_SIZE, probabilities.length))
+    .reduce((sum, value) => sum + value, 0);
+  return visibleSum <= MULTI_OUTCOME_VISIBLE_PROBABILITY_SUM_LIMIT;
+};
+
 const isDisplayableMultiOutcomeRow = (outcome: TerminalOutcomeRow, outcomeCount: number): boolean => {
-  const probability = parseProbabilityLabel(normalizeTerminalDisplayValue(outcome.prob));
+  const probability = outcomeProbabilityValue(outcome);
   if (probability === null) return true;
   if (outcomeCount > 2 && probability >= MULTI_OUTCOME_DOMINANT_PRICE_THRESHOLD) return false;
   return true;
@@ -4568,11 +4587,13 @@ const InfraTradingTerminalInner = ({
           };
         });
 
-        setTerminalOutcomes(rows);
+        const saneRows = isSaneMultiOutcomeProbabilitySet(rows);
+        const nextRows = saneRows ? rows : seedRows;
+        setTerminalOutcomes(nextRows);
         if (selectedOutcomeAutoFollowRef.current) {
-          const nextSelectedOutcomeId = defaultTerminalOutcomeId(rows) ?? resolveInitialSelectedOutcomeId(terminalMarket.initialOutcomeId, rows);
+          const nextSelectedOutcomeId = defaultTerminalOutcomeId(nextRows) ?? resolveInitialSelectedOutcomeId(terminalMarket.initialOutcomeId, nextRows);
           if (nextSelectedOutcomeId !== selectedOutcomeIdRef.current) {
-            selectTerminalOutcome(nextSelectedOutcomeId, rows);
+            selectTerminalOutcome(nextSelectedOutcomeId, nextRows);
           }
         }
       } catch (livePriceError) {
@@ -4697,7 +4718,9 @@ const InfraTradingTerminalInner = ({
             if (nextOutcome !== outcome) changed = true;
             return nextOutcome;
           });
-            return changed ? nextOutcomes : current;
+            if (!changed) return current;
+            if (!isSaneMultiOutcomeProbabilitySet(nextOutcomes)) return current;
+            return nextOutcomes;
           });
         } catch {
           // Keep websocket/orderbook prices and last-good rows visible; the next active-market refresh will retry.
