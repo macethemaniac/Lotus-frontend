@@ -6728,6 +6728,42 @@ const InfraTradingTerminalInner = ({
       };
     });
   }, [side, ticketAmount, ticketLoginRequired, ticketPublicQuote]);
+  const ticketLiveVenuePreviewLegs = useMemo<ExecutionOrderRouteLegSummary[]>(() => {
+    const amountValue = parsePositiveNumber(ticketAmount.trim());
+    if (!ticketLoginRequired || !amountValue || !selectedTicketOutcome) return [];
+
+    const quoteLegs = selectedTicketOutcome.venueQuotes
+      .map((quote) => {
+        const price = parseProbabilityLabel(ticketOutcomeSide === 'no' ? quote.noPrice : quote.yesPrice);
+        return {
+          venue: quote.venue,
+          price,
+          size: price && price > 0
+            ? formatRouteAmount(side === 'buy' ? amountValue / price : amountValue)
+            : null,
+          blocked: Boolean(quote.blocker),
+        };
+      })
+      .filter((leg) => leg.price && leg.price > 0)
+      .sort((left, right) => {
+        if (left.blocked !== right.blocked) return left.blocked ? 1 : -1;
+        return (left.price ?? Number.POSITIVE_INFINITY) - (right.price ?? Number.POSITIVE_INFINITY);
+      })
+      .slice(0, 3)
+      .map(({ venue, price, size }) => ({ venue, price, size }));
+
+    if (quoteLegs.length > 0) return quoteLegs;
+
+    return (selectedTicketOutcome.venues.length ? selectedTicketOutcome.venues : marketVenueList)
+      .slice(0, 3)
+      .map((venue) => ({
+        venue,
+        price: ticketEffectivePrice,
+        size: ticketEffectivePrice && ticketEffectivePrice > 0
+          ? formatRouteAmount(side === 'buy' ? amountValue / ticketEffectivePrice : amountValue)
+          : null,
+      }));
+  }, [marketVenueList, selectedTicketOutcome, side, ticketAmount, ticketEffectivePrice, ticketLoginRequired, ticketOutcomeSide]);
   const ticketActionDisabled = executionOrchestratorEnabled
     ? ticketLoginRequired
       ? false
@@ -6857,16 +6893,20 @@ const InfraTradingTerminalInner = ({
     : Boolean(ticketQuote && ticketRoutePath.length > 0);
   const ticketPreviewLegs = ticketOrchestratorRouteLegs.length > 0
     ? ticketOrchestratorRouteLegs
-    : ticketPublicQuoteLegs;
+    : ticketPublicQuoteLegs.length > 0
+      ? ticketPublicQuoteLegs
+      : ticketLiveVenuePreviewLegs;
   const ticketPreviewRouteBadge = ticketOrchestratorRouteLegs.length > 0
     ? ticketOrchestratorRouteBadge
     : ticketPublicQuoteLegs.length > 1
       ? `${ticketPublicQuoteLegs.length}_VENUES`
+      : ticketLiveVenuePreviewLegs.length > 1
+        ? `${ticketLiveVenuePreviewLegs.length}_VENUES`
       : 'SINGLE_VENUE';
   const ticketHasEnteredAmount = Boolean(ticketAmountValue && ticketAmountValue > 0);
   const ticketShowExecutionPreviewCard = executionOrchestratorEnabled && ticketHasEnteredAmount && (
     Boolean(ticketOrchestratorOrder && ticketOrchestratorRouteLegs.length > 0) ||
-    Boolean(ticketLoginRequired && ticketPublicQuoteLegs.length > 0)
+    Boolean(ticketLoginRequired && (ticketPublicQuoteLegs.length > 0 || ticketLiveVenuePreviewLegs.length > 0))
   );
   const ticketPolymarketClobReadinessKey = ticketQuote?.quoteId
     ?? ticketExecutionId
@@ -6984,7 +7024,7 @@ const InfraTradingTerminalInner = ({
   const ticketAmountUnit = side === 'buy' ? '' : 'Shares';
   const ticketReceiveLabel = side === 'buy' ? 'To Win' : 'To Receive';
   const ticketReceiveText = side === 'buy'
-    ? formatUsdc(ticketEstimatedPayout)
+    ? formatSignedShares(ticketEstimatedPayout)
     : formatTradeUsdc(ticketReceiveEstimate);
   const ticketPrimaryButtonClass = ticketActionNeedsConfirmation && ticketConfirmArmed
     ? 'bg-amber-400 hover:bg-amber-300 text-black shadow-[0_0_15px_rgba(251,191,36,0.18)]'
@@ -8489,7 +8529,7 @@ const InfraTradingTerminalInner = ({
                   </div>
 
                   <div className="flex flex-col gap-2">
-                      {executionOrchestratorEnabled && ticketHasEnteredAmount && ticketLoginRequired && ticketPublicQuoteLoading && ticketPublicQuoteLegs.length === 0 && (
+                      {executionOrchestratorEnabled && ticketHasEnteredAmount && ticketLoginRequired && ticketPublicQuoteLoading && ticketPublicQuoteLegs.length === 0 && ticketLiveVenuePreviewLegs.length === 0 && (
                         <div className="rounded-lg border border-zinc-800 bg-[#0c0c0e] px-3 py-2 text-[11px] font-semibold text-zinc-400">
                           Loading quote preview...
                         </div>
