@@ -3163,6 +3163,7 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
   const activeTab: MarketChartTimeframe = 'ALL';
   const [venueChart, setVenueChart] = useState<MarketChartResponse | null>(null);
   const [outcomeCharts, setOutcomeCharts] = useState<OutcomeChartEntry[]>([]);
+  const [chartDataRequestKey, setChartDataRequestKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notFoundKey, setNotFoundKey] = useState<string | null>(null);
@@ -3219,14 +3220,17 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
     () => new Map(chartOutcomeInputs.map((outcome) => [outcome.key, outcome.latestValue])),
     [chartOutcomeInputs]
   );
+  const requestScopedVenueChart = chartDataRequestKey === requestKey ? venueChart : null;
+  const requestScopedOutcomeCharts = chartDataRequestKey === requestKey ? outcomeCharts : [];
+  const requestScopedError = chartDataRequestKey === requestKey ? error : null;
   const prefersOutcomeChart = marketType === 'multi'
     ? prefersPolymarketMultiHistory || chartOutcomeInputs.length > 0
     : prefersPolymarketBinaryHistory || chartOutcomeInputs.length > 0;
   const chartModel = useMemo(
     () => prefersOutcomeChart
-      ? toOutcomeChartModel(outcomeCharts, liveOutcomeValuesByKey, activeTab)
-      : toVenueChartModel(venueChart, activeTab, "venues"),
-    [activeTab, liveOutcomeValuesByKey, outcomeCharts, prefersOutcomeChart, venueChart]
+      ? toOutcomeChartModel(requestScopedOutcomeCharts, liveOutcomeValuesByKey, activeTab)
+      : toVenueChartModel(requestScopedVenueChart, activeTab, "venues"),
+    [activeTab, liveOutcomeValuesByKey, prefersOutcomeChart, requestScopedOutcomeCharts, requestScopedVenueChart]
   );
   const { rows, series, historyStatus } = chartModel;
   const chartSourceLabel = 'Lotus';
@@ -3289,6 +3293,7 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
         setVenueChart(null);
         setOutcomeCharts([]);
         setError(null);
+        setChartDataRequestKey(requestKey);
         return;
       }
       if (notFoundKey === requestKey) return;
@@ -3316,6 +3321,7 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
                 chart: chart.chart,
               }]);
               setNotFoundKey(null);
+              setChartDataRequestKey(requestKey);
               return;
             }
           } catch {
@@ -3384,6 +3390,7 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
                 setVenueChart(null);
                 setOutcomeCharts(fulfilled);
                 setNotFoundKey(null);
+                setChartDataRequestKey(requestKey);
                 return;
               }
             }
@@ -3415,6 +3422,7 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
           if (!cancelled) {
             setVenueChart(null);
             setOutcomeCharts(fulfilled);
+            setChartDataRequestKey(requestKey);
             if (fulfilled.length > 0) {
               setNotFoundKey(null);
             }
@@ -3434,11 +3442,13 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
           setOutcomeCharts([]);
           setVenueChart(response);
           setNotFoundKey(null);
+          setChartDataRequestKey(requestKey);
         }
       } catch (err) {
         if (!cancelled) {
           setVenueChart(null);
           setOutcomeCharts([]);
+          setChartDataRequestKey(requestKey);
           if (isApiNotFound(err, 'MARKET_NOT_FOUND')) {
             setNotFoundKey(requestKey);
           }
@@ -3530,12 +3540,12 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
             Loading live chart
           </div>
         )}
-        {error && rows.length === 0 && (
+        {requestScopedError && rows.length === 0 && (
           <div className="absolute inset-0 z-10 flex items-center justify-center px-6 text-center text-xs font-semibold text-amber-300">
-            {error}
+            {requestScopedError}
           </div>
         )}
-        {!loading && !error && rows.length === 0 && (
+        {!loading && !requestScopedError && rows.length === 0 && (
           <div className="absolute inset-0 z-10 flex items-center justify-center px-6 text-center text-xs font-semibold text-zinc-500">
             {chartSourceLabel} history is not available for this market yet.
           </div>
