@@ -541,7 +541,7 @@ const formatProbabilityPercent = (price: number | null | undefined): string => {
   return `${percent.toFixed(1)}%`;
 };
 
-const LIVE_PRICE_OUTLIER_DIFF_THRESHOLD = 0.45;
+const LIVE_PRICE_OUTLIER_DIFF_THRESHOLD = 0.12;
 const LIVE_PRICE_EXTREME_THRESHOLD = 0.95;
 const MULTI_OUTCOME_DOMINANT_PRICE_THRESHOLD = 0.5;
 const MULTI_OUTCOME_VISIBLE_PROBABILITY_SUM_LIMIT = 1.0;
@@ -2801,6 +2801,55 @@ const parsePolymarketOutcomePrices = (value: string | null | undefined): number[
   }
 };
 
+const hydrateRowsWithPolymarketEventPrices = async (input: {
+  rows: readonly TerminalOutcomeRow[];
+  eventSlug: string | null;
+  marketSlug: string | null;
+  marketType: 'binary' | 'multi';
+}): Promise<TerminalOutcomeRow[]> => {
+  if (input.marketType !== 'multi' || input.rows.length === 0 || (!input.eventSlug && !input.marketSlug)) {
+    return [...input.rows];
+  }
+
+  const parentPolymarketMarket = input.marketSlug
+    ? await getPolymarketMarketBySlug(input.marketSlug).catch(() => null)
+    : null;
+  const resolvedEventSlug = parentPolymarketMarket?.events?.find((event) => typeof event?.slug === 'string' && event.slug.trim())?.slug?.trim()
+    ?? input.eventSlug;
+  if (!resolvedEventSlug) return [...input.rows];
+
+  const polymarketEvent = await getPolymarketEventBySlug(resolvedEventSlug);
+  const priceByLabel = new Map<string, number>();
+  for (const market of polymarketEvent.markets) {
+    const label = market.groupItemTitle?.trim() || formatOutcomeChartLabel(market.question);
+    const normalizedLabel = normalizeOutcomeChartLabel(label);
+    const yesPrice = parsePolymarketOutcomePrices(market.outcomePrices)[0];
+    if (!normalizedLabel || typeof yesPrice !== 'number' || !Number.isFinite(yesPrice) || yesPrice <= 0 || yesPrice >= LIVE_PRICE_EXTREME_THRESHOLD) {
+      continue;
+    }
+    priceByLabel.set(normalizedLabel, yesPrice);
+  }
+  if (priceByLabel.size === 0) return [...input.rows];
+
+  return input.rows.map((row) => {
+    const price = priceByLabel.get(normalizeOutcomeChartLabel(row.name));
+    if (typeof price !== 'number') return row;
+    const yesPrice = formatProbabilityPrice(price);
+    const noPrice = formatProbabilityPrice(1 - price);
+    return {
+      ...row,
+      prob: formatProbabilityPercent(price),
+      yesPrice,
+      noPrice,
+      primaryVenue: row.primaryVenue ?? 'POLYMARKET',
+      venueQuotes: row.venueQuotes.length > 0
+        ? row.venueQuotes
+        : placeholderVenueQuotes(['POLYMARKET'], yesPrice, noPrice, null),
+      venues: row.venues.length > 0 ? row.venues : ['POLYMARKET'],
+    };
+  });
+};
+
 const toPolymarketOutcomeChartResponse = (
   marketId: string,
   outcomeId: string,
@@ -3815,6 +3864,14 @@ const InfraTradingTerminalInner = ({
   const terminalCanonicalEventId = selectedMarket?.canonicalEventId ?? selectedMarket?.eventId ?? null;
   const terminalEventId = selectedMarket?.eventId ?? terminalMarket.eventId ?? null;
   const selectedVenueMarkets = selectedMarket?.venueMarkets ?? EMPTY_VENUE_MARKETS;
+  const terminalPolymarketEventSlug = terminalMarket.venueMarkets?.find((market) => market.venue === 'POLYMARKET' && market.eventSlug)?.eventSlug
+    ?? terminalMarket.eventSlug
+    ?? selectedVenueMarkets.find((market) => market.venue === 'POLYMARKET' && market.eventSlug)?.eventSlug
+    ?? selectedMarket?.eventSlug
+    ?? null;
+  const terminalPolymarketMarketSlug = terminalMarket.venueMarkets?.find((market) => market.venue === 'POLYMARKET' && market.marketSlug)?.marketSlug
+    ?? selectedVenueMarkets.find((market) => market.venue === 'POLYMARKET' && market.marketSlug)?.marketSlug
+    ?? null;
   const resolutionRuleFallbacks = useMemo(
     () => catalogRuleFallbacks(selectedVenueMarkets),
     [selectedVenueMarkets]
@@ -4569,8 +4626,14 @@ const InfraTradingTerminalInner = ({
         };
       });
 
-      const stableFallbackRows = firstStableOutcomeRows(previousRows, fallbackRows, seedRows);
-      const seedDisplayRows = firstStableOutcomeRows(seedRows, stableFallbackRows);
+      const polymarketSeedRows = await hydrateRowsWithPolymarketEventPrices({
+        rows: seedRows,
+        eventSlug: terminalPolymarketEventSlug,
+        marketSlug: terminalPolymarketMarketSlug,
+        marketType: chartMarketType,
+      }).catch(() => seedRows);
+      const stableFallbackRows = firstStableOutcomeRows(previousRows, fallbackRows, polymarketSeedRows, seedRows);
+      const seedDisplayRows = firstStableOutcomeRows(polymarketSeedRows, stableFallbackRows, seedRows);
       setTerminalOutcomes(seedDisplayRows);
       const currentSelectedOutcomeId = selectedOutcomeIdRef.current;
       const nextSelectedOutcomeId = selectedOutcomeAutoFollowRef.current
@@ -4597,7 +4660,8 @@ const InfraTradingTerminalInner = ({
         });
         const livePriceByKey = new Map(livePriceResponse.prices.map((price) => [`${price.marketId}:${price.outcomeId ?? ''}`, price]));
 
-        const rows: TerminalOutcomeRow[] = seedRows.map((row) => {
+        const liveBaseRows = seedDisplayRows.length > 0 ? seedDisplayRows : seedRows;
+        const rows: TerminalOutcomeRow[] = liveBaseRows.map((row) => {
           const livePrice =
             livePriceByKey.get(`${row.marketId ?? terminalMarketId}:${row.quoteOutcomeId}`) ??
             resolveLivePriceForTerminalOutcome({
@@ -4671,7 +4735,18 @@ const InfraTradingTerminalInner = ({
     } finally {
       setOutcomesLoading(false);
     }
-  }, [hasCompoundEventOutcomes, marketVenueList, relatedEventMarkets, selectTerminalOutcome, terminalEventId, terminalMarket, terminalMarketId]);
+  }, [
+    chartMarketType,
+    hasCompoundEventOutcomes,
+    marketVenueList,
+    relatedEventMarkets,
+    selectTerminalOutcome,
+    terminalEventId,
+    terminalMarket,
+    terminalMarketId,
+    terminalPolymarketEventSlug,
+    terminalPolymarketMarketSlug,
+  ]);
 
   const refreshAllOutcomePrices = useCallback(async () => {
     if (terminalLivePriceRefreshInFlightRef.current) {
@@ -7560,14 +7635,8 @@ const InfraTradingTerminalInner = ({
                  outcomeId={selectedQuoteOutcomeId}
                  marketType={chartMarketType}
                  outcomes={quoteableTerminalOutcomes}
-                 polymarketEventSlug={terminalMarket.venueMarkets?.find((market) => market.venue === 'POLYMARKET' && market.eventSlug)?.eventSlug
-                   ?? terminalMarket.eventSlug
-                   ?? selectedMarket?.venueMarkets?.find((market) => market.venue === 'POLYMARKET' && market.eventSlug)?.eventSlug
-                   ?? selectedMarket?.eventSlug
-                   ?? null}
-                 polymarketMarketSlug={terminalMarket.venueMarkets?.find((market) => market.venue === 'POLYMARKET' && market.marketSlug)?.marketSlug
-                   ?? selectedMarket?.venueMarkets?.find((market) => market.venue === 'POLYMARKET' && market.marketSlug)?.marketSlug
-                   ?? null}
+                 polymarketEventSlug={terminalPolymarketEventSlug}
+                 polymarketMarketSlug={terminalPolymarketMarketSlug}
                />
             </div>
 
