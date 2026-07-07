@@ -4248,11 +4248,11 @@ const InfraTradingTerminalInner = ({
     }
     setExpandedOutcomeId(outcomeId);
     setBottomTab('Outcomes');
-    window.requestAnimationFrame(() => {
+    window.setTimeout(() => {
       React.startTransition(() => {
         selectTerminalOutcome(outcomeId, undefined, { manual: true });
       });
-    });
+    }, 75);
   }, [expandedOutcomeId, selectTerminalOutcome]);
 
   const inlineOrderbookLiveVenueCount = useMemo(() => {
