@@ -543,6 +543,7 @@ const formatProbabilityPercent = (price: number | null | undefined): string => {
 
 const LIVE_PRICE_OUTLIER_DIFF_THRESHOLD = 0.45;
 const LIVE_PRICE_EXTREME_THRESHOLD = 0.95;
+const LIVE_PRICE_VENUE_MAX_SPREAD = 0.25;
 
 const parseDisplayProbabilityValue = (value: string | number | null | undefined): number | null => {
   if (typeof value === 'number') {
@@ -576,11 +577,20 @@ const isConsistentWithVenueBreakdown = (
   if (!Number.isFinite(price) || price <= 0) return false;
   const normalizedPrice = price > 1 ? price / 100 : price;
   const venuePrices = (livePrice?.venueBreakdown ?? [])
+    .filter((venue) => {
+      const bid = parseDisplayProbabilityValue(venue.bestBid);
+      const ask = parseDisplayProbabilityValue(venue.bestAsk);
+      if (bid === null || ask === null) return true;
+      return ask >= bid && ask - bid <= LIVE_PRICE_VENUE_MAX_SPREAD;
+    })
     .map((venue) => parseDisplayProbabilityValue(venue.price))
     .filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0)
     .sort((left, right) => left - right);
   if (venuePrices.length === 0) return true;
-  const medianVenuePrice = venuePrices[Math.floor(venuePrices.length / 2)]!;
+  const middleIndex = Math.floor(venuePrices.length / 2);
+  const medianVenuePrice = venuePrices.length % 2 === 0
+    ? (venuePrices[middleIndex - 1]! + venuePrices[middleIndex]!) / 2
+    : venuePrices[middleIndex]!;
   const allowedDrift = Math.max(0.08, medianVenuePrice * 1.5);
   return Math.abs(normalizedPrice - medianVenuePrice) <= allowedDrift;
 };
