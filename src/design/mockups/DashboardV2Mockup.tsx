@@ -1141,7 +1141,7 @@ const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardM
   const marketClass = formatTitleCase(market.marketClass || 'Market');
   const category = formatTitleCase(market.category || 'Market');
   const catalogVolume24h = formatMoneyMetric(market.volume24h);
-  const catalogVolume = formatMoneyMetric(market.volume24h ?? market.volume);
+  const catalogVolume = formatMoneyMetric(market.volume);
   const catalogLiquidity = formatMoneyMetric(market.liquidity);
   const buyCount = parseMetricNumber(market.buyCount);
   const sellCount = parseMetricNumber(market.sellCount);
@@ -1219,8 +1219,8 @@ const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardM
     eventSlug: eventSlugFromTitle(normalizeEventTopicTitle(market)),
     category: `${category} - ${marketClass}`,
     icon: categoryIconFallback[market.category.toLowerCase()] ?? 'L',
-    volume: catalogVolume ?? catalogLiquidity ?? 'Backend catalog',
-    volumeLabel: catalogVolume ? 'Vol' : catalogLiquidity ? 'Liq' : 'Vol',
+    volume: catalogVolume ?? 'Backend catalog',
+    volumeLabel: 'Vol',
     venueCount: market.venueCount,
     routeType,
     venues,
@@ -1325,7 +1325,7 @@ const mapCatalogMarketsToDashboardRows = (markets: MarketCatalogMarket[]): Dashb
     const buyVolume = metricTotal((market) => market.buyVolume);
     const sellVolume = metricTotal((market) => market.sellVolume);
     const volume24h = formatMoneyMetric(String(metricTotal((market) => market.volume24h) ?? ''));
-    const volume = formatMoneyMetric(String(metricTotal((market) => market.volume24h ?? market.volume) ?? '')) ?? base.volume;
+    const volume = formatMoneyMetric(String(metricTotal((market) => market.volume) ?? '')) ?? base.volume;
     const liquidity = formatMoneyMetric(String(metricTotal((market) => market.liquidity) ?? ''));
     const resolutionTimestamp = group
       .map((market) => dateTimestamp(market.resolvesAt))
@@ -1349,8 +1349,8 @@ const mapCatalogMarketsToDashboardRows = (markets: MarketCatalogMarket[]): Dashb
       lastQuoteAt,
       outcomes,
       badges: venues,
-      volume: volume ?? liquidity ?? base.volume,
-      volumeLabel: volume ? 'Vol' : liquidity ? 'Liq' : base.volumeLabel,
+      volume,
+      volumeLabel: 'Vol',
       volume24h,
       liquidity,
       openInterest: null,
@@ -2014,6 +2014,29 @@ export const DashboardV2Mockup = ({
       livePriced,
     };
   }, [dashboardDiagnosticsEnabled, quotedMarketRows]);
+  const submitHeaderSearch = useCallback((event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const query = searchQuery.trim();
+    if (!query) return;
+
+    if (activePage === 'terminal') {
+      listEvents({ search: query, limit: 1 })
+        .then((response) => {
+          const nextEvent = response.events[0];
+          if (nextEvent) {
+            onNavigate?.('terminal', eventSlugFromTitle(nextEvent.title));
+            return;
+          }
+          onNavigate?.('markets');
+        })
+        .catch(() => onNavigate?.('markets'));
+      return;
+    }
+
+    if (activePage !== 'markets') {
+      onNavigate?.('markets');
+    }
+  }, [activePage, onNavigate, searchQuery]);
   const portfolioCashTotal = portfolioBalances.reduce((sum, balance) => {
     const parsed = Number(balance.availableAmount ?? balance.readyAmount ?? 0);
     return Number.isFinite(parsed) ? sum + parsed : sum;
@@ -2588,10 +2611,7 @@ export const DashboardV2Mockup = ({
     <div className={`${isDarkMode ? 'dark' : ''} h-full min-h-0 w-full`}>
       <div className="flex h-full min-h-0 w-full bg-[#F7F8FA] dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 font-sans overflow-hidden">
         {/* Sidebar */}
-      <aside className="w-12 bg-white dark:bg-zinc-900 border-r border-zinc-200 dark:border-zinc-800 flex flex-col items-center gap-6 z-50 shrink-0 pb-14 pt-4">
-        <div className="w-7 h-7 flex items-center justify-center">
-          <LotusLogo className="w-7 h-7 text-[#ccff00]" />
-        </div>
+      <aside className="w-12 bg-white dark:bg-zinc-900 border-r border-zinc-200 dark:border-zinc-800 flex flex-col items-center gap-6 z-50 shrink-0 pb-14 pt-5">
         <nav className="flex flex-col gap-5 w-full items-center">
           <NavItem icon={<Home className="w-4 h-4" />} active={activePage === 'home'} label="Home" onClick={() => onNavigate?.('home')} />
           <NavItem icon={<BarChart2 className="w-4 h-4" />} active={activePage === 'markets'} label="Markets" onClick={() => onNavigate?.('markets')} />
@@ -2608,18 +2628,18 @@ export const DashboardV2Mockup = ({
       <main className="min-w-0 flex-1 flex flex-col overflow-hidden">
         {/* Topbar */}
         <header className="h-14 bg-white dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between gap-3 px-3 sm:px-5 shrink-0">
-          <div className="flex min-w-0 items-center gap-4 w-full max-w-[min(24rem,calc(100vw-9rem))] sm:max-w-sm">
+          <form onSubmit={submitHeaderSearch} className="flex min-w-0 items-center gap-4 w-full max-w-[min(24rem,calc(100vw-9rem))] sm:max-w-sm">
             <div className="relative w-full">
               <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 dark:text-zinc-500" />
-              <input 
-                type="text" 
-                placeholder="Search markets, events, or venues..." 
+              <input
+                type="search"
+                placeholder="Search events..."
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
                 className="w-full bg-zinc-100/80 dark:bg-zinc-800/80 border border-transparent rounded-full pl-9 pr-4 py-1.5 text-xs focus:outline-none focus:bg-white dark:focus:bg-zinc-900 focus:border-zinc-300 dark:focus:border-zinc-700 focus:ring-4 focus:ring-zinc-100 dark:focus:ring-zinc-800 transition-all text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-500 dark:placeholder:text-zinc-400"
               />
             </div>
-          </div>
+          </form>
           <div className="flex shrink-0 items-center gap-3 pr-16 sm:pr-56 lg:pr-72">
             <div className="flex items-center gap-3">
               <div className="relative">

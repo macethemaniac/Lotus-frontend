@@ -36,11 +36,18 @@ const cryptoLogos: Record<string, string> = {
 
 const venueLogos: Record<string, string> = {
   limitless: '/assets/logos/venues/limitless.jpg',
+  limitless_exchange: '/assets/logos/venues/limitless.jpg',
+  'limitless exchange': '/assets/logos/venues/limitless.jpg',
   myriad: '/assets/logos/venues/myriad.jpg',
   opinion: '/assets/logos/venues/opinion.jpg',
+  opinion_market: '/assets/logos/venues/opinion.jpg',
+  'opinion market': '/assets/logos/venues/opinion.jpg',
   poly: '/assets/logos/venues/polymarket.png',
+  poly_market: '/assets/logos/venues/polymarket.png',
+  'poly market': '/assets/logos/venues/polymarket.png',
   polymarket: '/assets/logos/venues/polymarket.png',
   predict: '/assets/logos/venues/predict-fun.png',
+  predict_fun: '/assets/logos/venues/predict-fun.png',
   predictfun: '/assets/logos/venues/predict-fun.png',
   'predict fun': '/assets/logos/venues/predict-fun.png',
   'predict.fun': '/assets/logos/venues/predict-fun.png',

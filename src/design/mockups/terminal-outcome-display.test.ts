@@ -230,7 +230,7 @@ describe('shouldSyncSelectedOutcomeRowDisplay', () => {
     })).toBe(true);
   });
 
-  it('keeps the selected row quote synced even while a usable expanded orderbook is visible', () => {
+  it('preserves the live selected quote while a usable expanded orderbook is visible', () => {
     expect(shouldSyncSelectedOutcomeRowDisplay({
       current: {
         yesPrice: '35c',
@@ -244,7 +244,7 @@ describe('shouldSyncSelectedOutcomeRowDisplay', () => {
       },
       outcomeExpanded: true,
       orderbookUsable: true,
-    })).toBe(true);
+    })).toBe(false);
   });
 });
 

@@ -27,7 +27,6 @@ import {
 } from "@/features/auth/session-storage";
 import { TurnkeyAuthScreen } from "@/features/auth/components/turnkey-auth-screen";
 import { DashboardV2Mockup, type LotusAppPage } from "@/design/mockups/DashboardV2Mockup";
-import { DenseStripFooter } from "@/design/mockups/GlobalFooterVariations";
 import { getPortfolioSummary, type PortfolioSummary } from "@/features/trading/api/execution-api";
 import { getVenueBalances, mergeVenueBalanceSnapshots, type VenueBalance } from "@/features/funding/api/funding-api";
 import { listWallets, mergeUserWalletBalanceSnapshots, type UserWallet } from "@/features/wallets/api/wallet-api";
@@ -825,7 +824,6 @@ export function App() {
             session={session}
             onRequireLogin={() => setAuthModalOpen(true)}
           />
-          <DenseStripFooter fixed />
         </div>
         {!session && authModalOpen ? (
           <div

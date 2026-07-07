@@ -8,7 +8,6 @@ import {
 import { useTurnkey, type Wallet as TurnkeyWallet, type WalletAccount } from '@turnkey/react-wallet-kit';
 import { JsonRpcProvider, Transaction } from 'ethers';
 import { CryptoLogo, VenueLogo, resolveTopicAssetLogoId } from '@/components/icons/asset-logo';
-import { LotusLogo } from '@/components/icons/lotus-icons';
 import { FundingDeposit } from '@/design/mockups/FundingDeposit';
 import {
   isSelectedOutcomeBookReady,
@@ -73,6 +72,14 @@ import {
 } from '@/features/markets/api/market-api';
 import { hydrateCatalogMarketsWithAggregateVolumes } from '@/features/markets/catalog-volume';
 import {
+  normalizeStreamBlocker,
+  normalizeStreamResponseBlockers,
+  readableQuoteBlocker,
+  sameOrderbookStreamRenderMeta,
+  summarizeOrderbookStreamPayload,
+  type OrderbookStreamRenderMeta,
+} from './terminal-orderbook-stream';
+import {
   createExecutionQuote,
   getExecutionHistory,
   getExecutionOrderStatus,
@@ -111,12 +118,16 @@ import { openExecutionSocket, type ExecutionTopic, type ExecutionWsState } from 
 const ORDERBOOK_DISPLAY_REST_FALLBACK_DELAY_MS = 1_000;
 const ORDERBOOK_REST_RECOVERY_MIN_INTERVAL_MS = 45_000;
 const ORDERBOOK_STREAM_GAP_RECOVERY_DELAY_MS = 1_500;
+const ORDERBOOK_LEVEL_RENDER_DEPTH = env.lotusDeployEnv === 'production' ? 8 : 20;
+const ORDERBOOK_STREAM_RENDER_THROTTLE_MS = env.lotusDeployEnv === 'production' ? 320 : 80;
+const ORDERBOOK_SELECTED_DISPLAY_RENDER_THROTTLE_MS = env.lotusDeployEnv === 'production' ? 320 : 90;
 const SELECTED_OUTCOME_BOOK_STABILIZE_DELAY_MS = 250;
 const TERMINAL_CHART_REFRESH_INTERVAL_MS = 60_000;
 const TERMINAL_ACCOUNT_REFRESH_INTERVAL_MS = 30_000;
 const TERMINAL_ALL_OUTCOME_PRICE_REFRESH_INTERVAL_MS = 12_000;
 const TERMINAL_FULL_OUTCOME_REFRESH_INTERVAL_MS = 120_000;
 const TERMINAL_LIVE_PRICE_BATCH_SIZE = 80;
+const ORDERBOOK_STREAM_CHECKSUM_VALIDATION_ENABLED = env.lotusDeployEnv !== 'production';
 // Production Chrome profiles with multiple injected extensions have been
 // crashing the renderer on repeated full-page terminal polling. Keep the
 // selected market/orderbook path live, but disable the broader background loops.
@@ -742,27 +753,6 @@ const displayPercentLabel = (
   return `${(probability * 100).toFixed(fractionDigits)}%`;
 };
 
-const readableQuoteBlocker = (reason: string | null | undefined): string | null => {
-  if (!reason) return null;
-  if (isIsoTimestampLike(reason)) return null;
-  const normalized = reason.toUpperCase();
-  if (normalized.includes('LAST_GOOD_ORDERBOOK_USED')) return 'Using last good orderbook';
-  if (normalized.includes('LIVE_ORDERBOOK_REQUIRED')) return 'Live orderbook syncing';
-  if (normalized.includes('OPINION_TOKEN_ID_MISSING')) return 'Opinion token mapping missing';
-  if (normalized.includes('VENUE_OUTCOME_ID_MISSING')) return 'Outcome token mapping missing';
-  if (normalized.includes('QUOTE_PROVIDER_TIMEOUT')) return 'Provider timeout';
-  if (normalized.includes('QUOTE_PROVIDER_EMPTY_BOOK')) return 'No live depth';
-  if (normalized.includes('QUOTE_PROVIDER_BAD_PAYLOAD')) return 'Provider payload unavailable';
-  const http = normalized.match(/QUOTE_PROVIDER_HTTP_(\d{3})/);
-  if (http?.[1] === '429') return 'Venue quote provider rate limited';
-  if (http) return `Provider unavailable (${http[1]})`;
-  if (normalized.includes('QUOTE_READER_UNSUPPORTED')) return 'Venue quote reader unsupported';
-  if (normalized.includes('QUOTE_SNAPSHOT_STALE')) return 'Stale quote';
-  if (normalized.includes('QUOTE_SNAPSHOT')) return 'Quote snapshot syncing';
-  if (normalized.includes('QUOTE_READER_FAILED')) return 'Venue quote unavailable';
-  return reason.replace(/[_-]+/g, ' ').toLowerCase();
-};
-
 const COUNTRY_FLAG_EMOJI_BY_NAME: Record<string, string> = {
   argentina: '🇦🇷',
   belgium: '🇧🇪',
@@ -965,36 +955,6 @@ const normalizedOrderbookProbability = (value: string | number | null | undefine
   return parsed > 1 ? parsed / 100 : parsed;
 };
 
-const normalizeStreamBlocker = (blocker: unknown): string | null => {
-  if (typeof blocker === 'string') return readableQuoteBlocker(blocker) ?? blocker;
-  if (!blocker || typeof blocker !== 'object') return null;
-  const record = blocker as Record<string, unknown>;
-  const reason = [
-    record.reason,
-    record.message,
-    typeof record.detailsCode === 'string' && !isIsoTimestampLike(record.detailsCode) ? record.detailsCode : null,
-    record.code,
-  ].find((value) => typeof value === 'string');
-  return typeof reason === 'string' ? readableQuoteBlocker(reason) ?? reason : null;
-};
-
-const normalizeStreamResponseBlockers = (
-  payload: MarketOrderbookStreamPayload
-): MarketOrderbookResponse['blockers'] => (payload.blockers ?? [])
-  .reduce<MarketOrderbookResponse['blockers']>((items, blocker) => {
-    const reason = normalizeStreamBlocker(blocker);
-    if (!reason) return items;
-    const record = blocker && typeof blocker === 'object' ? blocker as Record<string, unknown> : {};
-    items.push({
-      venue: typeof record.venue === 'string' ? record.venue : payload.venue ?? 'UNKNOWN',
-      reason,
-      venueMarketId: typeof record.venueMarketId === 'string' ? record.venueMarketId : payload.venueMarketId ?? undefined,
-      venueOutcomeId: typeof record.venueOutcomeId === 'string' ? record.venueOutcomeId : payload.venueOutcomeId ?? undefined,
-      detailsCode: typeof record.detailsCode === 'string' ? record.detailsCode : undefined,
-    });
-    return items;
-  }, []);
-
 const streamPayloadMarketId = (payload: MarketOrderbookStreamPayload): string | null =>
   payload.canonicalMarketId ?? payload.marketId ?? null;
 
@@ -1015,7 +975,7 @@ const normalizeOrderbookInitialSnapshot = (
 ): MarketOrderbookResponse => {
   const marketId = streamPayloadMarketId(payload) ?? expectedMarketId;
   const outcomeId = streamPayloadOutcomeId(payload) ?? expectedOutcomeId;
-  const depth = typeof payload.depth === 'number' ? payload.depth : current?.depth ?? 20;
+  const depth = typeof payload.depth === 'number' ? payload.depth : current?.depth ?? ORDERBOOK_LEVEL_RENDER_DEPTH;
   return {
     marketId,
     outcomeId: outcomeId && outcomeId !== '_' ? outcomeId : null,
@@ -1224,7 +1184,7 @@ const orderbookStatusFromSnapshot = (
 const mergeOrderbookStreamUpdate = (
   current: MarketOrderbookResponse | null,
   payload: MarketOrderbookStreamPayload,
-  depth = 20
+  depth = ORDERBOOK_LEVEL_RENDER_DEPTH
 ): MarketOrderbookResponse => {
   const receivedAt = new Date().toISOString();
   const effectiveDepth = current?.depth ?? depth;
@@ -2975,15 +2935,7 @@ const toOutcomeChartModel = (
   return { rows, series, historyStatus };
 };
 
-const LiveCanonicalChart = ({
-  marketId,
-  outcomeId,
-  marketType,
-  onMarketTypeChange,
-  outcomes = EMPTY_TERMINAL_OUTCOMES,
-  polymarketEventSlug = null,
-  polymarketMarketSlug = null,
-}: {
+type LiveCanonicalChartProps = {
   marketId: string | null;
   outcomeId: string | null;
   marketType: 'binary' | 'multi';
@@ -2991,7 +2943,17 @@ const LiveCanonicalChart = ({
   outcomes?: TerminalOutcomeRow[];
   polymarketEventSlug?: string | null;
   polymarketMarketSlug?: string | null;
-}) => {
+};
+
+const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
+  marketId,
+  outcomeId,
+  marketType,
+  onMarketTypeChange,
+  outcomes = EMPTY_TERMINAL_OUTCOMES,
+  polymarketEventSlug = null,
+  polymarketMarketSlug = null,
+}: LiveCanonicalChartProps) {
   const activeTab: MarketChartTimeframe = 'ALL';
   const [venueChart, setVenueChart] = useState<MarketChartResponse | null>(null);
   const [outcomeCharts, setOutcomeCharts] = useState<OutcomeChartEntry[]>([]);
@@ -3460,7 +3422,7 @@ const LiveCanonicalChart = ({
       </div>
     </div>
   );
-};
+});
 
 const TurnkeyUnavailableState = ({ title, detail }: { title: string; detail: string }) => (
   <div className="flex min-h-[calc(100dvh-7rem)] items-center justify-center bg-[#070708] p-6 text-center">
@@ -3579,7 +3541,7 @@ const InfraTradingTerminalInner = ({
   const [orderbookNotFoundKey, setOrderbookNotFoundKey] = useState<string | null>(null);
   const [orderbookWsState, setOrderbookWsState] = useState<ExecutionWsState>('idle');
   const [orderbookStreamTopics, setOrderbookStreamTopics] = useState<ExecutionTopic[]>([]);
-  const [latestOrderbookStream, setLatestOrderbookStream] = useState<MarketOrderbookStreamPayload | null>(null);
+  const [latestOrderbookStream, setLatestOrderbookStream] = useState<OrderbookStreamRenderMeta | null>(null);
   const lastOrderbookWsUpdateAtRef = React.useRef<number | null>(null);
   const orderbookStreamSeqRef = React.useRef<Map<string, number>>(new Map());
   const orderbookRef = React.useRef<MarketOrderbookResponse | null>(null);
@@ -3588,6 +3550,13 @@ const InfraTradingTerminalInner = ({
   const orderbookRestRecoveryInFlightRef = React.useRef(false);
   const orderbookRestRecoveryTimerRef = React.useRef<number | null>(null);
   const orderbookRequestKeyRef = React.useRef<string | null>(null);
+  const orderbookRenderTimerRef = React.useRef<number | null>(null);
+  const pendingOrderbookRenderRef = React.useRef<{
+    orderbook: MarketOrderbookResponse;
+    latestStream: OrderbookStreamRenderMeta | null;
+  } | null>(null);
+  const selectedOutcomeDisplayRenderTimerRef = React.useRef<number | null>(null);
+  const pendingSelectedOutcomeDisplayValuesRef = React.useRef<TerminalOutcomeDisplayValues | null | undefined>(undefined);
   const terminalLivePriceRefreshInFlightRef = React.useRef(false);
   const terminalLivePriceRefreshQueuedRef = React.useRef(false);
   const missingRiskProfileKeysRef = React.useRef<Set<string>>(new Set());
@@ -3720,6 +3689,88 @@ const InfraTradingTerminalInner = ({
     terminalOutcomesRef.current = terminalOutcomes;
   }, [terminalOutcomes]);
 
+  const clearScheduledOrderbookRender = useCallback(() => {
+    if (orderbookRenderTimerRef.current !== null) {
+      window.clearTimeout(orderbookRenderTimerRef.current);
+      orderbookRenderTimerRef.current = null;
+    }
+    pendingOrderbookRenderRef.current = null;
+  }, []);
+
+  const clearScheduledSelectedOutcomeDisplayRender = useCallback(() => {
+    if (selectedOutcomeDisplayRenderTimerRef.current !== null) {
+      window.clearTimeout(selectedOutcomeDisplayRenderTimerRef.current);
+      selectedOutcomeDisplayRenderTimerRef.current = null;
+    }
+    pendingSelectedOutcomeDisplayValuesRef.current = undefined;
+  }, []);
+
+  const flushScheduledOrderbookRender = useCallback(() => {
+    if (orderbookRenderTimerRef.current !== null) {
+      window.clearTimeout(orderbookRenderTimerRef.current);
+      orderbookRenderTimerRef.current = null;
+    }
+    const pendingRender = pendingOrderbookRenderRef.current;
+    pendingOrderbookRenderRef.current = null;
+    if (!pendingRender) return;
+    React.startTransition(() => {
+      setLatestOrderbookStream((current) => (
+        sameOrderbookStreamRenderMeta(current, pendingRender.latestStream)
+          ? current
+          : pendingRender.latestStream
+      ));
+      setOrderbook(pendingRender.orderbook);
+      setOrderbookLoading(false);
+      setOrderbookError(null);
+    });
+  }, []);
+
+  const flushScheduledSelectedOutcomeDisplayRender = useCallback(() => {
+    if (selectedOutcomeDisplayRenderTimerRef.current !== null) {
+      window.clearTimeout(selectedOutcomeDisplayRenderTimerRef.current);
+      selectedOutcomeDisplayRenderTimerRef.current = null;
+    }
+    const nextDisplayValues = pendingSelectedOutcomeDisplayValuesRef.current;
+    pendingSelectedOutcomeDisplayValuesRef.current = undefined;
+    if (typeof nextDisplayValues === 'undefined') return;
+    React.startTransition(() => {
+      setSelectedOutcomeDisplayValues((current) => (
+        current?.yesPrice === nextDisplayValues?.yesPrice &&
+        current?.noPrice === nextDisplayValues?.noPrice &&
+        current?.probability === nextDisplayValues?.probability
+          ? current
+          : nextDisplayValues ?? null
+      ));
+    });
+  }, []);
+
+  const scheduleOrderbookRender = useCallback((
+    nextOrderbook: MarketOrderbookResponse,
+    nextStream: OrderbookStreamRenderMeta | null,
+  ) => {
+    pendingOrderbookRenderRef.current = {
+      orderbook: nextOrderbook,
+      latestStream: nextStream,
+    };
+    if (orderbookRenderTimerRef.current !== null) return;
+    orderbookRenderTimerRef.current = window.setTimeout(() => {
+      flushScheduledOrderbookRender();
+    }, ORDERBOOK_STREAM_RENDER_THROTTLE_MS);
+  }, [flushScheduledOrderbookRender]);
+
+  const scheduleSelectedOutcomeDisplayRender = useCallback((nextDisplayValues: TerminalOutcomeDisplayValues | null) => {
+    pendingSelectedOutcomeDisplayValuesRef.current = nextDisplayValues;
+    if (selectedOutcomeDisplayRenderTimerRef.current !== null) return;
+    selectedOutcomeDisplayRenderTimerRef.current = window.setTimeout(() => {
+      flushScheduledSelectedOutcomeDisplayRender();
+    }, ORDERBOOK_SELECTED_DISPLAY_RENDER_THROTTLE_MS);
+  }, [flushScheduledSelectedOutcomeDisplayRender]);
+
+  React.useEffect(() => () => {
+    clearScheduledOrderbookRender();
+    clearScheduledSelectedOutcomeDisplayRender();
+  }, [clearScheduledOrderbookRender, clearScheduledSelectedOutcomeDisplayRender]);
+
   React.useEffect(() => {
     setTicketPolymarketClobSyncConfirmed(false);
   }, [token]);
@@ -3825,7 +3876,7 @@ const InfraTradingTerminalInner = ({
   // Only warm the selected outcome orderbook while its detail row is expanded.
   // Keeping the live book active for a merely selected collapsed row makes the
   // outcome list flicker between the stable summary quote and live orderbook data.
-  const orderbookActive = Boolean(selectedOutcome && expandedOutcomeId === selectedOutcome.id);
+  const orderbookActive = bottomTab === 'Outcomes' && Boolean(selectedOutcome && expandedOutcomeId === selectedOutcome.id);
   const orderbookMarketId = orderbookActive ? selectedOutcomeMarketId ?? terminalMarketId : null;
   const orderbookSideLabel = marketType === 'binary'
     ? 'Yes'
@@ -3977,9 +4028,7 @@ const InfraTradingTerminalInner = ({
     : latestOrderbookStream?.snapshotStatus
       ?? (rawDisplayOrderbook?.status === 'stale' ? 'stale' : rawDisplayOrderbook?.status === 'unavailable' ? 'blocked' : rawDisplayOrderbook ? 'live' : undefined);
   const orderbookFreshness = streamFreshnessLabel(latestOrderbookStream?.freshnessMs);
-  const orderbookStreamBlockers = latestOrderbookStream?.blockers
-    ?.map(normalizeStreamBlocker)
-    .filter((blocker): blocker is string => Boolean(blocker)) ?? [];
+  const orderbookStreamBlockers = latestOrderbookStream?.blockers ?? [];
   const marketDiagnosticsEnabled = lotusMarketDiagnosticsEnabled();
   const orderbookWsLabel = orderbookWsState === 'open'
     ? marketDiagnosticsEnabled ? 'stream' : 'live feed'
@@ -4172,8 +4221,9 @@ const InfraTradingTerminalInner = ({
       if (selectedOutcomeRefreshKeyRef.current !== refreshKey) return;
       if (orderbook && selectedOutcomeRefreshKey && !selectedOutcomeRefreshKey.startsWith('none:')) {
         orderbookCacheRef.current.set(selectedOutcomeRefreshKey, orderbook);
-        if (selectedOutcomeRowDisplay) {
-          outcomeDisplayCacheRef.current.set(selectedOutcomeRefreshKey, selectedOutcomeRowDisplay);
+        const nextDisplayValues = selectedOutcomeDisplayValues ?? selectedOutcomeRowDisplay;
+        if (nextDisplayValues) {
+          outcomeDisplayCacheRef.current.set(selectedOutcomeRefreshKey, nextDisplayValues);
         }
       }
       setVisibleSelectedOutcomeOrderbook((current) => resolveVisibleSelectedOutcomeOrderbook({
@@ -4184,7 +4234,7 @@ const InfraTradingTerminalInner = ({
       }));
     }, SELECTED_OUTCOME_BOOK_STABILIZE_DELAY_MS);
     return () => window.clearTimeout(timeout);
-  }, [orderbook, selectedOutcomeBookReady, selectedOutcomeRefreshKey, selectedOutcomeRowDisplay]);
+  }, [orderbook, selectedOutcomeBookReady, selectedOutcomeDisplayValues, selectedOutcomeRefreshKey, selectedOutcomeRowDisplay]);
 
   const refreshOutcomes = useCallback(async () => {
     const fallbackRows = buildTerminalFallbackRows({
@@ -5686,6 +5736,8 @@ const InfraTradingTerminalInner = ({
     let cancelled = false;
     const requestKey = `${orderbookMarketId ?? 'none'}:${orderbookQuoteOutcomeId ?? 'none'}:${orderbookStreamMarketIdsKey}`;
     if (!orderbookMarketId) {
+      clearScheduledOrderbookRender();
+      clearScheduledSelectedOutcomeDisplayRender();
       orderbookRequestKeyRef.current = null;
       orderbookRef.current = null;
       orderbookChecksumValidationSeqRef.current += 1;
@@ -5696,6 +5748,8 @@ const InfraTradingTerminalInner = ({
       return;
     }
     if (orderbookNotFoundKey === requestKey) return;
+    clearScheduledOrderbookRender();
+    clearScheduledSelectedOutcomeDisplayRender();
     const selectionChanged = shouldResetOrderbookForRequestChange(orderbookRequestKeyRef.current, requestKey);
     orderbookRequestKeyRef.current = requestKey;
 
@@ -5709,12 +5763,13 @@ const InfraTradingTerminalInner = ({
       try {
         const response = await getMarketOrderbook(orderbookMarketId, {
           outcomeId: orderbookQuoteOutcomeId,
-          depth: 20,
+          depth: ORDERBOOK_LEVEL_RENDER_DEPTH,
           canonicalMarketIds: orderbookStreamMarketIds,
           ...(options.snapshotOnly ? { snapshotOnly: true } : {}),
         });
         const mergedResponse = mergeOrderbookSnapshots(orderbookRef.current, response);
         if (!cancelled) {
+          clearScheduledOrderbookRender();
           if (hasUsableOrderbookDepth(mergedResponse) || !options.snapshotOnly) {
             orderbookRef.current = mergedResponse;
           }
@@ -5781,7 +5836,7 @@ const InfraTradingTerminalInner = ({
       cancelled = true;
       window.clearTimeout(fallbackTimer);
     };
-  }, [orderbookMarketId, orderbookNotFoundKey, orderbookQuoteOutcomeId, orderbookStreamMarketIdsKey]);
+  }, [clearScheduledOrderbookRender, orderbookMarketId, orderbookNotFoundKey, orderbookQuoteOutcomeId, orderbookStreamMarketIdsKey]);
 
   React.useEffect(() => {
     if (!orderbookMarketId || orderbookStreamTopics.length === 0) {
@@ -5821,12 +5876,13 @@ const InfraTradingTerminalInner = ({
       try {
         const response = await getMarketOrderbook(expectedMarketId, {
           outcomeId: expectedOutcomeId,
-          depth: 20,
+          depth: ORDERBOOK_LEVEL_RENDER_DEPTH,
           canonicalMarketIds: orderbookStreamMarketIds,
         });
         if (!active) return;
         const mergedResponse = mergeOrderbookSnapshots(orderbookRef.current, response);
         orderbookRef.current = mergedResponse;
+        clearScheduledOrderbookRender();
         setOrderbook(mergedResponse);
         const nextTopics = mergeOrderbookStreamTopics(localTopics, normalizeOrderbookStreamTopics(response.stream?.topics));
         setOrderbookStreamTopics((current) => sameTopicList(current, nextTopics) ? current : nextTopics);
@@ -5852,9 +5908,9 @@ const InfraTradingTerminalInner = ({
       setLatestOrderbookStream((current) => current
         ? { ...current, snapshotStatus: 'resyncing' }
         : {
-            marketId: expectedMarketId,
-            outcomeId: expectedOutcomeId,
+            venue: null,
             snapshotStatus: 'resyncing',
+            freshnessMs: null,
             blockers: [],
           });
     };
@@ -5863,6 +5919,7 @@ const InfraTradingTerminalInner = ({
       nextOrderbook: MarketOrderbookResponse,
       payload: MarketOrderbookStreamPayload
     ) => {
+      if (!ORDERBOOK_STREAM_CHECKSUM_VALIDATION_ENABLED) return;
       const validationSeq = ++orderbookChecksumValidationSeqRef.current;
       void validateOrderbookStreamChecksum(nextOrderbook, payload, expectedMarketId, expectedOutcomeId)
         .then((valid) => {
@@ -5891,54 +5948,27 @@ const InfraTradingTerminalInner = ({
       return true;
     };
 
-    const applyStreamPriceToOutcomes = (payload: MarketOrderbookStreamPayload) => {
+    const nextSelectedOutcomeDisplayFromStream = (
+      payload: MarketOrderbookStreamPayload,
+    ): TerminalOutcomeDisplayValues | null => {
       const quotePrice = orderbookNumericValue(payload.bestAsk ?? payload.bestBid);
       const diagnosticsEnabled = lotusMarketDiagnosticsEnabled();
       const blocker = (payload.blockers ?? []).map(normalizeStreamBlocker).find(Boolean) ?? null;
-      if (quotePrice === null && (!blocker || !diagnosticsEnabled)) return;
-      const payloadVenue = payload.venue ?? null;
+      if (quotePrice === null && (!blocker || !diagnosticsEnabled)) return null;
       const effectiveOutcomeId = streamPayloadOutcomeId(payload) ?? expectedOutcomeId ?? (marketType === 'binary' ? 'YES' : null);
-      if (!effectiveOutcomeId && marketType !== 'binary') return;
-      const displayBlocker = diagnosticsEnabled ? blocker : null;
-      setTerminalOutcomes((current) => current.map((outcome) => {
-        const payloadMarketId = streamPayloadMarketId(payload);
-        if (payloadMarketId && !terminalOutcomeMatchesMarketAlias(outcome, payloadMarketId, expectedMarketId)) return outcome;
-        if (!payloadMarketId && outcome.marketId !== expectedMarketId) return outcome;
-        if (!streamOutcomeMatches(effectiveOutcomeId, outcome.quoteOutcomeId)) return outcome;
-        const yesPrice = quotePrice !== null ? formatProbabilityPrice(quotePrice) : '-';
-        const noPrice = quotePrice !== null && marketType === 'binary' ? formatProbabilityPrice(1 - quotePrice) : '-';
-        if (!payloadVenue) {
-          return {
-            ...outcome,
-            yesPrice: quotePrice !== null ? yesPrice : outcome.yesPrice,
-            noPrice: quotePrice !== null ? noPrice : outcome.noPrice,
-            status: quotePrice !== null ? 'live' : outcome.status,
-            blocker: displayBlocker ?? outcome.blocker,
-          };
-        }
-        const nextVenueQuote: TerminalVenueQuote = {
-          venue: payloadVenue,
-          yesPrice,
-          noPrice,
-          blocker: displayBlocker,
-        };
-        const venueQuotes = [
-          ...outcome.venueQuotes.filter((quote) => toBackendVenueId(quote.venue) !== toBackendVenueId(payloadVenue)),
-          nextVenueQuote,
-        ];
-        const primaryQuote = quotePrice !== null && (!outcome.primaryVenue || toBackendVenueId(outcome.primaryVenue) === toBackendVenueId(payloadVenue))
-          ? nextVenueQuote
-          : null;
-        return {
-          ...outcome,
-          yesPrice: primaryQuote?.yesPrice ?? outcome.yesPrice,
-          noPrice: primaryQuote?.noPrice ?? outcome.noPrice,
-          primaryVenue: outcome.primaryVenue ?? payloadVenue,
-          venueQuotes,
-          status: quotePrice !== null ? 'live' : outcome.status,
-          blocker: displayBlocker ?? outcome.blocker,
-        };
-      }));
+      if (!effectiveOutcomeId && marketType !== 'binary') return null;
+      if (quotePrice === null) return null;
+      const payloadMarketId = streamPayloadMarketId(payload);
+      const currentSelectedOutcome = selectedOutcomeRef.current;
+      if (!currentSelectedOutcome) return null;
+      if (payloadMarketId && !terminalOutcomeMatchesMarketAlias(currentSelectedOutcome, payloadMarketId, expectedMarketId)) return null;
+      if (!payloadMarketId && (currentSelectedOutcome.marketId ?? expectedMarketId) !== expectedMarketId) return null;
+      if (!streamOutcomeMatches(effectiveOutcomeId, currentSelectedOutcome.quoteOutcomeId)) return null;
+      return {
+        yesPrice: formatProbabilityPrice(quotePrice),
+        noPrice: marketType === 'binary' ? formatProbabilityPrice(1 - quotePrice) : '-',
+        probability: formatProbabilityPercent(quotePrice),
+      };
     };
 
     const subscribeAll = () => {
@@ -5994,27 +6024,25 @@ const InfraTradingTerminalInner = ({
                 ),
               );
               orderbookRef.current = nextOrderbook;
-              setOrderbook(nextOrderbook);
+              scheduleOrderbookRender(nextOrderbook, summarizeOrderbookStreamPayload(payload));
               validateStreamChecksumOrRecover(nextOrderbook, payload);
-              applyStreamPriceToOutcomes(payload);
-              setOrderbookLoading(false);
-              setOrderbookError(null);
+              const nextDisplayValues = nextSelectedOutcomeDisplayFromStream(payload);
+              if (nextDisplayValues) scheduleSelectedOutcomeDisplayRender(nextDisplayValues);
               return;
             }
             if (!payload.venue) return;
-            setLatestOrderbookStream(payload);
             const nextOrderbook = mergeOrderbookStreamUpdate(orderbookRef.current, payload);
             orderbookRef.current = nextOrderbook;
-            setOrderbook(nextOrderbook);
+            scheduleOrderbookRender(nextOrderbook, summarizeOrderbookStreamPayload(payload));
             validateStreamChecksumOrRecover(nextOrderbook, payload);
-            applyStreamPriceToOutcomes(payload);
-            setOrderbookLoading(false);
-            setOrderbookError(null);
+            const nextDisplayValues = nextSelectedOutcomeDisplayFromStream(payload);
+            if (nextDisplayValues) scheduleSelectedOutcomeDisplayRender(nextDisplayValues);
             return;
           }
 
           if (event.type === 'MARKET_QUOTE_UPDATE') {
-            applyStreamPriceToOutcomes(payload);
+            const nextDisplayValues = nextSelectedOutcomeDisplayFromStream(payload);
+            if (nextDisplayValues) scheduleSelectedOutcomeDisplayRender(nextDisplayValues);
           }
         },
       });
@@ -6028,6 +6056,8 @@ const InfraTradingTerminalInner = ({
 
     return () => {
       active = false;
+      clearScheduledOrderbookRender();
+      clearScheduledSelectedOutcomeDisplayRender();
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
       clearScheduledRestRecovery();
       if (client) {
@@ -6037,7 +6067,7 @@ const InfraTradingTerminalInner = ({
         client.socket.close();
       }
     };
-  }, [marketType, orderbookMarketId, orderbookQuoteOutcomeId, orderbookStreamMarketIdsKey, orderbookStreamTopicsKey]);
+  }, [clearScheduledOrderbookRender, clearScheduledSelectedOutcomeDisplayRender, marketType, orderbookMarketId, orderbookQuoteOutcomeId, orderbookStreamMarketIdsKey, orderbookStreamTopicsKey, scheduleOrderbookRender, scheduleSelectedOutcomeDisplayRender]);
 
   const refreshAccountData = useCallback(async () => {
     if (!token) {
@@ -6833,7 +6863,8 @@ const InfraTradingTerminalInner = ({
     : ticketPublicQuoteLegs.length > 1
       ? `${ticketPublicQuoteLegs.length}_VENUES`
       : 'SINGLE_VENUE';
-  const ticketShowExecutionPreviewCard = executionOrchestratorEnabled && (
+  const ticketHasEnteredAmount = Boolean(ticketAmountValue && ticketAmountValue > 0);
+  const ticketShowExecutionPreviewCard = executionOrchestratorEnabled && ticketHasEnteredAmount && (
     Boolean(ticketOrchestratorOrder && ticketOrchestratorRouteLegs.length > 0) ||
     Boolean(ticketLoginRequired && ticketPublicQuoteLegs.length > 0)
   );
@@ -6950,7 +6981,7 @@ const InfraTradingTerminalInner = ({
 
   const ticketBlockedRoutes = ticketLiveCandidates?.blocked ?? [];
   const ticketAmountLabel = side === 'buy' ? 'Amount' : 'Shares to Sell';
-  const ticketAmountUnit = side === 'buy' ? 'USDC' : 'Shares';
+  const ticketAmountUnit = side === 'buy' ? '' : 'Shares';
   const ticketReceiveLabel = side === 'buy' ? 'To Win' : 'To Receive';
   const ticketReceiveText = side === 'buy'
     ? formatUsdc(ticketEstimatedPayout)
@@ -6974,9 +7005,6 @@ const InfraTradingTerminalInner = ({
       
       {/* Focus Rail */}
       {!embedded && <div className="hidden w-16 bg-[#121214] border border-zinc-800 rounded-xl 2xl:flex flex-col items-center py-4 gap-6 shrink-0 z-10">
-          <div className="w-8 h-8 flex items-center justify-center">
-              <LotusLogo className="w-8 h-8 text-[#ccff00]" />
-          </div>
           <div className="w-10 h-10 rounded-xl bg-zinc-100 text-zinc-900 flex items-center justify-center cursor-pointer shadow-sm">
               <Home className="w-5 h-5"/>
           </div>
@@ -7016,12 +7044,7 @@ const InfraTradingTerminalInner = ({
             <div className="flex min-w-0 flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
             <div className="flex min-w-0 flex-1 flex-col gap-3">
                 <div className="relative z-30 w-full sm:w-auto">
-                    <button
-                      type="button"
-                      onClick={() => setShowMarketSelector((open) => !open)}
-                      aria-expanded={showMarketSelector}
-                      className="group flex w-full max-w-[38rem] items-center gap-3 rounded-lg px-1 py-1 text-left transition-colors hover:bg-zinc-900/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 focus-visible:ring-offset-2 focus-visible:ring-offset-[#09090b]"
-                    >
+                    <div className="flex w-full max-w-[38rem] items-center gap-3 rounded-lg px-1 py-1 text-left">
                       <TerminalMarketThumb
                         title={terminalMarket.title}
                         icon={terminalMarket.icon}
@@ -7037,10 +7060,9 @@ const InfraTradingTerminalInner = ({
                           {terminalVenueLabel}
                         </span>
                       </span>
-                      <ChevronDown className={`h-4 w-4 shrink-0 text-zinc-500 transition-transform group-hover:text-zinc-300 ${showMarketSelector ? 'rotate-180' : ''}`} />
-                    </button>
+                    </div>
 
-                    {showMarketSelector && (
+                    {/*
                       <div className="lotus-terminal-event-menu absolute left-0 top-full z-50 mt-3 w-[min(480px,calc(100vw-5rem))] overflow-hidden rounded-2xl border border-zinc-800 bg-[#0c0c0e] shadow-2xl shadow-black/40">
                         <div className="border-b border-zinc-800 p-4">
                           <div className="flex items-start justify-between gap-4">
@@ -7257,7 +7279,7 @@ const InfraTradingTerminalInner = ({
                           })}
                       </div>
                   </div>
-               )}
+               */}
                 </div>
             </div>
 
@@ -8451,7 +8473,7 @@ const InfraTradingTerminalInner = ({
                               setTicketError(null);
                             }}
                           />
-                          <div className="text-[10px] text-zinc-500 whitespace-nowrap">{ticketAmountUnit}</div>
+                          {ticketAmountUnit && <div className="text-[10px] text-zinc-500 whitespace-nowrap">{ticketAmountUnit}</div>}
                       </div>
                   </div>
 
@@ -8467,55 +8489,48 @@ const InfraTradingTerminalInner = ({
                   </div>
 
                   <div className="flex flex-col gap-2">
-                      {executionOrchestratorEnabled && ticketLoginRequired && ticketPublicQuoteLoading && ticketPublicQuoteLegs.length === 0 && (
+                      {executionOrchestratorEnabled && ticketHasEnteredAmount && ticketLoginRequired && ticketPublicQuoteLoading && ticketPublicQuoteLegs.length === 0 && (
                         <div className="rounded-lg border border-zinc-800 bg-[#0c0c0e] px-3 py-2 text-[11px] font-semibold text-zinc-400">
                           Loading quote preview...
                         </div>
                       )}
                       {ticketShowExecutionPreviewCard && (
-                        <div className="rounded-lg border border-emerald-500/20 bg-[#0c0c0e] p-2.5 shadow-[0_0_15px_rgba(16,185,129,0.05)]">
-                          <div className="flex items-center justify-between gap-3 border-b border-zinc-800/60 pb-1.5">
-                            <span className="h-px min-w-0 flex-1 bg-zinc-800/70" aria-hidden />
-                            <span className="rounded border border-emerald-500/20 bg-emerald-500/10 px-1.5 py-0.5 font-mono text-[8px] font-bold uppercase tracking-widest text-emerald-400">
-                              {ticketPreviewRouteBadge}
+                        <div className="rounded-2xl border border-white/10 bg-[linear-gradient(145deg,rgba(255,255,255,0.08),rgba(12,12,14,0.94)_42%,rgba(16,185,129,0.12))] p-3 shadow-[0_16px_44px_rgba(0,0,0,0.28)] backdrop-blur">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <div className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-300">Best route</div>
+                              <div className="mt-1 text-xs font-semibold text-zinc-300">Lotus splits this order after amount entry.</div>
+                            </div>
+                            <span className="rounded-full border border-white/10 bg-white/10 px-2 py-1 font-mono text-[9px] font-black uppercase tracking-widest text-white">
+                              {ticketPreviewRouteBadge.replace(/_/g, ' ')}
                             </span>
-                            <span className="h-px min-w-0 flex-1 bg-zinc-800/70" aria-hidden />
                           </div>
-                          <div className="mt-2 flex items-center gap-1 overflow-x-auto pb-1 font-mono text-[9px] custom-scrollbar">
+                          <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3 xl:grid-cols-1 2xl:grid-cols-3">
                             {ticketPreviewLegs.map((leg, index) => (
-                              <React.Fragment key={`${leg.venue}-${index}`}>
-                                {index > 0 && (
-                                  <div className="flex items-center justify-center text-zinc-600">
-                                    <ChevronRight className="h-3 w-3" aria-hidden />
-                                  </div>
-                                )}
-                                <div className="min-w-[120px] flex-1 rounded border border-zinc-800 bg-[#121214] p-1.5 text-center">
-                                  <div className="mx-auto mb-0.5 w-max font-sans text-[8px] font-bold uppercase tracking-wider text-zinc-500">
-                                    Leg {index + 1}
-                                  </div>
-                                  <div className="flex items-center justify-center gap-1 font-bold tracking-tighter text-emerald-400">
-                                    <VenueLogo id={normalizeVenueId(leg.venue)} label={formatVenueLabel(leg.venue)} className="h-3 w-3 rounded-full" />
-                                    {formatVenueLabel(leg.venue)}
-                                  </div>
-                                  <div className="mx-auto mt-1 w-max border-b border-dashed border-zinc-800 pb-0.5 text-[10px] text-zinc-300">
-                                    {formatProbabilityPrice(leg.price ?? ticketEffectivePrice)}
-                                  </div>
-                                  {leg.size && (
-                                    <div className="mt-1 text-[9px] text-zinc-500">
-                                      {(formatCompactMetric(leg.size) ?? leg.size)} shares
-                                    </div>
-                                  )}
+                              <div key={`${leg.venue}-${index}`} className="rounded-2xl border border-white/10 bg-black/25 p-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="rounded-full bg-zinc-950/70 px-2 py-0.5 font-mono text-[9px] font-black uppercase tracking-widest text-zinc-500">Leg {index + 1}</span>
+                                  <span className="font-mono text-[11px] font-black text-emerald-300">{formatProbabilityPrice(leg.price ?? ticketEffectivePrice)}</span>
                                 </div>
-                              </React.Fragment>
+                                <div className="mt-3 flex items-center gap-2">
+                                  <VenueLogo id={normalizeVenueId(leg.venue)} label={formatVenueLabel(leg.venue)} className="h-8 w-8 rounded-full shadow-[0_0_20px_rgba(204,255,0,0.12)]" />
+                                  <div className="min-w-0">
+                                    <div className="truncate text-sm font-black text-white">{formatVenueLabel(leg.venue)}</div>
+                                    <div className="mt-0.5 truncate text-[10px] font-semibold text-zinc-500">
+                                      {leg.size ? `${formatCompactMetric(leg.size) ?? leg.size} shares` : 'Route-ready'}
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
                             ))}
                           </div>
                           {ticketOrchestratorSavingsLine && (
-                            <div className="mt-1.5 rounded border border-[#ccff00]/20 bg-[#ccff00]/10 p-1.5 text-center">
-                              <div className="text-[10px] font-bold text-[#ccff00]">
-                                Estimated savings: {ticketOrchestratorSavingsLine}
+                            <div className="mt-3 rounded-2xl border border-[#ccff00]/25 bg-[#ccff00]/10 p-3 text-center shadow-[inset_0_1px_0_rgba(204,255,0,0.12)]">
+                              <div className="text-[12px] font-black text-[#ccff00]">
+                                You save {ticketOrchestratorSavingsLine}
                               </div>
                               {ticketOrchestratorPriceImprovementLine && (
-                                <div className="mt-0.5 text-[9px] font-semibold text-zinc-300">
+                                <div className="mt-1 text-[10px] font-semibold text-zinc-300">
                                   {ticketOrchestratorPriceImprovementLine}
                                 </div>
                               )}
