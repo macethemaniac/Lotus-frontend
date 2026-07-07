@@ -4891,10 +4891,12 @@ const InfraTradingTerminalInner = ({
     terminalMarketResetKeyRef.current = terminalMarketResetKey;
 
     const fallbackRows = seedTerminalOutcomeRows();
+    const shouldWaitForPolymarketSeed = chartMarketType === 'multi' && Boolean(terminalPolymarketEventSlug || terminalPolymarketMarketSlug);
+    const initialRows = shouldWaitForPolymarketSeed ? [] : fallbackRows;
     selectedOutcomeAutoFollowRef.current = true;
-    setTerminalOutcomes(fallbackRows);
-    const nextSelectedOutcomeId = defaultTerminalOutcomeId(fallbackRows) ?? resolveInitialSelectedOutcomeId(terminalMarket.initialOutcomeId, fallbackRows);
-    selectTerminalOutcome(nextSelectedOutcomeId, fallbackRows);
+    setTerminalOutcomes(initialRows);
+    const nextSelectedOutcomeId = defaultTerminalOutcomeId(initialRows) ?? resolveInitialSelectedOutcomeId(terminalMarket.initialOutcomeId, initialRows);
+    selectTerminalOutcome(nextSelectedOutcomeId, initialRows);
     setExpandedOutcomeId(null);
     setTicketOutcomeSide(terminalMarket.initialOutcomeSide ?? 'yes');
     setTicketAmount('');
@@ -4908,7 +4910,17 @@ const InfraTradingTerminalInner = ({
     setTicketOrchestratorAutoRenewFailed(false);
     setTicketStatusMessage(null);
     setTicketError(null);
-  }, [defaultTerminalOutcomeId, seedTerminalOutcomeRows, selectTerminalOutcome, terminalMarket.initialOutcomeId, terminalMarket.initialOutcomeSide, terminalMarketResetKey]);
+  }, [
+    chartMarketType,
+    defaultTerminalOutcomeId,
+    seedTerminalOutcomeRows,
+    selectTerminalOutcome,
+    terminalMarket.initialOutcomeId,
+    terminalMarket.initialOutcomeSide,
+    terminalMarketResetKey,
+    terminalPolymarketEventSlug,
+    terminalPolymarketMarketSlug,
+  ]);
 
   const selectTicketOutcome = useCallback((nextSide: TicketOutcomeSide, fallbackOutcomeId?: string | null) => {
     setTicketOutcomeSide(nextSide);
