@@ -3340,15 +3340,18 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
                 const matchedOutcome = chartOutcomeInputs.find((outcome) =>
                   normalizeOutcomeChartLabel(outcome.label) === normalizeOutcomeChartLabel(label)
                 );
+                if (!matchedOutcome || typeof matchedOutcome.latestValue !== 'number' || !Number.isFinite(matchedOutcome.latestValue)) {
+                  return [];
+                }
                 return [{
                   id: `${market.slug}:${label}`,
                   marketId: market.slug,
                   quoteOutcomeId: 'YES',
-                  label: matchedOutcome?.label ?? label,
-                  key: matchedOutcome?.key ?? normalizeChartKey('polymarket', market.slug || `${label}_${index}`),
+                  label: matchedOutcome.label,
+                  key: matchedOutcome.key,
                   color: OUTCOME_CHART_COLORS[index % OUTCOME_CHART_COLORS.length]!,
                   tokenId: tokenIds[0]!,
-                  latestValue: matchedOutcome?.latestValue ?? null,
+                  latestValue: matchedOutcome.latestValue,
                 }];
               })
               .sort((left, right) => (right.latestValue ?? 0) - (left.latestValue ?? 0))
