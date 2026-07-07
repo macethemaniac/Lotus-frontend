@@ -544,8 +544,9 @@ const formatProbabilityPercent = (price: number | null | undefined): string => {
 const LIVE_PRICE_OUTLIER_DIFF_THRESHOLD = 0.45;
 const LIVE_PRICE_EXTREME_THRESHOLD = 0.95;
 const MULTI_OUTCOME_DOMINANT_PRICE_THRESHOLD = 0.5;
-const MULTI_OUTCOME_VISIBLE_PROBABILITY_SUM_LIMIT = 1.1;
+const MULTI_OUTCOME_VISIBLE_PROBABILITY_SUM_LIMIT = 1.0;
 const MULTI_OUTCOME_VISIBLE_PROBABILITY_SAMPLE_SIZE = 5;
+const MULTI_OUTCOME_TRANSIENT_HIGH_PRICE_THRESHOLD = 0.45;
 const LIVE_PRICE_VENUE_MAX_SPREAD = 0.25;
 
 const parseDisplayProbabilityValue = (value: string | number | null | undefined): number | null => {
@@ -1527,6 +1528,36 @@ const firstStableOutcomeRows = (
     if (rows?.length && !hasResolvedOutcomeProbabilitySet(rows)) return [...rows];
   }
   return [];
+};
+
+const sanitizedLiveOutcomeRows = (rows: readonly TerminalOutcomeRow[]): TerminalOutcomeRow[] => {
+  if (rows.length <= 2) return hasResolvedOutcomeProbabilitySet(rows) ? [...rows] : [];
+  const withoutTransientHighs = rows.filter((row) => {
+    const probability = outcomeProbabilityValue(row);
+    return probability === null || probability < MULTI_OUTCOME_TRANSIENT_HIGH_PRICE_THRESHOLD;
+  });
+  if (hasResolvedOutcomeProbabilitySet(withoutTransientHighs) && isSaneMultiOutcomeProbabilitySet(withoutTransientHighs)) {
+    return [...withoutTransientHighs];
+  }
+
+  const candidates = [...withoutTransientHighs];
+  while (candidates.length > 3 && !isSaneMultiOutcomeProbabilitySet(candidates)) {
+    let highestIndex = -1;
+    let highestProbability = Number.NEGATIVE_INFINITY;
+    candidates.forEach((row, index) => {
+      const probability = outcomeProbabilityValue(row);
+      if (probability !== null && probability > highestProbability) {
+        highestProbability = probability;
+        highestIndex = index;
+      }
+    });
+    if (highestIndex < 0) break;
+    candidates.splice(highestIndex, 1);
+  }
+
+  return hasResolvedOutcomeProbabilitySet(candidates) && isSaneMultiOutcomeProbabilitySet(candidates)
+    ? candidates
+    : [];
 };
 
 const isDisplayableMultiOutcomeRow = (outcome: TerminalOutcomeRow, outcomeCount: number): boolean => {
@@ -4611,9 +4642,9 @@ const InfraTradingTerminalInner = ({
           };
         });
 
-        const saneRows = isSaneMultiOutcomeProbabilitySet(rows);
-        const nextRows = saneRows && hasResolvedOutcomeProbabilitySet(rows)
-          ? rows
+        const sanitizedRows = sanitizedLiveOutcomeRows(rows);
+        const nextRows = sanitizedRows.length > 0
+          ? sanitizedRows
           : stableFallbackRows;
         setTerminalOutcomes(nextRows);
         if (selectedOutcomeAutoFollowRef.current) {
@@ -4745,8 +4776,8 @@ const InfraTradingTerminalInner = ({
             return nextOutcome;
           });
             if (!changed) return current;
-            if (!isSaneMultiOutcomeProbabilitySet(nextOutcomes)) return current;
-            return nextOutcomes;
+            const sanitizedOutcomes = sanitizedLiveOutcomeRows(nextOutcomes);
+            return sanitizedOutcomes.length > 0 ? sanitizedOutcomes : current;
           });
         } catch {
           // Keep websocket/orderbook prices and last-good rows visible; the next active-market refresh will retry.
