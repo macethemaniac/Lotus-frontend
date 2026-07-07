@@ -621,14 +621,14 @@ const formatProbabilityPrice = (price: number | null | undefined): string => {
   if (typeof price !== 'number' || !Number.isFinite(price) || price <= 0) return 'Quote';
   const cents = price <= 1 ? price * 100 : price;
   if (cents < 1) return '<1¢';
-  return `${cents >= 10 ? cents.toFixed(0) : cents.toFixed(1)}¢`;
+  return `${cents.toFixed(1)}¢`;
 };
 
 const formatProbabilityPercent = (price: number | null | undefined): string => {
   if (typeof price !== 'number' || !Number.isFinite(price) || price <= 0) return 'Quote';
   const percent = price <= 1 ? price * 100 : price;
   if (percent < 1) return '<1%';
-  return `${percent >= 10 ? percent.toFixed(0) : percent.toFixed(1)}%`;
+  return `${percent.toFixed(1)}%`;
 };
 
 const parseDisplayProbabilityValue = (value: string | number | null | undefined): number | null => {

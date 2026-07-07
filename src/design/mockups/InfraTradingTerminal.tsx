@@ -531,14 +531,14 @@ const formatProbabilityPrice = (price: number | null | undefined): string => {
   if (typeof price !== 'number' || !Number.isFinite(price) || price <= 0) return 'Quote';
   const cents = price <= 1 ? price * 100 : price;
   if (cents < 1) return '<1¢';
-  return `${cents >= 10 ? cents.toFixed(0) : cents.toFixed(1)}¢`;
+  return `${cents.toFixed(1)}¢`;
 };
 
 const formatProbabilityPercent = (price: number | null | undefined): string => {
   if (typeof price !== 'number' || !Number.isFinite(price) || price <= 0) return 'Quote';
   const percent = price <= 1 ? price * 100 : price;
   if (percent < 1) return '<1%';
-  return `${percent >= 10 ? percent.toFixed(0) : percent.toFixed(1)}%`;
+  return `${percent.toFixed(1)}%`;
 };
 
 const LIVE_PRICE_OUTLIER_DIFF_THRESHOLD = 0.45;
@@ -789,12 +789,17 @@ const inverseOutcomePriceLabel = (label: string | null | undefined): string => {
   if (!Number.isFinite(parsed) || parsed <= 0 || parsed >= 100) return 'Quote';
   const suffix = /%/.test(label) ? '%' : 'c';
   const inverse = 100 - parsed;
-  return `${inverse >= 10 ? inverse.toFixed(0) : inverse.toFixed(1)}${suffix}`;
+  return `${inverse.toFixed(1)}${suffix}`;
 };
 
 const displayPriceLabel = (label: string | null | undefined, diagnosticsEnabled = lotusMarketDiagnosticsEnabled()): string => {
   const normalized = typeof label === 'string' ? label.trim() : '';
   if (!normalized || normalized === 'Quote' || normalized === 'Unavailable') return diagnosticsEnabled ? 'Quote' : '-';
+  const probability = parseProbabilityLabel(normalized);
+  if (probability !== null) {
+    if (/%/.test(normalized)) return formatProbabilityPercent(probability);
+    if (/[%c¢]/i.test(normalized) || normalized.includes('Â')) return formatProbabilityPrice(probability);
+  }
   return normalized;
 };
 
