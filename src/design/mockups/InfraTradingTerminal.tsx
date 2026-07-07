@@ -4174,6 +4174,12 @@ const InfraTradingTerminalInner = ({
     }
     setSelectedOutcomeId(outcomeId);
   }, [cacheKeyForOutcome, latchSelectedOutcomeDisplayFallback]);
+  React.useEffect(() => {
+    if (!selectedOutcomeAutoFollowRef.current) return;
+    const nextSelectedOutcomeId = quoteableTerminalOutcomes[0]?.id ?? null;
+    if (!nextSelectedOutcomeId || nextSelectedOutcomeId === selectedOutcomeIdRef.current) return;
+    selectTerminalOutcome(nextSelectedOutcomeId, quoteableTerminalOutcomes);
+  }, [quoteableTerminalOutcomes, selectTerminalOutcome]);
   const selectedTicketUsesLatchedOutcomeDisplay = selectedTicketOutcome?.id === selectedOutcome?.id;
   const selectedTicketYesPrice = selectedTicketUsesLatchedOutcomeDisplay
     ? selectedOutcomeDisplayValues?.yesPrice ?? selectedTicketOutcome?.yesPrice ?? null
