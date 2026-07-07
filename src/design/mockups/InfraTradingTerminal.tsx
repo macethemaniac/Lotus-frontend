@@ -4634,15 +4634,17 @@ const InfraTradingTerminalInner = ({
       }).catch(() => seedRows);
       const stableFallbackRows = firstStableOutcomeRows(previousRows, fallbackRows, polymarketSeedRows, seedRows);
       const seedDisplayRows = firstStableOutcomeRows(polymarketSeedRows, stableFallbackRows, seedRows);
-      setTerminalOutcomes(seedDisplayRows);
+      const shouldDeferSeedPriceDisplay = chartMarketType === 'multi' && Boolean(terminalPolymarketEventSlug || terminalPolymarketMarketSlug);
+      const immediateDisplayRows = shouldDeferSeedPriceDisplay ? seedRows : seedDisplayRows;
+      setTerminalOutcomes(immediateDisplayRows);
       const currentSelectedOutcomeId = selectedOutcomeIdRef.current;
       const nextSelectedOutcomeId = selectedOutcomeAutoFollowRef.current
-        ? defaultTerminalOutcomeId(seedDisplayRows) ?? resolveInitialSelectedOutcomeId(terminalMarket.initialOutcomeId, seedDisplayRows)
-        : currentSelectedOutcomeId && seedDisplayRows.some((row) => row.id === currentSelectedOutcomeId)
+        ? defaultTerminalOutcomeId(immediateDisplayRows) ?? resolveInitialSelectedOutcomeId(terminalMarket.initialOutcomeId, immediateDisplayRows)
+        : currentSelectedOutcomeId && immediateDisplayRows.some((row) => row.id === currentSelectedOutcomeId)
           ? currentSelectedOutcomeId
-          : defaultTerminalOutcomeId(seedDisplayRows) ?? resolveInitialSelectedOutcomeId(terminalMarket.initialOutcomeId, seedDisplayRows);
+          : defaultTerminalOutcomeId(immediateDisplayRows) ?? resolveInitialSelectedOutcomeId(terminalMarket.initialOutcomeId, immediateDisplayRows);
       if (nextSelectedOutcomeId !== currentSelectedOutcomeId) {
-        selectTerminalOutcome(nextSelectedOutcomeId, seedDisplayRows);
+        selectTerminalOutcome(nextSelectedOutcomeId, immediateDisplayRows);
       }
 
       try {
