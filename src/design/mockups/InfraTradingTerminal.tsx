@@ -3205,14 +3205,27 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
     () => new Map(chartOutcomeInputs.map((outcome) => [outcome.key, outcome.latestValue])),
     [chartOutcomeInputs]
   );
+  const hasLiveOutcomeValues = useMemo(
+    () => chartOutcomeInputs.some((outcome) => typeof outcome.latestValue === 'number' && Number.isFinite(outcome.latestValue)),
+    [chartOutcomeInputs],
+  );
   const prefersOutcomeChart = marketType === 'multi'
     ? prefersPolymarketMultiHistory || chartOutcomeInputs.length > 0
     : prefersPolymarketBinaryHistory || chartOutcomeInputs.length > 0;
+  const shouldSuppressOutcomeHistoryUntilLive =
+    marketType === 'multi'
+    && prefersPolymarketMultiHistory
+    && !hasLiveOutcomeValues;
   const chartModel = useMemo(
-    () => prefersOutcomeChart
-      ? toOutcomeChartModel(outcomeCharts, liveOutcomeValuesByKey, activeTab)
-      : toVenueChartModel(venueChart, activeTab, "venues"),
-    [activeTab, liveOutcomeValuesByKey, outcomeCharts, prefersOutcomeChart, venueChart]
+    () => {
+      if (shouldSuppressOutcomeHistoryUntilLive) {
+        return { rows: [], series: [], historyStatus: 'accumulating' as MarketChartResponse["historyStatus"] };
+      }
+      return prefersOutcomeChart
+        ? toOutcomeChartModel(outcomeCharts, liveOutcomeValuesByKey, activeTab)
+        : toVenueChartModel(venueChart, activeTab, "venues");
+    },
+    [activeTab, liveOutcomeValuesByKey, outcomeCharts, prefersOutcomeChart, shouldSuppressOutcomeHistoryUntilLive, venueChart]
   );
   const { rows, series, historyStatus } = chartModel;
   const chartSourceLabel = 'Lotus';
@@ -3335,10 +3348,10 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
                   key: matchedOutcome?.key ?? normalizeChartKey('polymarket', market.slug || `${label}_${index}`),
                   color: OUTCOME_CHART_COLORS[index % OUTCOME_CHART_COLORS.length]!,
                   tokenId: tokenIds[0]!,
-                  latestValue: matchedOutcome?.latestValue ?? yesPrice * 100,
+                  latestValue: matchedOutcome?.latestValue ?? null,
                 }];
               })
-              .sort((left, right) => right.latestValue - left.latestValue)
+              .sort((left, right) => (right.latestValue ?? 0) - (left.latestValue ?? 0))
               .slice(0, MULTI_OUTCOME_CHART_LIMIT);
             if (topPolymarketMarkets.length > 0) {
               const historyConfig = polymarketPriceHistoryConfig(activeTab);
