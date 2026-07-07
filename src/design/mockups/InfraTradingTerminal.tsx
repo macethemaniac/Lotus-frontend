@@ -4588,23 +4588,23 @@ const InfraTradingTerminalInner = ({
 
     const fallbackRows = seedTerminalOutcomeRows();
     setTerminalOutcomes(fallbackRows);
-    const nextSelectedOutcomeId = resolveInitialSelectedOutcomeId(terminalMarket.initialOutcomeId, fallbackRows);
-    selectTerminalOutcome(nextSelectedOutcomeId, fallbackRows);
     if (marketChanged) {
+      const nextSelectedOutcomeId = resolveInitialSelectedOutcomeId(terminalMarket.initialOutcomeId, fallbackRows);
+      selectTerminalOutcome(nextSelectedOutcomeId, fallbackRows);
       setExpandedOutcomeId(null);
+      setTicketOutcomeSide(terminalMarket.initialOutcomeSide ?? 'yes');
+      setTicketAmount('');
+      setTicketLiveCandidates(null);
+      setTicketQuote(null);
+      setTicketQuoteAmount(null);
+      setTicketExecutionId(null);
+      setTicketSignatureBundle(null);
+      setTicketOrchestratorOrder(null);
+      setTicketOrchestratorAmount(null);
+      setTicketOrchestratorAutoRenewFailed(false);
+      setTicketStatusMessage(null);
+      setTicketError(null);
     }
-    setTicketOutcomeSide(terminalMarket.initialOutcomeSide ?? 'yes');
-    setTicketAmount('');
-    setTicketLiveCandidates(null);
-    setTicketQuote(null);
-    setTicketQuoteAmount(null);
-    setTicketExecutionId(null);
-    setTicketSignatureBundle(null);
-    setTicketOrchestratorOrder(null);
-    setTicketOrchestratorAmount(null);
-    setTicketOrchestratorAutoRenewFailed(false);
-    setTicketStatusMessage(null);
-    setTicketError(null);
   }, [seedTerminalOutcomeRows, selectTerminalOutcome, terminalMarket.initialOutcomeId, terminalMarket.initialOutcomeSide, terminalMarketResetKey]);
 
   const selectTicketOutcome = useCallback((nextSide: TicketOutcomeSide, fallbackOutcomeId?: string | null) => {
