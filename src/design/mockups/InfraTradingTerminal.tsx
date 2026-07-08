@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import {
   AlertTriangle, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, History, Lock, ShieldAlert, ShieldCheck, Info,
   Clock, BarChart2, Layers, Bookmark, Search, Maximize2, Activity, Zap, Ghost,
-  Home, Terminal, PieChart, Volleyball, Settings
+  Terminal, PieChart, Volleyball, Settings
 } from 'lucide-react';
 import { useTurnkey, type Wallet as TurnkeyWallet, type WalletAccount } from '@turnkey/react-wallet-kit';
 import { JsonRpcProvider, Transaction } from 'ethers';
@@ -1633,11 +1633,11 @@ const placeholderVenueQuotes = (venues: string[], yesPrice = 'Quote', noPrice = 
   venues.map((venue) => ({ venue, yesPrice, noPrice, blocker }));
 
 const venueQuotesFromBreakdown = (
-  breakdown: Array<{ venue: string; price: string | null; status: string }>,
+  breakdown: Array<{ venue: string; price: string | null; bestAsk?: string | null; status: string }>,
   marketType: 'binary' | 'multi' | undefined,
 ): TerminalVenueQuote[] =>
-  breakdown.map(({ venue, price }) => {
-    const parsed = orderbookNumericValue(price);
+  breakdown.map(({ venue, price, bestAsk }) => {
+    const parsed = orderbookNumericValue(bestAsk) ?? orderbookNumericValue(price);
     return {
       venue,
       yesPrice: parsed !== null ? formatProbabilityPrice(parsed) : '-',
@@ -4218,14 +4218,15 @@ const InfraTradingTerminalInner = ({
     [displayOrderbook],
   );
   const selectedOutcomeOrderbookDisplayValues = useMemo<TerminalOutcomeDisplayValues | null>(() => {
-    const bestAsk = normalizedOrderbookProbability(displayOrderbook?.bestAsk);
+    const topAsk = normalizedOrderbookProbability(displayOrderbook?.asks[0]?.price);
+    const bestAsk = topAsk ?? normalizedOrderbookProbability(displayOrderbook?.bestAsk);
     if (bestAsk === null) return null;
     return {
       yesPrice: formatProbabilityPrice(bestAsk),
       noPrice: terminalMarket.marketType === 'binary' ? formatProbabilityPrice(1 - bestAsk) : '-',
       probability: formatProbabilityPercent(bestAsk),
     };
-  }, [displayOrderbook?.bestAsk, terminalMarket.marketType]);
+  }, [displayOrderbook?.asks, displayOrderbook?.bestAsk, terminalMarket.marketType]);
   const selectedOutcomeVisibleVenues = useMemo(() => {
     const venues = new Map<string, string>();
     const addVenue = (value: string | null | undefined) => {
@@ -7363,9 +7364,6 @@ const InfraTradingTerminalInner = ({
       
       {/* Focus Rail */}
       {!embedded && <div className="hidden w-16 bg-[#121214] border border-zinc-800 rounded-xl 2xl:flex flex-col items-center py-4 gap-6 shrink-0 z-10">
-          <div className="w-10 h-10 rounded-xl bg-zinc-100 text-zinc-900 flex items-center justify-center cursor-pointer shadow-sm">
-              <Home className="w-5 h-5"/>
-          </div>
           <div className="w-10 h-10 rounded-xl flex items-center justify-center text-zinc-500 hover:text-white hover:bg-zinc-800/80 cursor-pointer transition-colors">
               <Search className="w-5 h-5"/>
           </div>
@@ -7854,20 +7852,35 @@ const InfraTradingTerminalInner = ({
                            const primaryVenue = isExpandedOutcome && rowVenueList.length > 0
                              ? rowVenueList[0]!
                              : m.primaryVenue ?? venues[0] ?? 'lotus';
+                           const expandedTopAskPrice = isExpandedOutcome
+                             ? orderbookNumericValue(displayOrderbook?.asks[0]?.price)
+                             : null;
+                           const expandedTopAskYesPrice = expandedTopAskPrice !== null
+                             ? formatProbabilityPrice(expandedTopAskPrice)
+                             : null;
+                           const expandedTopAskNoPrice = expandedTopAskPrice !== null && terminalMarket.marketType === 'binary'
+                             ? formatProbabilityPrice(1 - expandedTopAskPrice)
+                             : null;
+                           const expandedTopAskProbability = expandedTopAskPrice !== null
+                             ? formatProbabilityPercent(expandedTopAskPrice)
+                             : null;
                            const rowYesPrice = isExpandedOutcome
-                             ? normalizeTerminalDisplayValue(selectedOutcomeOrderbookDisplayValues?.yesPrice)
+                             ? normalizeTerminalDisplayValue(expandedTopAskYesPrice)
+                               ?? normalizeTerminalDisplayValue(selectedOutcomeOrderbookDisplayValues?.yesPrice)
                                ?? normalizeTerminalDisplayValue(selectedOutcomeDisplayValues?.yesPrice)
                                ?? normalizeTerminalDisplayValue(m.yesPrice)
                                ?? m.yesPrice
                              : m.yesPrice;
                            const rowNoPrice = isExpandedOutcome
-                             ? normalizeTerminalDisplayValue(selectedOutcomeOrderbookDisplayValues?.noPrice)
+                             ? normalizeTerminalDisplayValue(expandedTopAskNoPrice)
+                               ?? normalizeTerminalDisplayValue(selectedOutcomeOrderbookDisplayValues?.noPrice)
                                ?? normalizeTerminalDisplayValue(selectedOutcomeDisplayValues?.noPrice)
                                ?? normalizeTerminalDisplayValue(m.noPrice)
                                ?? m.noPrice
                              : m.noPrice;
                            const rowProbability = isExpandedOutcome
-                             ? normalizeTerminalDisplayValue(selectedOutcomeOrderbookDisplayValues?.probability)
+                             ? normalizeTerminalDisplayValue(expandedTopAskProbability)
+                               ?? normalizeTerminalDisplayValue(selectedOutcomeOrderbookDisplayValues?.probability)
                                ?? normalizeTerminalDisplayValue(selectedOutcomeDisplayValues?.probability)
                                ?? normalizeTerminalDisplayValue(m.prob)
                                ?? m.prob

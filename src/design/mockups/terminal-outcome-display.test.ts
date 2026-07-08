@@ -37,31 +37,31 @@ const live: TerminalOutcomeDisplayValues = {
 };
 
 describe('displayableLivePriceValue', () => {
-  it('prefers the aggregate best ask used by the expanded orderbook display', () => {
+  it('prefers the best executable venue ask over a higher aggregate best ask', () => {
     expect(displayableLivePriceValue({
       marketId: 'world-cup-winner',
-      outcomeId: 'ARGENTINA',
+      outcomeId: 'SPAIN',
       generatedAt: new Date().toISOString(),
       status: 'live',
-      price: '0.181',
-      bestBid: '0.172',
-      bestAsk: '0.178',
-      midpoint: '0.175',
-      spread: '0.006',
+      price: '0.19',
+      bestBid: '0.171',
+      bestAsk: '0.19',
+      midpoint: '0.1805',
+      spread: '0.019',
       bestVenue: 'POLYMARKET',
       venueCount: 2,
-      venues: ['POLYMARKET', 'LIMITLESS'],
+      venues: ['OPINION', 'POLYMARKET'],
       liveVenueCount: 2,
-      liveVenues: ['POLYMARKET', 'LIMITLESS'],
+      liveVenues: ['OPINION', 'POLYMARKET'],
       linkedVenueCount: 2,
-      linkedVenues: ['POLYMARKET', 'LIMITLESS'],
+      linkedVenues: ['OPINION', 'POLYMARKET'],
       venueBreakdown: [
-        { venue: 'LIMITLESS', price: '0.185', bestBid: '0.176', bestAsk: '0.185', status: 'live' },
-        { venue: 'POLYMARKET', price: '0.178', bestBid: '0.172', bestAsk: '0.178', status: 'live' },
+        { venue: 'OPINION', price: '0.172', bestBid: '0.171', bestAsk: '0.172', status: 'live' },
+        { venue: 'POLYMARKET', price: '0.19', bestBid: '0.184', bestAsk: '0.19', status: 'live' },
       ],
-      averagePrice: '0.1815',
+      averagePrice: '0.181',
       freshnessMs: 1000,
-    }, '18.5%')).toBe(0.178);
+    }, '19%')).toBe(0.172);
   });
 
   it('falls back to venue best ask when the aggregate best ask is unavailable', () => {
