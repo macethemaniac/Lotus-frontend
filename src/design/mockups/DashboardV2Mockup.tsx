@@ -32,11 +32,11 @@ import { getFundingHistory, getVenueBalances, type FundingHistoryRow, type Venue
 import { ApiClientError } from '@/lib/api/http-client';
 import { lotusMarketDiagnosticsEnabled } from '@/config/env';
 import {
-  Search, Bell, BarChart2, ArrowRightLeft,
+  Search, Bell, ArrowRightLeft,
   Zap, PieChart, Activity, Settings, ChevronDown, ChevronUp,
   ShieldCheck, AlertTriangle, Clock, ChevronRight,
   Flame, Globe, Cpu, MessageSquare, ChevronsLeft, ChevronsRight,
-  Square, CheckSquare, Star, Sparkles, Trophy, Database, Filter, Vault, Volleyball, Landmark, Terminal,
+  Square, CheckSquare, Star, Sparkles, Trophy, Database, Filter, Vault, Landmark,
   LayoutGrid, List, Bookmark, Radio, CheckCircle2, Wallet, X
 } from 'lucide-react';
 
@@ -2666,9 +2666,6 @@ export const DashboardV2Mockup = ({
           <LotusLogo className="h-6 w-6" />
         </button>
         <nav className="flex flex-col gap-5 w-full items-center">
-          <NavItem icon={<BarChart2 className="w-4 h-4" />} active={activePage === 'markets'} label="Markets" onClick={() => onNavigate?.('markets')} />
-          <NavItem icon={<Terminal className="w-4 h-4" />} active={activePage === 'terminal'} label="Terminal" onClick={() => onNavigate?.('terminal')} />
-          <NavItem icon={<Volleyball className="w-4 h-4" />} label="Matchroom" />
           <NavItem icon={<PieChart className="w-4 h-4" />} active={activePage === 'portfolio'} label="Portfolio" onClick={() => onNavigate?.('portfolio')} />
         </nav>
         <div className="mt-auto flex flex-col gap-5 w-full items-center">
