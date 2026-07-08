@@ -29,12 +29,6 @@ export type TerminalOutcomeRowDisplay = {
   blocker: string | null;
 };
 
-export type TerminalOutcomePriceDisplay = {
-  prob: string;
-  yesPrice: string;
-  noPrice: string;
-};
-
 type SelectedOutcomeBookReadinessInput = {
   orderbook: MarketOrderbookResponse | null;
   orderbookMarketId: string | null;
@@ -143,21 +137,9 @@ export const shouldSyncSelectedOutcomeRowDisplay = (input: {
   orderbookUsable: boolean;
 }): boolean => {
   if (!input.next) return false;
-  if (!input.outcomeExpanded && input.current !== null) return false;
-  if (input.orderbookUsable && input.current !== null) return false;
+  if (input.outcomeExpanded && input.orderbookUsable) return false;
   return !sameDisplayValues(input.current, input.next);
 };
-
-export const shouldApplyLatchedOutcomeDisplay = (
-  displayOutcomeId: string | null | undefined,
-  outcomeId: string | null | undefined,
-): boolean => (
-  typeof displayOutcomeId === 'string'
-  && displayOutcomeId.length > 0
-  && typeof outcomeId === 'string'
-  && outcomeId.length > 0
-  && displayOutcomeId === outcomeId
-);
 
 export const mergeTerminalOutcomeRowDisplay = <T extends TerminalOutcomeRowDisplay>(
   current: T,
@@ -180,26 +162,6 @@ export const mergeTerminalOutcomeRowDisplay = <T extends TerminalOutcomeRowDispl
   return {
     ...current,
     ...next,
-  };
-};
-
-export const applyTerminalOutcomePriceDisplay = <T extends TerminalOutcomePriceDisplay>(
-  current: T,
-  next: TerminalOutcomeDisplayValues | null,
-): T => {
-  if (!next?.probability || !next.yesPrice || !next.noPrice) return current;
-  if (
-    current.prob === next.probability &&
-    current.yesPrice === next.yesPrice &&
-    current.noPrice === next.noPrice
-  ) {
-    return current;
-  }
-  return {
-    ...current,
-    prob: next.probability,
-    yesPrice: next.yesPrice,
-    noPrice: next.noPrice,
   };
 };
 
@@ -291,30 +253,11 @@ export const resolveSelectedMarketHydratedMedia = (input: {
 export const resolveInitialSelectedOutcomeId = <T extends { id: string }>(
   initialOutcomeId: string | null | undefined,
   rows: readonly T[],
-  preferredRows: readonly T[] = rows,
 ): string | null => {
   if (initialOutcomeId && rows.some((row) => row.id === initialOutcomeId)) {
     return initialOutcomeId;
   }
-  return preferredRows[0]?.id ?? rows[0]?.id ?? null;
-};
-
-export const resolveSelectedOutcomeRow = <T extends { id: string }>(input: {
-  activeOutcomeId: string | null | undefined;
-  rowGroups: readonly (readonly T[])[];
-}): T | null => {
-  if (input.activeOutcomeId) {
-    for (const rows of input.rowGroups) {
-      const match = rows.find((row) => row.id === input.activeOutcomeId);
-      if (match) return match;
-    }
-    return null;
-  }
-
-  for (const rows of input.rowGroups) {
-    if (rows.length > 0) return rows[0] ?? null;
-  }
-  return null;
+  return rows[0]?.id ?? null;
 };
 
 export const resolveOutcomeSummaryVenues = (
@@ -405,13 +348,6 @@ const bestVenueAskFromBreakdown = (livePrice: MarketLivePriceItem | null | undef
       return [ask];
     });
   return asks.length > 0 ? Math.min(...asks) : null;
-};
-
-export const orderbookBestAskValue = (
-  orderbook: MarketOrderbookResponse | null | undefined,
-): number | null => {
-  const bestAsk = parseDisplayProbabilityValue(orderbook?.bestAsk);
-  return bestAsk !== null && bestAsk > 0 && bestAsk < 1 ? bestAsk : null;
 };
 
 export const displayableLivePriceValue = (

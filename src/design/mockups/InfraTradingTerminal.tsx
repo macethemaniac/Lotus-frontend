@@ -10,12 +10,10 @@ import { JsonRpcProvider, Transaction } from 'ethers';
 import { CryptoLogo, VenueLogo, resolveTopicAssetLogoId } from '@/components/icons/asset-logo';
 import { FundingDeposit } from '@/design/mockups/FundingDeposit';
 import {
-  applyTerminalOutcomePriceDisplay,
   isSelectedOutcomeBookReady,
   isSelectedOutcomeBookUsable,
   displayableLivePriceValue,
   mergeTerminalOutcomeRowDisplay,
-  orderbookBestAskValue,
   orderSelectedOutcomeVisibleVenues,
   resolveLivePriceForTerminalOutcome,
   resolveOutcomeSummaryVenueCount,
@@ -23,7 +21,6 @@ import {
   resolveOutcomeSeedMedia,
   resolveSelectedMarketSeedMedia,
   resolveInitialSelectedOutcomeId,
-  resolveSelectedOutcomeOrderbookDisplaySource,
   resolveVisibleSelectedOutcomeOrderbook,
   shouldResetOrderbookForRequestChange,
   shouldReuseSelectedOutcomeState,
@@ -1683,50 +1680,6 @@ const quoteOutcomeIdForTicketSide = (outcome: TerminalOutcomeRow | null, side: T
   if (side === 'no' && current !== 'NO') return 'NO';
   if (side === 'yes' && current === 'NO') return 'YES';
   return current;
-};
-
-const orderbookOutcomeDisplayValues = (
-  orderbook: MarketOrderbookResponse | null | undefined,
-  marketType: TerminalMarketSelection['marketType'],
-): TerminalOutcomeDisplayValues | null => {
-  const bestAsk = orderbookBestAskValue(orderbook);
-  if (bestAsk === null) return null;
-  return {
-    yesPrice: formatProbabilityPrice(bestAsk),
-    noPrice: marketType === 'binary' ? formatProbabilityPrice(1 - bestAsk) : '-',
-    probability: formatProbabilityPercent(bestAsk),
-  };
-};
-
-const fetchOutcomeOrderbookDisplayValues = async (input: {
-  rows: readonly TerminalOutcomeRow[];
-  enabled: boolean;
-  terminalMarketId: string | null;
-  marketType: TerminalMarketSelection['marketType'];
-}): Promise<Map<string, TerminalOutcomeDisplayValues>> => {
-  const displayByRowId = new Map<string, TerminalOutcomeDisplayValues>();
-  if (!input.enabled) return displayByRowId;
-  const candidates = input.rows.filter((row) => Boolean(row.marketId ?? input.terminalMarketId));
-  if (candidates.length === 0) return displayByRowId;
-
-  const settled = await Promise.allSettled(candidates.map(async (row) => {
-    const marketId = row.marketId ?? input.terminalMarketId;
-    if (!marketId) return null;
-    const orderbook = await getMarketOrderbook(marketId, {
-      outcomeId: row.quoteOutcomeId ?? canonicalQuoteOutcomeId(row.name),
-      depth: 1,
-      canonicalMarketIds: row.canonicalMarketIds?.length ? row.canonicalMarketIds : undefined,
-      snapshotOnly: true,
-    });
-    const displayValues = orderbookOutcomeDisplayValues(orderbook, input.marketType);
-    return displayValues ? [row.id, displayValues] as const : null;
-  }));
-
-  for (const result of settled) {
-    if (result.status !== 'fulfilled' || result.value === null) continue;
-    displayByRowId.set(result.value[0], result.value[1]);
-  }
-  return displayByRowId;
 };
 
 const ticketPriceForSide = (outcome: TerminalOutcomeRow | null, side: TicketOutcomeSide): number | null => {
@@ -3994,18 +3947,6 @@ const InfraTradingTerminalInner = ({
           ? current
           : nextDisplayValues ?? null
       ));
-      const selectedRowId = selectedOutcomeIdRef.current;
-      if (!selectedRowId || !nextDisplayValues) return;
-      setTerminalOutcomes((current) => {
-        let changed = false;
-        const nextRows = current.map((row) => {
-          if (row.id !== selectedRowId) return row;
-          const nextRow = applyTerminalOutcomePriceDisplay(row, nextDisplayValues);
-          if (nextRow !== row) changed = true;
-          return nextRow;
-        });
-        return changed ? nextRows : current;
-      });
     });
   }, []);
 
@@ -4130,35 +4071,6 @@ const InfraTradingTerminalInner = ({
     if (pinnedIndex < 0 || pinnedIndex < 5) return defaultRows;
     return [...quoteableTerminalOutcomes.slice(0, 4), quoteableTerminalOutcomes[pinnedIndex]!];
   }, [expandedOutcomeId, quoteableTerminalOutcomes, selectedOutcomeId, showAllOutcomes, terminalMarket.initialOutcomeId]);
-  const visibleOutcomeStreamKey = useMemo(() => visibleOutcomeRows
-    .map((row) => {
-      const rowMarketId = row.marketId ?? terminalMarketId ?? '';
-      const quoteOutcomeId = row.quoteOutcomeId ?? canonicalQuoteOutcomeId(row.name);
-      const aliases = canonicalIdsForTerminalOutcome(
-        rowMarketId,
-        row.canonicalMarketIds,
-        terminalMarket.canonicalMarketIds,
-        quoteableTerminalOutcomes.length,
-      ).join(',');
-      return `${row.id}:${rowMarketId}:${quoteOutcomeId}:${aliases}`;
-    })
-    .join('|'), [quoteableTerminalOutcomes.length, terminalMarket.canonicalMarketIds, terminalMarketId, visibleOutcomeRows]);
-  const visibleOutcomeStreamDescriptors = useMemo(() => visibleOutcomeRows.flatMap((row) => {
-    const rowMarketId = row.marketId ?? terminalMarketId;
-    if (!rowMarketId) return [];
-    const quoteOutcomeId = row.quoteOutcomeId ?? canonicalQuoteOutcomeId(row.name);
-    const marketAliases = canonicalIdsForTerminalOutcome(
-      rowMarketId,
-      row.canonicalMarketIds,
-      terminalMarket.canonicalMarketIds,
-      quoteableTerminalOutcomes.length,
-    );
-    return [{
-      id: row.id,
-      quoteOutcomeId,
-      topics: marketAliases.map((marketAlias) => orderbookTopicForSelection(marketAlias, quoteOutcomeId)),
-    }];
-  }), [visibleOutcomeStreamKey]);
   const selectedOutcomeMarketId = selectedOutcome?.marketId ?? terminalMarketId;
   const selectedQuoteOutcomeId = selectedOutcome?.quoteOutcomeId ?? selectedOutcomeId;
   const selectedOutcomeRefreshKey = `${selectedOutcome?.id ?? 'none'}:${selectedOutcomeMarketId ?? 'none'}:${selectedQuoteOutcomeId ?? 'none'}`;
@@ -4180,9 +4092,10 @@ const InfraTradingTerminalInner = ({
   React.useEffect(() => {
     selectedOutcomeRefreshKeyRef.current = selectedOutcomeRefreshKey;
   }, [selectedOutcomeRefreshKey]);
-  // Keep the selected outcome book warm while Outcomes is visible so collapsed
-  // rows, ticket pricing, and chart live points use the same streamed quote.
-  const orderbookActive = bottomTab === 'Outcomes' && Boolean(selectedOutcome);
+  // Only warm the selected outcome orderbook while its detail row is expanded.
+  // Keeping the live book active for a merely selected collapsed row makes the
+  // outcome list flicker between the stable summary quote and live orderbook data.
+  const orderbookActive = bottomTab === 'Outcomes' && Boolean(selectedOutcome && expandedOutcomeId === selectedOutcome.id);
   const orderbookMarketId = orderbookActive ? selectedOutcomeMarketId ?? terminalMarketId : null;
   const orderbookSideLabel = marketType === 'binary'
     ? 'Yes'
@@ -4292,13 +4205,6 @@ const InfraTradingTerminalInner = ({
     () => filterOrderbookForVenue(visibleSelectedOutcomeOrderbook, orderbookVenue),
     [orderbookVenue, visibleSelectedOutcomeOrderbook]
   );
-  const selectedOutcomeDisplayOrderbook = useMemo(
-    () => resolveSelectedOutcomeOrderbookDisplaySource({
-      live: rawDisplayOrderbook,
-      visible: displayOrderbook,
-    }),
-    [displayOrderbook, rawDisplayOrderbook],
-  );
   const displayOrderbookHasDepth = useMemo(
     () => Boolean(
       displayOrderbook
@@ -4311,8 +4217,14 @@ const InfraTradingTerminalInner = ({
     [displayOrderbook],
   );
   const selectedOutcomeOrderbookDisplayValues = useMemo<TerminalOutcomeDisplayValues | null>(() => {
-    return orderbookOutcomeDisplayValues(selectedOutcomeDisplayOrderbook, terminalMarket.marketType);
-  }, [selectedOutcomeDisplayOrderbook?.bestAsk, terminalMarket.marketType]);
+    const bestAsk = normalizedOrderbookProbability(displayOrderbook?.bestAsk);
+    if (bestAsk === null) return null;
+    return {
+      yesPrice: formatProbabilityPrice(bestAsk),
+      noPrice: terminalMarket.marketType === 'binary' ? formatProbabilityPrice(1 - bestAsk) : '-',
+      probability: formatProbabilityPercent(bestAsk),
+    };
+  }, [displayOrderbook?.bestAsk, terminalMarket.marketType]);
   const selectedOutcomeVisibleVenues = useMemo(() => {
     const venues = new Map<string, string>();
     const addVenue = (value: string | null | undefined) => {
@@ -4490,10 +4402,10 @@ const InfraTradingTerminalInner = ({
   }, [quoteableTerminalOutcomes, selectTerminalOutcome]);
   const selectedTicketUsesLatchedOutcomeDisplay = selectedTicketOutcome?.id === selectedOutcome?.id;
   const selectedTicketYesPrice = selectedTicketUsesLatchedOutcomeDisplay
-    ? selectedOutcomeRowDisplay?.yesPrice ?? selectedOutcomeDisplayValues?.yesPrice ?? selectedOutcomeOrderbookDisplayValues?.yesPrice ?? selectedTicketOutcome?.yesPrice ?? null
+    ? selectedOutcomeOrderbookDisplayValues?.yesPrice ?? selectedOutcomeDisplayValues?.yesPrice ?? selectedTicketOutcome?.yesPrice ?? null
     : selectedTicketOutcome?.yesPrice ?? null;
   const selectedTicketNoPrice = selectedTicketUsesLatchedOutcomeDisplay
-    ? selectedOutcomeRowDisplay?.noPrice ?? selectedOutcomeDisplayValues?.noPrice ?? selectedOutcomeOrderbookDisplayValues?.noPrice ?? selectedTicketOutcome?.noPrice ?? null
+    ? selectedOutcomeOrderbookDisplayValues?.noPrice ?? selectedOutcomeDisplayValues?.noPrice ?? selectedTicketOutcome?.noPrice ?? null
     : selectedTicketOutcome?.noPrice ?? null;
   const selectedTicketDisplayPrice = parseProbabilityLabel(ticketOutcomeSide === 'yes' ? selectedTicketYesPrice : selectedTicketNoPrice);
   const selectedTicketFallbackPrice = ticketPriceForSide(selectedTicketOutcome, ticketOutcomeSide);
@@ -4740,29 +4652,21 @@ const InfraTradingTerminalInner = ({
       }
 
       try {
-        const liveBaseRows = seedDisplayRows.length > 0 ? seedDisplayRows : seedRows;
-        const [livePriceResponse, orderbookDisplayByRowId] = await Promise.all([
-          getMarketLivePrices({
-            items: baseOutcomes.map((outcome) => ({
-              marketId: outcome.marketId ?? terminalMarketId,
-              canonicalMarketIds: canonicalIdsForTerminalOutcome(
-                outcome.marketId ?? terminalMarketId,
-                outcome.canonicalMarketIds,
-                terminalMarket.canonicalMarketIds,
-                baseOutcomes.length,
-              ),
-              outcomeId: outcome.quoteOutcomeId ?? canonicalQuoteOutcomeId(outcome.label),
-            })),
-          }),
-          fetchOutcomeOrderbookDisplayValues({
-            rows: liveBaseRows,
-            enabled: hasCompoundEventOutcomes || chartMarketType === 'multi',
-            terminalMarketId,
-            marketType: terminalMarket.marketType,
-          }),
-        ]);
+        const livePriceResponse = await getMarketLivePrices({
+          items: baseOutcomes.map((outcome) => ({
+            marketId: outcome.marketId ?? terminalMarketId,
+            canonicalMarketIds: canonicalIdsForTerminalOutcome(
+              outcome.marketId ?? terminalMarketId,
+              outcome.canonicalMarketIds,
+              terminalMarket.canonicalMarketIds,
+              baseOutcomes.length,
+            ),
+            outcomeId: outcome.quoteOutcomeId ?? canonicalQuoteOutcomeId(outcome.label),
+          })),
+        });
         const livePriceByKey = new Map(livePriceResponse.prices.map((price) => [`${price.marketId}:${price.outcomeId ?? ''}`, price]));
 
+        const liveBaseRows = seedDisplayRows.length > 0 ? seedDisplayRows : seedRows;
         const rows: TerminalOutcomeRow[] = liveBaseRows.map((row) => {
           const livePrice =
             livePriceByKey.get(`${row.marketId ?? terminalMarketId}:${row.quoteOutcomeId}`) ??
@@ -4775,8 +4679,7 @@ const InfraTradingTerminalInner = ({
           const quoteVenues = quoteVenueListFromLivePrice(livePrice, row.venues);
           const summaryVenues = resolveOutcomeSummaryVenues(livePrice, row.venues);
           const summaryVenueCount = resolveOutcomeSummaryVenueCount(livePrice, row.venues);
-          const orderbookDisplay = orderbookDisplayByRowId.get(row.id) ?? null;
-          const parsedPrice = orderbookDisplay ? parseProbabilityLabel(orderbookDisplay.probability) : displayableLivePriceValue(livePrice, row.prob);
+          const parsedPrice = displayableLivePriceValue(livePrice, row.prob);
           if (parsedPrice === null) {
             if (!livePrice) return row;
             return {
@@ -4790,12 +4693,12 @@ const InfraTradingTerminalInner = ({
               status: livePrice.status === 'live' ? 'live' : 'pending' as const,
             };
           }
-          const yesPrice = orderbookDisplay?.yesPrice ?? formatProbabilityPrice(parsedPrice);
-          const noPrice = orderbookDisplay?.noPrice ?? (terminalMarket.marketType === 'binary' ? formatProbabilityPrice(1 - parsedPrice) : '-');
+          const yesPrice = formatProbabilityPrice(parsedPrice);
+          const noPrice = terminalMarket.marketType === 'binary' ? formatProbabilityPrice(1 - parsedPrice) : '-';
           return {
             ...row,
             platforms: summaryVenueCount || row.platforms,
-            prob: orderbookDisplay?.probability ?? formatProbabilityPercent(parsedPrice),
+            prob: formatProbabilityPercent(parsedPrice),
             yesPrice,
             noPrice,
             primaryVenue: livePrice?.bestVenue ?? row.primaryVenue ?? quoteVenues[0] ?? null,
@@ -4880,29 +4783,18 @@ const InfraTradingTerminalInner = ({
           })
           .filter((item) => Boolean(item.marketId && item.outcomeId));
         try {
-          const [prices, orderbookDisplayByRowId] = await Promise.all([
-            (async () => {
-              const nextPrices: MarketLivePriceItem[] = [];
-              for (let index = 0; index < requestItems.length; index += TERMINAL_LIVE_PRICE_BATCH_SIZE) {
-                const chunk = requestItems.slice(index, index + TERMINAL_LIVE_PRICE_BATCH_SIZE);
-                const response = await getMarketLivePrices({
-                  items: chunk.map((item) => ({
-                    marketId: item.marketId,
-                    canonicalMarketIds: item.canonicalMarketIds,
-                    outcomeId: item.outcomeId,
-                  })),
-                });
-                nextPrices.push(...response.prices);
-              }
-              return nextPrices;
-            })(),
-            fetchOutcomeOrderbookDisplayValues({
-              rows: currentOutcomes,
-              enabled: hasCompoundEventOutcomes || chartMarketType === 'multi',
-              terminalMarketId,
-              marketType: terminalMarket.marketType,
-            }),
-          ]);
+          const prices: MarketLivePriceItem[] = [];
+          for (let index = 0; index < requestItems.length; index += TERMINAL_LIVE_PRICE_BATCH_SIZE) {
+            const chunk = requestItems.slice(index, index + TERMINAL_LIVE_PRICE_BATCH_SIZE);
+            const response = await getMarketLivePrices({
+              items: chunk.map((item) => ({
+                marketId: item.marketId,
+                canonicalMarketIds: item.canonicalMarketIds,
+                outcomeId: item.outcomeId,
+              })),
+            });
+            prices.push(...response.prices);
+          }
           const priceByKey = new Map(prices.map((price) => [`${price.marketId}:${price.outcomeId ?? ''}`, price]));
           setTerminalOutcomes((current) => {
             let changed = false;
@@ -4925,8 +4817,7 @@ const InfraTradingTerminalInner = ({
             const quoteVenues = quoteVenueListFromLivePrice(livePrice, outcome.venues);
             const summaryVenues = resolveOutcomeSummaryVenues(livePrice, outcome.venues);
             const summaryVenueCount = resolveOutcomeSummaryVenueCount(livePrice, outcome.venues);
-            const orderbookDisplay = orderbookDisplayByRowId.get(outcome.id) ?? null;
-            const parsedPrice = orderbookDisplay ? parseProbabilityLabel(orderbookDisplay.probability) : displayableLivePriceValue(livePrice, outcome.prob);
+            const parsedPrice = displayableLivePriceValue(livePrice, outcome.prob);
             if (parsedPrice === null) {
               if (!livePrice) return outcome;
               const nextOutcome = mergeTerminalOutcomeRowDisplay(outcome, {
@@ -4945,11 +4836,11 @@ const InfraTradingTerminalInner = ({
               if (nextOutcome !== outcome) changed = true;
               return nextOutcome;
             }
-            const yesPrice = orderbookDisplay?.yesPrice ?? formatProbabilityPrice(parsedPrice);
-            const noPrice = orderbookDisplay?.noPrice ?? (terminalMarket.marketType === 'binary' ? formatProbabilityPrice(1 - parsedPrice) : '-');
+            const yesPrice = formatProbabilityPrice(parsedPrice);
+            const noPrice = terminalMarket.marketType === 'binary' ? formatProbabilityPrice(1 - parsedPrice) : '-';
             const nextOutcome = mergeTerminalOutcomeRowDisplay(outcome, {
               platforms: summaryVenueCount || outcome.platforms,
-              prob: orderbookDisplay?.probability ?? formatProbabilityPercent(parsedPrice),
+              prob: formatProbabilityPercent(parsedPrice),
               yesPrice,
               noPrice,
               primaryVenue: livePrice?.bestVenue ?? outcome.primaryVenue ?? quoteVenues[0] ?? null,
@@ -4977,8 +4868,6 @@ const InfraTradingTerminalInner = ({
       terminalLivePriceRefreshInFlightRef.current = false;
     }
   }, [
-    chartMarketType,
-    hasCompoundEventOutcomes,
     terminalMarket.canonicalMarketIds,
     terminalMarket.marketType,
     terminalMarketId,
@@ -6159,69 +6048,6 @@ const InfraTradingTerminalInner = ({
     }, TERMINAL_ALL_OUTCOME_PRICE_REFRESH_INTERVAL_MS);
     return () => window.clearInterval(activeMarketPriceInterval);
   }, [refreshAllOutcomePrices, selectedOutcomeRefreshKey, terminalMarketId]);
-
-  React.useEffect(() => {
-    if (bottomTab !== 'Outcomes' || visibleOutcomeStreamDescriptors.length === 0) return;
-    const topicToOutcome = new Map<ExecutionTopic, { id: string; quoteOutcomeId: string }>();
-    for (const descriptor of visibleOutcomeStreamDescriptors) {
-      for (const topic of descriptor.topics) {
-        topicToOutcome.set(topic, { id: descriptor.id, quoteOutcomeId: descriptor.quoteOutcomeId });
-      }
-    }
-    const topics = [...topicToOutcome.keys()];
-    if (topics.length === 0) return;
-
-    let active = true;
-    const client = openExecutionSocket({
-      onStateChange: () => undefined,
-      onEvent: (event) => {
-        if (!active || (event.type !== 'MARKET_ORDERBOOK_UPDATE' && event.type !== 'MARKET_QUOTE_UPDATE')) return;
-        const descriptor = topicToOutcome.get(event.topic);
-        if (!descriptor || !isMarketOrderbookStreamPayload(event.payload)) return;
-        const payloadOutcomeId = streamPayloadOutcomeId(event.payload);
-        if (payloadOutcomeId && !streamOutcomeMatches(payloadOutcomeId, descriptor.quoteOutcomeId)) return;
-        const quotePrice = orderbookNumericValue(event.payload.bestAsk ?? event.payload.bestBid);
-        if (quotePrice === null) return;
-        const nextDisplayValues: TerminalOutcomeDisplayValues = {
-          yesPrice: formatProbabilityPrice(quotePrice),
-          noPrice: terminalMarket.marketType === 'binary' ? formatProbabilityPrice(1 - quotePrice) : '-',
-          probability: formatProbabilityPercent(quotePrice),
-        };
-        React.startTransition(() => {
-          setTerminalOutcomes((current) => {
-            let changed = false;
-            const nextRows = current.map((row) => {
-              if (row.id !== descriptor.id) return row;
-              const nextRow = applyTerminalOutcomePriceDisplay(row, nextDisplayValues);
-              if (nextRow !== row) changed = true;
-              return nextRow;
-            });
-            return changed ? nextRows : current;
-          });
-        });
-      },
-    });
-    const subscribeAll = () => topics.forEach((topic) => client.subscribe(topic));
-    const subscribeOnGatewayReady = (message: MessageEvent) => {
-      try {
-        const parsed = JSON.parse(String(message.data)) as { type?: string };
-        if (parsed.type === 'GATEWAY_READY') subscribeAll();
-      } catch {
-        // Ignore non-JSON keepalive frames.
-      }
-    };
-    subscribeAll();
-    client.socket.addEventListener('open', subscribeAll);
-    client.socket.addEventListener('message', subscribeOnGatewayReady);
-    if (client.socket.readyState === WebSocket.OPEN) subscribeAll();
-    return () => {
-      active = false;
-      client.socket.removeEventListener('open', subscribeAll);
-      client.socket.removeEventListener('message', subscribeOnGatewayReady);
-      topics.forEach((topic) => client.unsubscribe(topic));
-      client.socket.close();
-    };
-  }, [bottomTab, terminalMarket.marketType, visibleOutcomeStreamKey, visibleOutcomeStreamDescriptors]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -8028,24 +7854,21 @@ const InfraTradingTerminalInner = ({
                              ? rowVenueList[0]!
                              : m.primaryVenue ?? venues[0] ?? 'lotus';
                            const rowYesPrice = isExpandedOutcome
-                             ? normalizeTerminalDisplayValue(m.yesPrice)
-                               ?? normalizeTerminalDisplayValue(selectedOutcomeRowDisplay?.yesPrice)
+                             ? normalizeTerminalDisplayValue(selectedOutcomeOrderbookDisplayValues?.yesPrice)
                                ?? normalizeTerminalDisplayValue(selectedOutcomeDisplayValues?.yesPrice)
-                               ?? normalizeTerminalDisplayValue(selectedOutcomeOrderbookDisplayValues?.yesPrice)
+                               ?? normalizeTerminalDisplayValue(m.yesPrice)
                                ?? m.yesPrice
                              : m.yesPrice;
                            const rowNoPrice = isExpandedOutcome
-                             ? normalizeTerminalDisplayValue(m.noPrice)
-                               ?? normalizeTerminalDisplayValue(selectedOutcomeRowDisplay?.noPrice)
+                             ? normalizeTerminalDisplayValue(selectedOutcomeOrderbookDisplayValues?.noPrice)
                                ?? normalizeTerminalDisplayValue(selectedOutcomeDisplayValues?.noPrice)
-                               ?? normalizeTerminalDisplayValue(selectedOutcomeOrderbookDisplayValues?.noPrice)
+                               ?? normalizeTerminalDisplayValue(m.noPrice)
                                ?? m.noPrice
                              : m.noPrice;
                            const rowProbability = isExpandedOutcome
-                             ? normalizeTerminalDisplayValue(m.prob)
-                               ?? normalizeTerminalDisplayValue(selectedOutcomeRowDisplay?.probability)
+                             ? normalizeTerminalDisplayValue(selectedOutcomeOrderbookDisplayValues?.probability)
                                ?? normalizeTerminalDisplayValue(selectedOutcomeDisplayValues?.probability)
-                               ?? normalizeTerminalDisplayValue(selectedOutcomeOrderbookDisplayValues?.probability)
+                               ?? normalizeTerminalDisplayValue(m.prob)
                                ?? m.prob
                              : m.prob;
                            const rowYesVenue = primaryVenue;

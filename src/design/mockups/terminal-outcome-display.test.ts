@@ -1,12 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  applyTerminalOutcomePriceDisplay,
   displayableLivePriceValue,
   isSelectedOutcomeBookUsable,
   isSelectedOutcomeBookReady,
   mergeTerminalOutcomeRowDisplay,
-  orderbookBestAskValue,
   orderSelectedOutcomeVisibleVenues,
   resolveLivePriceForTerminalOutcome,
   resolveOutcomeSummaryVenueCount,
@@ -90,27 +88,6 @@ describe('displayableLivePriceValue', () => {
       averagePrice: '0.1815',
       freshnessMs: 1000,
     }, '18.5%')).toBe(0.178);
-  });
-});
-
-describe('orderbookBestAskValue', () => {
-  it('normalizes the orderbook best ask used by expanded outcome rows', () => {
-    expect(orderbookBestAskValue({
-      marketId: 'world-cup-winner',
-      outcomeId: 'YES',
-      generatedAt: new Date().toISOString(),
-      depth: 1,
-      venues: [],
-      bids: [],
-      asks: [{ venue: 'POLYMARKET', venueMarketId: 'argentina', venueOutcomeId: 'YES', price: '0.178', size: '328000', cumulativeSize: '328000', cumulativeNotional: '58000' }],
-      bestBid: '0.177',
-      bestAsk: '0.178',
-      midpoint: '0.1775',
-      spread: '0.001',
-      status: 'live',
-      blockers: [],
-      stream: null,
-    })).toBe(0.178);
   });
 });
 
@@ -560,40 +537,6 @@ describe('resolveInitialSelectedOutcomeId', () => {
       { id: 'brazil' },
     ])).toBe('argentina');
     expect(resolveInitialSelectedOutcomeId(null, [])).toBeNull();
-  });
-});
-
-describe('applyTerminalOutcomePriceDisplay', () => {
-  it('patches streamed orderbook prices into the row fields used by outcome rows and charts', () => {
-    expect(applyTerminalOutcomePriceDisplay({
-      prob: '33.4%',
-      yesPrice: '33.4c',
-      noPrice: '66.6c',
-      label: 'France',
-    }, {
-      probability: '33.6%',
-      yesPrice: '33.6c',
-      noPrice: '66.4c',
-    })).toEqual({
-      prob: '33.6%',
-      yesPrice: '33.6c',
-      noPrice: '66.4c',
-      label: 'France',
-    });
-  });
-
-  it('reuses the row object when the streamed display is unchanged', () => {
-    const current = {
-      prob: '33.6%',
-      yesPrice: '33.6c',
-      noPrice: '66.4c',
-      label: 'France',
-    };
-    expect(applyTerminalOutcomePriceDisplay(current, {
-      probability: '33.6%',
-      yesPrice: '33.6c',
-      noPrice: '66.4c',
-    })).toBe(current);
   });
 });
 
