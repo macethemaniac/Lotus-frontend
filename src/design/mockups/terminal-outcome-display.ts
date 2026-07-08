@@ -29,6 +29,12 @@ export type TerminalOutcomeRowDisplay = {
   blocker: string | null;
 };
 
+export type TerminalOutcomePriceDisplay = {
+  prob: string;
+  yesPrice: string;
+  noPrice: string;
+};
+
 type SelectedOutcomeBookReadinessInput = {
   orderbook: MarketOrderbookResponse | null;
   orderbookMarketId: string | null;
@@ -162,6 +168,26 @@ export const mergeTerminalOutcomeRowDisplay = <T extends TerminalOutcomeRowDispl
   return {
     ...current,
     ...next,
+  };
+};
+
+export const applyTerminalOutcomePriceDisplay = <T extends TerminalOutcomePriceDisplay>(
+  current: T,
+  next: TerminalOutcomeDisplayValues | null,
+): T => {
+  if (!next?.probability || !next.yesPrice || !next.noPrice) return current;
+  if (
+    current.prob === next.probability &&
+    current.yesPrice === next.yesPrice &&
+    current.noPrice === next.noPrice
+  ) {
+    return current;
+  }
+  return {
+    ...current,
+    prob: next.probability,
+    yesPrice: next.yesPrice,
+    noPrice: next.noPrice,
   };
 };
 

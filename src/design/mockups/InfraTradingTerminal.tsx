@@ -10,6 +10,7 @@ import { JsonRpcProvider, Transaction } from 'ethers';
 import { CryptoLogo, VenueLogo, resolveTopicAssetLogoId } from '@/components/icons/asset-logo';
 import { FundingDeposit } from '@/design/mockups/FundingDeposit';
 import {
+  applyTerminalOutcomePriceDisplay,
   isSelectedOutcomeBookReady,
   isSelectedOutcomeBookUsable,
   displayableLivePriceValue,
@@ -3992,6 +3993,18 @@ const InfraTradingTerminalInner = ({
           ? current
           : nextDisplayValues ?? null
       ));
+      const selectedRowId = selectedOutcomeIdRef.current;
+      if (!selectedRowId || !nextDisplayValues) return;
+      setTerminalOutcomes((current) => {
+        let changed = false;
+        const nextRows = current.map((row) => {
+          if (row.id !== selectedRowId) return row;
+          const nextRow = applyTerminalOutcomePriceDisplay(row, nextDisplayValues);
+          if (nextRow !== row) changed = true;
+          return nextRow;
+        });
+        return changed ? nextRows : current;
+      });
     });
   }, []);
 
@@ -4116,6 +4129,35 @@ const InfraTradingTerminalInner = ({
     if (pinnedIndex < 0 || pinnedIndex < 5) return defaultRows;
     return [...quoteableTerminalOutcomes.slice(0, 4), quoteableTerminalOutcomes[pinnedIndex]!];
   }, [expandedOutcomeId, quoteableTerminalOutcomes, selectedOutcomeId, showAllOutcomes, terminalMarket.initialOutcomeId]);
+  const visibleOutcomeStreamKey = useMemo(() => visibleOutcomeRows
+    .map((row) => {
+      const rowMarketId = row.marketId ?? terminalMarketId ?? '';
+      const quoteOutcomeId = row.quoteOutcomeId ?? canonicalQuoteOutcomeId(row.name);
+      const aliases = canonicalIdsForTerminalOutcome(
+        rowMarketId,
+        row.canonicalMarketIds,
+        terminalMarket.canonicalMarketIds,
+        quoteableTerminalOutcomes.length,
+      ).join(',');
+      return `${row.id}:${rowMarketId}:${quoteOutcomeId}:${aliases}`;
+    })
+    .join('|'), [quoteableTerminalOutcomes.length, terminalMarket.canonicalMarketIds, terminalMarketId, visibleOutcomeRows]);
+  const visibleOutcomeStreamDescriptors = useMemo(() => visibleOutcomeRows.flatMap((row) => {
+    const rowMarketId = row.marketId ?? terminalMarketId;
+    if (!rowMarketId) return [];
+    const quoteOutcomeId = row.quoteOutcomeId ?? canonicalQuoteOutcomeId(row.name);
+    const marketAliases = canonicalIdsForTerminalOutcome(
+      rowMarketId,
+      row.canonicalMarketIds,
+      terminalMarket.canonicalMarketIds,
+      quoteableTerminalOutcomes.length,
+    );
+    return [{
+      id: row.id,
+      quoteOutcomeId,
+      topics: marketAliases.map((marketAlias) => orderbookTopicForSelection(marketAlias, quoteOutcomeId)),
+    }];
+  }), [visibleOutcomeStreamKey]);
   const selectedOutcomeMarketId = selectedOutcome?.marketId ?? terminalMarketId;
   const selectedQuoteOutcomeId = selectedOutcome?.quoteOutcomeId ?? selectedOutcomeId;
   const selectedOutcomeRefreshKey = `${selectedOutcome?.id ?? 'none'}:${selectedOutcomeMarketId ?? 'none'}:${selectedQuoteOutcomeId ?? 'none'}`;
@@ -4137,10 +4179,9 @@ const InfraTradingTerminalInner = ({
   React.useEffect(() => {
     selectedOutcomeRefreshKeyRef.current = selectedOutcomeRefreshKey;
   }, [selectedOutcomeRefreshKey]);
-  // Only warm the selected outcome orderbook while its detail row is expanded.
-  // Keeping the live book active for a merely selected collapsed row makes the
-  // outcome list flicker between the stable summary quote and live orderbook data.
-  const orderbookActive = bottomTab === 'Outcomes' && Boolean(selectedOutcome && expandedOutcomeId === selectedOutcome.id);
+  // Keep the selected outcome book warm while Outcomes is visible so collapsed
+  // rows, ticket pricing, and chart live points use the same streamed quote.
+  const orderbookActive = bottomTab === 'Outcomes' && Boolean(selectedOutcome);
   const orderbookMarketId = orderbookActive ? selectedOutcomeMarketId ?? terminalMarketId : null;
   const orderbookSideLabel = marketType === 'binary'
     ? 'Yes'
@@ -6110,6 +6151,69 @@ const InfraTradingTerminalInner = ({
     }, TERMINAL_ALL_OUTCOME_PRICE_REFRESH_INTERVAL_MS);
     return () => window.clearInterval(activeMarketPriceInterval);
   }, [refreshAllOutcomePrices, selectedOutcomeRefreshKey, terminalMarketId]);
+
+  React.useEffect(() => {
+    if (bottomTab !== 'Outcomes' || visibleOutcomeStreamDescriptors.length === 0) return;
+    const topicToOutcome = new Map<ExecutionTopic, { id: string; quoteOutcomeId: string }>();
+    for (const descriptor of visibleOutcomeStreamDescriptors) {
+      for (const topic of descriptor.topics) {
+        topicToOutcome.set(topic, { id: descriptor.id, quoteOutcomeId: descriptor.quoteOutcomeId });
+      }
+    }
+    const topics = [...topicToOutcome.keys()];
+    if (topics.length === 0) return;
+
+    let active = true;
+    const client = openExecutionSocket({
+      onStateChange: () => undefined,
+      onEvent: (event) => {
+        if (!active || (event.type !== 'MARKET_ORDERBOOK_UPDATE' && event.type !== 'MARKET_QUOTE_UPDATE')) return;
+        const descriptor = topicToOutcome.get(event.topic);
+        if (!descriptor || !isMarketOrderbookStreamPayload(event.payload)) return;
+        const payloadOutcomeId = streamPayloadOutcomeId(event.payload);
+        if (payloadOutcomeId && !streamOutcomeMatches(payloadOutcomeId, descriptor.quoteOutcomeId)) return;
+        const quotePrice = orderbookNumericValue(event.payload.bestAsk ?? event.payload.bestBid);
+        if (quotePrice === null) return;
+        const nextDisplayValues: TerminalOutcomeDisplayValues = {
+          yesPrice: formatProbabilityPrice(quotePrice),
+          noPrice: terminalMarket.marketType === 'binary' ? formatProbabilityPrice(1 - quotePrice) : '-',
+          probability: formatProbabilityPercent(quotePrice),
+        };
+        React.startTransition(() => {
+          setTerminalOutcomes((current) => {
+            let changed = false;
+            const nextRows = current.map((row) => {
+              if (row.id !== descriptor.id) return row;
+              const nextRow = applyTerminalOutcomePriceDisplay(row, nextDisplayValues);
+              if (nextRow !== row) changed = true;
+              return nextRow;
+            });
+            return changed ? nextRows : current;
+          });
+        });
+      },
+    });
+    const subscribeAll = () => topics.forEach((topic) => client.subscribe(topic));
+    const subscribeOnGatewayReady = (message: MessageEvent) => {
+      try {
+        const parsed = JSON.parse(String(message.data)) as { type?: string };
+        if (parsed.type === 'GATEWAY_READY') subscribeAll();
+      } catch {
+        // Ignore non-JSON keepalive frames.
+      }
+    };
+    subscribeAll();
+    client.socket.addEventListener('open', subscribeAll);
+    client.socket.addEventListener('message', subscribeOnGatewayReady);
+    if (client.socket.readyState === WebSocket.OPEN) subscribeAll();
+    return () => {
+      active = false;
+      client.socket.removeEventListener('open', subscribeAll);
+      client.socket.removeEventListener('message', subscribeOnGatewayReady);
+      topics.forEach((topic) => client.unsubscribe(topic));
+      client.socket.close();
+    };
+  }, [bottomTab, terminalMarket.marketType, visibleOutcomeStreamKey, visibleOutcomeStreamDescriptors]);
 
   React.useEffect(() => {
     let cancelled = false;

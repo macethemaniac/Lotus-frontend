@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  applyTerminalOutcomePriceDisplay,
   displayableLivePriceValue,
   isSelectedOutcomeBookUsable,
   isSelectedOutcomeBookReady,
@@ -559,6 +560,40 @@ describe('resolveInitialSelectedOutcomeId', () => {
       { id: 'brazil' },
     ])).toBe('argentina');
     expect(resolveInitialSelectedOutcomeId(null, [])).toBeNull();
+  });
+});
+
+describe('applyTerminalOutcomePriceDisplay', () => {
+  it('patches streamed orderbook prices into the row fields used by outcome rows and charts', () => {
+    expect(applyTerminalOutcomePriceDisplay({
+      prob: '33.4%',
+      yesPrice: '33.4c',
+      noPrice: '66.6c',
+      label: 'France',
+    }, {
+      probability: '33.6%',
+      yesPrice: '33.6c',
+      noPrice: '66.4c',
+    })).toEqual({
+      prob: '33.6%',
+      yesPrice: '33.6c',
+      noPrice: '66.4c',
+      label: 'France',
+    });
+  });
+
+  it('reuses the row object when the streamed display is unchanged', () => {
+    const current = {
+      prob: '33.6%',
+      yesPrice: '33.6c',
+      noPrice: '66.4c',
+      label: 'France',
+    };
+    expect(applyTerminalOutcomePriceDisplay(current, {
+      probability: '33.6%',
+      yesPrice: '33.6c',
+      noPrice: '66.4c',
+    })).toBe(current);
   });
 });
 
