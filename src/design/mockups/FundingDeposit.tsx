@@ -1110,7 +1110,7 @@ export const FundingDeposit = ({
 
                             {allocationMode === 'auto' ? (
                                 <div className="text-[11px] text-zinc-500 leading-relaxed">
-                                    Auto prepares an even backend-validated target set across supported venues for this staging pass. Backend capability and route quotes still decide whether each leg is executable.
+                                    Auto prepares an even backend-validated target set across supported venues. Backend capability and route quotes still decide whether each leg is executable.
                                 </div>
                             ) : allocationMode === 'single' ? (
                                 <div className="grid grid-cols-2 gap-2">

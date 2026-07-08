@@ -41,12 +41,11 @@ npm run cf:dev
 Frontend domains:
 
 - `app.uselotus.xyz`
-- `staging.uselotus.xyz`
+- `*.workers.dev`
 
-Backend origins:
+Backend origin:
 
-- production: `https://api.uselotus.xyz`
-- staging: `https://staging-api.uselotus.xyz`
+- `https://api.uselotus.xyz`
 
 Cloudflare Worker responsibilities:
 
@@ -61,19 +60,19 @@ The Worker entrypoint is [`cloudflare/worker.ts`](/Users/davidarnal/Documents/Lo
 
 ### Frontend build variables
 
-Use `.env.staging.example` and `.env.production.example` as templates.
+Use `.env.production.example` as the template.
 
 Required Vite variables:
 
 ```txt
-VITE_LOTUS_DEPLOY_ENV=staging|production|preview|local
+VITE_LOTUS_DEPLOY_ENV=production|preview|local
 VITE_LOTUS_API_BASE_URL=/api
 VITE_TURNKEY_AUTH_ENABLED=true
 VITE_TURNKEY_ORGANIZATION_ID=<turnkey-org-id>
 VITE_TURNKEY_AUTH_PROXY_CONFIG_ID=<turnkey-config-id>
 VITE_TURNKEY_AUTH_PROXY_URL=/turnkey-auth-proxy
 VITE_LOTUS_AUTH_EXCHANGE_PATH=/auth/turnkey/exchange
-VITE_TURNKEY_OAUTH_REDIRECT_ORIGIN=https://staging.uselotus.xyz|https://app.uselotus.xyz
+VITE_TURNKEY_OAUTH_REDIRECT_ORIGIN=https://app.uselotus.xyz
 ```
 
 ### Worker runtime variables
@@ -81,8 +80,7 @@ VITE_TURNKEY_OAUTH_REDIRECT_ORIGIN=https://staging.uselotus.xyz|https://app.usel
 Configured through `wrangler.jsonc` and Cloudflare environment settings:
 
 ```txt
-LOTUS_API_ORIGIN=https://staging-api.uselotus.xyz   # staging
-LOTUS_API_ORIGIN=https://api.uselotus.xyz           # production
+LOTUS_API_ORIGIN=https://api.uselotus.xyz
 TURNKEY_AUTH_PROXY_URL=https://authproxy.turnkey.com
 ```
 
@@ -95,14 +93,12 @@ TURNKEY_AUTH_PROXY_CONFIG_ID
 Set the secret with:
 
 ```bash
-npx wrangler secret put TURNKEY_AUTH_PROXY_CONFIG_ID --env staging
 npx wrangler secret put TURNKEY_AUTH_PROXY_CONFIG_ID --env production
 ```
 
 ## Cloudflare deploy commands
 
 ```bash
-npm run cf:deploy:staging
 npm run cf:deploy:production
 ```
 
@@ -110,6 +106,6 @@ Worker configuration lives in [`wrangler.jsonc`](/Users/davidarnal/Documents/Lot
 
 ## Notes
 
-- Preview and `workers.dev` environments use the same-origin proxy approach as staging and production.
+- Preview and `workers.dev` environments use the same-origin proxy approach as production.
 - The frontend env layer resolves deployment mode explicitly instead of relying on hostname-specific platform assumptions.
 - API traffic should go through `/api`, not direct browser calls to backend origins.

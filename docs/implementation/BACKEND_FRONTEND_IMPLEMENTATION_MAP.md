@@ -3,7 +3,7 @@
 Status: implementation pass in progress
 Last updated: 2026-05-09
 
-This document is the working implementation map for wiring the Lotus user-facing frontend to the local Lotus RFQ backend. It does not change runtime behavior. It should be updated before each major frontend implementation slice and used as the handoff checklist for staging.
+This document is the working implementation map for wiring the Lotus user-facing frontend to the local Lotus RFQ backend. It does not change runtime behavior. It should be updated before each major frontend implementation slice and used as the handoff checklist for implementation work.
 
 ## 1. Source Of Truth
 
@@ -26,7 +26,7 @@ Hard rules:
 - No frontend override of backend blockers, readiness, funding, allowance, live-submit, or settlement state.
 - No invented endpoint, field, status, or user flow.
 - No custody language. Lotus routes, verifies, and relays user-approved actions; users keep wallet control.
-- Work ships to `staging` first. `main` only moves when explicitly approved.
+- Work moves to `main` only when explicitly approved.
 
 ## 2. Confirmed User-Facing Backend Surface
 
@@ -183,9 +183,9 @@ Frontend rule:
 
 - The frontend never chooses the final route. It asks the backend to quote and uses the route returned.
 - The frontend never marks a trade filled or settled without backend confirmation.
-- Staging route coverage policy: backend `STAGING` mode may prefer a real pair route above about `$49.95` notional when two executable venues are available, and may prefer the widest executable pair/tri/strict-all style route above about `$500` notional. This is for proving multi-venue execution paths in staging only; it still requires live quoteable/readiness-passing candidates and minimum real leg size.
+- Route-coverage testing may prefer a real pair route above about `$49.95` notional when two executable venues are available, and may prefer the widest executable pair/tri/strict-all style route above about `$500` notional. It still requires live quoteable/readiness-passing candidates and minimum real leg size.
 - Production route policy remains economics-first. It does not force a split just to show multiple venues; pair/tri/strict-all routes must pass the backend improvement and readiness rules.
-- If staging selects the coverage route, quote decision reason can be `staging_multi_venue_selected_for_route_coverage`. Frontend copy may show the returned route as backend-selected, but the UI must not override, rebalance, or fabricate legs.
+- If backend selects a coverage route, frontend copy may show the returned route as backend-selected, but the UI must not override, rebalance, or fabricate legs.
 
 ### Resolution Risk
 
@@ -257,7 +257,7 @@ These are not blockers for planning, but they must be resolved before a producti
 - `POST /markets/quotes/batch` may return `status: "stale"` for last-good backend-observed quote evidence when a fresh read fails. Stale quote data keeps the card readable while background refresh runs, but it does not unlock trading or route submission.
 - Binary No display may be derived as `1 - live Yes` only for display. The trade ticket and quote preview still require backend-returned executable candidates.
 - Opinion uses backend-only builder config (`OPINION_API_KEY` or `OPINION_BUILDER_API_KEY`) for discovery/token enrichment and quote readiness. The key is never exposed to the frontend. Opinion live order submission remains disabled unless separately approved and backend execution mode is explicitly enabled.
-- Staging route labels may show pair, tri, or strict-all style routes more often after quote preview because backend staging policy can prefer multi-venue coverage above the configured notionals. Dashboard/card labels still must come from backend route evidence and venue path length, not client inference from catalog venue count.
+- Route labels may show pair, tri, or strict-all style routes more often after quote preview when backend route-coverage testing prefers multi-venue coverage above the configured notionals. Dashboard/card labels still must come from backend route evidence and venue path length, not client inference from catalog venue count.
 - Savings and order-flow counts remain quote-required/unavailable until backend returns those fields from a quote or analytics contract.
 
 1. Full order book depth in terminal
@@ -868,14 +868,14 @@ Allowed display:
 - Public market IDs only when needed for support/debug copy.
 - User-safe backend error message.
 
-## 7. Staging And Production Flow
+## 7. Release Flow
 
 For every approved implementation slice:
 
-1. Work on the frontend `staging` branch.
+1. Work on a dedicated frontend branch.
 2. Run local checks.
-3. Push to `staging`.
-4. Test Vercel staging and backend staging together.
+3. Push the branch for review or backup.
+4. Test locally against the intended backend.
 5. Move to `main` only when the user explicitly says to send to production.
 
 Do not push runtime changes to `main` by default.
@@ -895,13 +895,12 @@ Do not push runtime changes to `main` by default.
 
 ## 9. Questions To Resolve Before Coding
 
-1. Should `app.uselotus.xyz` remain staging for now, or should we create a separate staging domain before the next deploy?
-2. Should email login be hidden until a confirmed Turnkey email flow is ready, or should it stay visible but disabled?
-3. Should Watchlist be local-only for private beta, or should we block it until backend persistence exists?
-4. Portfolio PnL is backend mark-to-market from current quotes for verified positions; historical portfolio charting remains current-snapshot only until persisted history exists. Market terminal charting now has a non-Predexon live accumulation contract.
-5. Should Opinion and Myriad stay visible as "setup needed" / "not configured", or be hidden until their live user flow is ready?
-6. Should Limit order controls stay visible but disabled, or be hidden until the backend limit-order contract exists?
-7. Are in-session notifications enough for private beta, or do we need a persistent notifications backend before launch?
+1. Should email login be hidden until a confirmed Turnkey email flow is ready, or should it stay visible but disabled?
+2. Should Watchlist be local-only for private beta, or should we block it until backend persistence exists?
+3. Portfolio PnL is backend mark-to-market from current quotes for verified positions; historical portfolio charting remains current-snapshot only until persisted history exists. Market terminal charting now has a non-Predexon live accumulation contract.
+4. Should Opinion and Myriad stay visible as "setup needed" / "not configured", or be hidden until their live user flow is ready?
+5. Should Limit order controls stay visible but disabled, or be hidden until the backend limit-order contract exists?
+6. Are in-session notifications enough for private beta, or do we need a persistent notifications backend before launch?
 
 ## 10. Acceptance Criteria For This Map
 

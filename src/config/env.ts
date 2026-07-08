@@ -22,7 +22,7 @@ const lotusDeployEnv = import.meta.env.VITE_LOTUS_DEPLOY_ENV;
 const executionOrchestratorV1Enabled = import.meta.env.VITE_EXECUTION_ORCHESTRATOR_V1_ENABLED;
 const resolvedLotusDeployEnv = configuredLotusDeployEnv(lotusDeployEnv);
 
-export type LotusDeployEnv = "local" | "preview" | "staging" | "production";
+export type LotusDeployEnv = "local" | "preview" | "production";
 
 function isEnabledFlag(value: unknown): boolean {
   return typeof value === "string" && value.trim().toLowerCase() === "true";
@@ -97,7 +97,7 @@ function configuredLotusDeployEnv(value: unknown): LotusDeployEnv {
 function normalizeDeployEnv(value: unknown): LotusDeployEnv | null {
   if (typeof value !== "string") return null;
   const normalized = value.trim().toLowerCase();
-  if (normalized === "local" || normalized === "preview" || normalized === "staging" || normalized === "production") {
+  if (normalized === "local" || normalized === "preview" || normalized === "production") {
     return normalized;
   }
   return null;
@@ -118,7 +118,6 @@ function inferDeployEnvFromHostname(): LotusDeployEnv {
 function defaultLotusApiBaseUrlForDeployEnv(deployEnv: LotusDeployEnv): string {
   switch (deployEnv) {
     case "production":
-    case "staging":
     case "preview":
       return "/api";
     case "local":
@@ -131,9 +130,8 @@ function defaultLotusWsBaseUrlForDeployEnv(deployEnv: LotusDeployEnv): string {
   switch (deployEnv) {
     case "production":
       return "https://api.uselotus.xyz";
-    case "staging":
     case "preview":
-      return "https://staging-api.uselotus.xyz";
+      return "/api";
     case "local":
     default:
       return "http://localhost:3000";
@@ -142,7 +140,6 @@ function defaultLotusWsBaseUrlForDeployEnv(deployEnv: LotusDeployEnv): string {
 
 function deployedFrontendKind(hostname: string): Exclude<LotusDeployEnv, "local"> | null {
   if (hostname === "app.uselotus.xyz") return "production";
-  if (hostname === "staging.uselotus.xyz") return "staging";
   if (hostname.endsWith(".workers.dev") || hostname.endsWith(".pages.dev")) return "preview";
   return null;
 }

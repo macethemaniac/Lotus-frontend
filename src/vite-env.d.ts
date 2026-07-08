@@ -4,7 +4,7 @@ interface ImportMetaEnv {
   readonly VITE_EXECUTION_ORCHESTRATOR_V1_ENABLED?: string;
   readonly VITE_LOTUS_API_BASE_URL?: string;
   readonly VITE_LOTUS_AUTH_EXCHANGE_PATH?: string;
-  readonly VITE_LOTUS_DEPLOY_ENV?: "local" | "preview" | "staging" | "production";
+  readonly VITE_LOTUS_DEPLOY_ENV?: "local" | "preview" | "production";
   readonly VITE_TURNKEY_API_BASE_URL?: string;
   readonly VITE_TURNKEY_AUTH_ENABLED?: string;
   readonly VITE_TURNKEY_AUTH_PROXY_CONFIG_ID?: string;
