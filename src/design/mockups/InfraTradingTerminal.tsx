@@ -1573,6 +1573,8 @@ const saveCachedTerminalOutcomeRows = (cacheKey: string, rows: readonly Terminal
   if (typeof window === 'undefined') return;
   if (!hasResolvedOutcomeProbabilitySet(rows)) return;
   if (!isSaneMultiOutcomeProbabilitySet(rows)) return;
+  const resolvedRowsAreLive = rows.every((row) => outcomeProbabilityValue(row) === null || row.status === 'live');
+  if (!resolvedRowsAreLive) return;
   try {
     window.localStorage.setItem(terminalOutcomeRowsCacheKey(cacheKey), JSON.stringify(rows.slice(0, 32)));
   } catch {
@@ -4716,7 +4718,7 @@ const InfraTradingTerminalInner = ({
         marketType: chartMarketType,
       }).catch(() => seedRows);
       const stableFallbackRows = firstStableOutcomeRows(previousRows, fallbackRows, polymarketSeedRows, seedRows);
-      const seedDisplayRows = firstStableOutcomeRows(polymarketSeedRows, stableFallbackRows, seedRows);
+      const seedDisplayRows = firstStableOutcomeRows(stableFallbackRows, polymarketSeedRows, seedRows);
       const immediateDisplayRows = seedDisplayRows.length > 0 ? seedDisplayRows : seedRows;
       setTerminalOutcomes(immediateDisplayRows);
       const currentSelectedOutcomeId = selectedOutcomeIdRef.current;
