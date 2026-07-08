@@ -31,8 +31,8 @@ import { getExecutionHistory, getPortfolioSummary, type ExecutionStatus, type Li
 import { getFundingHistory, getVenueBalances, type FundingHistoryRow, type VenueBalance } from '@/features/funding/api/funding-api';
 import { ApiClientError } from '@/lib/api/http-client';
 import { lotusMarketDiagnosticsEnabled } from '@/config/env';
-import { 
-  Search, Bell, Home, BarChart2, ArrowRightLeft, 
+import {
+  Search, Bell, BarChart2, ArrowRightLeft,
   Zap, PieChart, Activity, Settings, ChevronDown, ChevronUp,
   ShieldCheck, AlertTriangle, Clock, ChevronRight,
   Flame, Globe, Cpu, MessageSquare, ChevronsLeft, ChevronsRight,
@@ -2666,7 +2666,6 @@ export const DashboardV2Mockup = ({
           <LotusLogo className="h-6 w-6" />
         </button>
         <nav className="flex flex-col gap-5 w-full items-center">
-          <NavItem icon={<Home className="w-4 h-4" />} active={activePage === 'home'} label="Home" onClick={() => onNavigate?.('home')} />
           <NavItem icon={<BarChart2 className="w-4 h-4" />} active={activePage === 'markets'} label="Markets" onClick={() => onNavigate?.('markets')} />
           <NavItem icon={<Terminal className="w-4 h-4" />} active={activePage === 'terminal'} label="Terminal" onClick={() => onNavigate?.('terminal')} />
           <NavItem icon={<Volleyball className="w-4 h-4" />} label="Matchroom" />
