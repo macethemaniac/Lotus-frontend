@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  displayableLivePriceValue,
   isSelectedOutcomeBookUsable,
   isSelectedOutcomeBookReady,
   mergeTerminalOutcomeRowDisplay,
@@ -33,6 +34,62 @@ const live: TerminalOutcomeDisplayValues = {
   noPrice: '82c',
   probability: '18%',
 };
+
+describe('displayableLivePriceValue', () => {
+  it('prefers the aggregate best ask used by the expanded orderbook display', () => {
+    expect(displayableLivePriceValue({
+      marketId: 'world-cup-winner',
+      outcomeId: 'ARGENTINA',
+      generatedAt: new Date().toISOString(),
+      status: 'live',
+      price: '0.181',
+      bestBid: '0.172',
+      bestAsk: '0.178',
+      midpoint: '0.175',
+      spread: '0.006',
+      bestVenue: 'POLYMARKET',
+      venueCount: 2,
+      venues: ['POLYMARKET', 'LIMITLESS'],
+      liveVenueCount: 2,
+      liveVenues: ['POLYMARKET', 'LIMITLESS'],
+      linkedVenueCount: 2,
+      linkedVenues: ['POLYMARKET', 'LIMITLESS'],
+      venueBreakdown: [
+        { venue: 'LIMITLESS', price: '0.185', bestBid: '0.176', bestAsk: '0.185', status: 'live' },
+        { venue: 'POLYMARKET', price: '0.178', bestBid: '0.172', bestAsk: '0.178', status: 'live' },
+      ],
+      averagePrice: '0.1815',
+      freshnessMs: 1000,
+    }, '18.5%')).toBe(0.178);
+  });
+
+  it('falls back to venue best ask when the aggregate best ask is unavailable', () => {
+    expect(displayableLivePriceValue({
+      marketId: 'world-cup-winner',
+      outcomeId: 'ARGENTINA',
+      generatedAt: new Date().toISOString(),
+      status: 'live',
+      price: '0.181',
+      bestBid: '0.172',
+      bestAsk: null,
+      midpoint: '0.175',
+      spread: null,
+      bestVenue: 'POLYMARKET',
+      venueCount: 2,
+      venues: ['POLYMARKET', 'LIMITLESS'],
+      liveVenueCount: 2,
+      liveVenues: ['POLYMARKET', 'LIMITLESS'],
+      linkedVenueCount: 2,
+      linkedVenues: ['POLYMARKET', 'LIMITLESS'],
+      venueBreakdown: [
+        { venue: 'LIMITLESS', price: '0.185', bestBid: '0.176', bestAsk: '0.185', status: 'live' },
+        { venue: 'POLYMARKET', price: '0.178', bestBid: '0.172', bestAsk: '0.178', status: 'live' },
+      ],
+      averagePrice: '0.1815',
+      freshnessMs: 1000,
+    }, '18.5%')).toBe(0.178);
+  });
+});
 
 describe('isSelectedOutcomeBookReady', () => {
   it('returns false when the orderbook is missing', () => {
