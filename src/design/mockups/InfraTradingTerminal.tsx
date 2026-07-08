@@ -4661,8 +4661,7 @@ const InfraTradingTerminalInner = ({
       }).catch(() => seedRows);
       const stableFallbackRows = firstStableOutcomeRows(previousRows, fallbackRows, polymarketSeedRows, seedRows);
       const seedDisplayRows = firstStableOutcomeRows(polymarketSeedRows, stableFallbackRows, seedRows);
-      const shouldDeferSeedPriceDisplay = chartMarketType === 'multi' && Boolean(terminalPolymarketEventSlug || terminalPolymarketMarketSlug);
-      const immediateDisplayRows = shouldDeferSeedPriceDisplay ? seedRows : seedDisplayRows;
+      const immediateDisplayRows = seedDisplayRows.length > 0 ? seedDisplayRows : seedRows;
       setTerminalOutcomes(immediateDisplayRows);
       const currentSelectedOutcomeId = selectedOutcomeIdRef.current;
       const nextSelectedOutcomeId = selectedOutcomeAutoFollowRef.current
