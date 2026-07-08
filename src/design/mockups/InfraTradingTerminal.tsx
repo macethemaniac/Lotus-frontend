@@ -1544,6 +1544,42 @@ const firstStableOutcomeRows = (
   return [];
 };
 
+const TERMINAL_OUTCOME_ROWS_CACHE_PREFIX = 'lotus:terminal-outcome-rows:v1:';
+
+const terminalOutcomeRowsCacheKey = (value: string): string =>
+  `${TERMINAL_OUTCOME_ROWS_CACHE_PREFIX}${value}`;
+
+const loadCachedTerminalOutcomeRows = (cacheKey: string): TerminalOutcomeRow[] | null => {
+  if (typeof window === 'undefined') return null;
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(terminalOutcomeRowsCacheKey(cacheKey)) ?? 'null') as unknown;
+    if (!Array.isArray(parsed)) return null;
+    const rows = parsed.filter((row): row is TerminalOutcomeRow => (
+      Boolean(row) &&
+      typeof row === 'object' &&
+      typeof (row as TerminalOutcomeRow).id === 'string' &&
+      typeof (row as TerminalOutcomeRow).name === 'string' &&
+      typeof (row as TerminalOutcomeRow).prob === 'string'
+    ));
+    if (!hasResolvedOutcomeProbabilitySet(rows)) return null;
+    if (!isSaneMultiOutcomeProbabilitySet(rows)) return null;
+    return rows;
+  } catch {
+    return null;
+  }
+};
+
+const saveCachedTerminalOutcomeRows = (cacheKey: string, rows: readonly TerminalOutcomeRow[]): void => {
+  if (typeof window === 'undefined') return;
+  if (!hasResolvedOutcomeProbabilitySet(rows)) return;
+  if (!isSaneMultiOutcomeProbabilitySet(rows)) return;
+  try {
+    window.localStorage.setItem(terminalOutcomeRowsCacheKey(cacheKey), JSON.stringify(rows.slice(0, 32)));
+  } catch {
+    // Ignore storage failures; live refresh will repopulate the terminal.
+  }
+};
+
 const sanitizedLiveOutcomeRows = (rows: readonly TerminalOutcomeRow[]): TerminalOutcomeRow[] => {
   if (rows.length <= 2) return hasResolvedOutcomeProbabilitySet(rows) ? [...rows] : [];
   const withoutTransientHighs = rows.filter((row) => {
@@ -3223,14 +3259,33 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
   const requestScopedVenueChart = chartDataRequestKey === requestKey ? venueChart : null;
   const requestScopedOutcomeCharts = chartDataRequestKey === requestKey ? outcomeCharts : [];
   const requestScopedError = chartDataRequestKey === requestKey ? error : null;
+  const liveOnlyOutcomeCharts = useMemo<OutcomeChartEntry[]>(() => (
+    chartOutcomeInputs.flatMap((outcome) => {
+      if (outcome.latestValue === null) return [];
+      return [{
+        ...outcome,
+        latestValue: outcome.latestValue,
+        chart: toPolymarketOutcomeChartResponse(
+          outcome.marketId ?? outcome.id,
+          outcome.quoteOutcomeId,
+          activeTab,
+          [{ t: Math.floor(Date.now() / 1000), p: outcome.latestValue / 100 }],
+        ),
+      }];
+    })
+  ), [activeTab, chartOutcomeInputs]);
   const prefersOutcomeChart = marketType === 'multi'
     ? prefersPolymarketMultiHistory || chartOutcomeInputs.length > 0
     : prefersPolymarketBinaryHistory || chartOutcomeInputs.length > 0;
   const chartModel = useMemo(
     () => prefersOutcomeChart
-      ? toOutcomeChartModel(requestScopedOutcomeCharts, liveOutcomeValuesByKey, activeTab)
+      ? toOutcomeChartModel(
+        requestScopedOutcomeCharts.length > 0 ? requestScopedOutcomeCharts : liveOnlyOutcomeCharts,
+        liveOutcomeValuesByKey,
+        activeTab,
+      )
       : toVenueChartModel(requestScopedVenueChart, activeTab, "venues"),
-    [activeTab, liveOutcomeValuesByKey, prefersOutcomeChart, requestScopedOutcomeCharts, requestScopedVenueChart]
+    [activeTab, liveOnlyOutcomeCharts, liveOutcomeValuesByKey, prefersOutcomeChart, requestScopedOutcomeCharts, requestScopedVenueChart]
   );
   const { rows, series, historyStatus } = chartModel;
   const chartSourceLabel = 'Lotus';
@@ -3899,6 +3954,7 @@ const InfraTradingTerminalInner = ({
   const terminalPolymarketMarketSlug = terminalMarket.venueMarkets?.find((market) => market.venue === 'POLYMARKET' && market.marketSlug)?.marketSlug
     ?? selectedVenueMarkets.find((market) => market.venue === 'POLYMARKET' && market.marketSlug)?.marketSlug
     ?? null;
+  const terminalOutcomeCacheKey = `${terminalMarketResetKey}:${terminalPolymarketEventSlug ?? 'no-event'}:${terminalPolymarketMarketSlug ?? 'no-market'}`;
   const resolutionRuleFallbacks = useMemo(
     () => catalogRuleFallbacks(selectedVenueMarkets),
     [selectedVenueMarkets]
@@ -4900,6 +4956,11 @@ const InfraTradingTerminalInner = ({
   }, [terminalMarketResetKey]);
 
   React.useEffect(() => {
+    if (chartMarketType !== 'multi') return;
+    saveCachedTerminalOutcomeRows(terminalOutcomeCacheKey, terminalOutcomes);
+  }, [chartMarketType, terminalOutcomeCacheKey, terminalOutcomes]);
+
+  React.useEffect(() => {
     const marketChanged = shouldResetExpandedOutcomeForMarketChange(
       terminalMarketResetKeyRef.current,
       terminalMarketResetKey,
@@ -4909,7 +4970,8 @@ const InfraTradingTerminalInner = ({
 
     const fallbackRows = seedTerminalOutcomeRows();
     const shouldWaitForPolymarketSeed = chartMarketType === 'multi' && Boolean(terminalPolymarketEventSlug || terminalPolymarketMarketSlug);
-    const initialRows = shouldWaitForPolymarketSeed ? [] : fallbackRows;
+    const cachedRows = shouldWaitForPolymarketSeed ? loadCachedTerminalOutcomeRows(terminalOutcomeCacheKey) : null;
+    const initialRows = shouldWaitForPolymarketSeed ? cachedRows ?? [] : fallbackRows;
     selectedOutcomeAutoFollowRef.current = true;
     setTerminalOutcomes(initialRows);
     const nextSelectedOutcomeId = defaultTerminalOutcomeId(initialRows) ?? resolveInitialSelectedOutcomeId(terminalMarket.initialOutcomeId, initialRows);
@@ -4935,6 +4997,7 @@ const InfraTradingTerminalInner = ({
     terminalMarket.initialOutcomeId,
     terminalMarket.initialOutcomeSide,
     terminalMarketResetKey,
+    terminalOutcomeCacheKey,
     terminalPolymarketEventSlug,
     terminalPolymarketMarketSlug,
   ]);
