@@ -4490,10 +4490,10 @@ const InfraTradingTerminalInner = ({
   }, [quoteableTerminalOutcomes, selectTerminalOutcome]);
   const selectedTicketUsesLatchedOutcomeDisplay = selectedTicketOutcome?.id === selectedOutcome?.id;
   const selectedTicketYesPrice = selectedTicketUsesLatchedOutcomeDisplay
-    ? selectedOutcomeOrderbookDisplayValues?.yesPrice ?? selectedOutcomeDisplayValues?.yesPrice ?? selectedTicketOutcome?.yesPrice ?? null
+    ? selectedOutcomeRowDisplay?.yesPrice ?? selectedOutcomeDisplayValues?.yesPrice ?? selectedOutcomeOrderbookDisplayValues?.yesPrice ?? selectedTicketOutcome?.yesPrice ?? null
     : selectedTicketOutcome?.yesPrice ?? null;
   const selectedTicketNoPrice = selectedTicketUsesLatchedOutcomeDisplay
-    ? selectedOutcomeOrderbookDisplayValues?.noPrice ?? selectedOutcomeDisplayValues?.noPrice ?? selectedTicketOutcome?.noPrice ?? null
+    ? selectedOutcomeRowDisplay?.noPrice ?? selectedOutcomeDisplayValues?.noPrice ?? selectedOutcomeOrderbookDisplayValues?.noPrice ?? selectedTicketOutcome?.noPrice ?? null
     : selectedTicketOutcome?.noPrice ?? null;
   const selectedTicketDisplayPrice = parseProbabilityLabel(ticketOutcomeSide === 'yes' ? selectedTicketYesPrice : selectedTicketNoPrice);
   const selectedTicketFallbackPrice = ticketPriceForSide(selectedTicketOutcome, ticketOutcomeSide);
@@ -8028,21 +8028,24 @@ const InfraTradingTerminalInner = ({
                              ? rowVenueList[0]!
                              : m.primaryVenue ?? venues[0] ?? 'lotus';
                            const rowYesPrice = isExpandedOutcome
-                             ? normalizeTerminalDisplayValue(selectedOutcomeOrderbookDisplayValues?.yesPrice)
+                             ? normalizeTerminalDisplayValue(m.yesPrice)
+                               ?? normalizeTerminalDisplayValue(selectedOutcomeRowDisplay?.yesPrice)
                                ?? normalizeTerminalDisplayValue(selectedOutcomeDisplayValues?.yesPrice)
-                               ?? normalizeTerminalDisplayValue(m.yesPrice)
+                               ?? normalizeTerminalDisplayValue(selectedOutcomeOrderbookDisplayValues?.yesPrice)
                                ?? m.yesPrice
                              : m.yesPrice;
                            const rowNoPrice = isExpandedOutcome
-                             ? normalizeTerminalDisplayValue(selectedOutcomeOrderbookDisplayValues?.noPrice)
+                             ? normalizeTerminalDisplayValue(m.noPrice)
+                               ?? normalizeTerminalDisplayValue(selectedOutcomeRowDisplay?.noPrice)
                                ?? normalizeTerminalDisplayValue(selectedOutcomeDisplayValues?.noPrice)
-                               ?? normalizeTerminalDisplayValue(m.noPrice)
+                               ?? normalizeTerminalDisplayValue(selectedOutcomeOrderbookDisplayValues?.noPrice)
                                ?? m.noPrice
                              : m.noPrice;
                            const rowProbability = isExpandedOutcome
-                             ? normalizeTerminalDisplayValue(selectedOutcomeOrderbookDisplayValues?.probability)
+                             ? normalizeTerminalDisplayValue(m.prob)
+                               ?? normalizeTerminalDisplayValue(selectedOutcomeRowDisplay?.probability)
                                ?? normalizeTerminalDisplayValue(selectedOutcomeDisplayValues?.probability)
-                               ?? normalizeTerminalDisplayValue(m.prob)
+                               ?? normalizeTerminalDisplayValue(selectedOutcomeOrderbookDisplayValues?.probability)
                                ?? m.prob
                              : m.prob;
                            const rowYesVenue = primaryVenue;
