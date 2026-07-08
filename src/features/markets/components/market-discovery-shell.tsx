@@ -60,18 +60,6 @@ export function MarketDiscoveryShell({ onStartTrade }: { onStartTrade: () => voi
         </div>
       </section>
 
-      <aside className="space-y-5">
-        <Panel className="border-lotus-500/40 p-5">
-          <h2 className="text-sm font-bold">Today with Lotus</h2>
-          <Metric label="Routeable Opportunities" value="Backend gated" />
-          <Metric label="Improved Routes" value="Evidence only" />
-          <Metric label="Review-Gated Markets" value="Fail closed" />
-        </Panel>
-        <Panel className="p-5">
-          <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Execution-ready capital</p>
-          <p className="mt-3 text-sm text-zinc-400">Use the funding tab to load backend-confirmed venue-ready balances.</p>
-        </Panel>
-      </aside>
     </div>
   );
 }
@@ -103,14 +91,5 @@ function TabButton({ active = false, icon, children }: { active?: boolean; icon?
       {icon}
       {children}
     </button>
-  );
-}
-
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="mt-4 flex items-center justify-between gap-4 text-sm">
-      <span className="text-zinc-400">{label}</span>
-      <span className="font-mono font-bold text-zinc-200">{value}</span>
-    </div>
   );
 }

@@ -7893,6 +7893,10 @@ const InfraTradingTerminalInner = ({
                              orderbook: isExpandedOutcome ? displayOrderbook : null,
                              expanded: isExpandedOutcome,
                            });
+                           const rowYesVenueLabel = formatVenueLabel(rowYesVenue ?? primaryVenue ?? 'Venue');
+                           const rowNoVenueLabel = formatVenueLabel(rowNoVenue ?? primaryVenue ?? 'Venue');
+                           const rowYesVenueId = normalizeVenueId(rowYesVenue ?? primaryVenue ?? 'Venue');
+                           const rowNoVenueId = normalizeVenueId(rowNoVenue ?? primaryVenue ?? 'Venue');
                            const rowYesSelected = isSelectedOutcome && ticketOutcomeSide === 'yes';
                            const rowNoSelected = isSelectedOutcome && ticketOutcomeSide === 'no';
                            if (isExpandedOutcome) {
@@ -7924,19 +7928,19 @@ const InfraTradingTerminalInner = ({
                                      <button
                                        type="button"
                                        onClick={() => selectTicketOutcome('yes', m.id)}
-                                       className={`flex h-10 min-w-[132px] items-center justify-center gap-2 rounded-full border px-4 text-sm font-black transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${rowYesSelected ? 'border-emerald-400 bg-emerald-500 text-white shadow-[0_0_18px_rgba(16,185,129,0.22)] hover:bg-emerald-400' : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20'}`}
+                                     className={`flex h-10 min-w-[132px] items-center justify-center gap-2 rounded-full border px-4 text-sm font-black transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${rowYesSelected ? 'border-emerald-400 bg-emerald-500 text-white shadow-[0_0_18px_rgba(16,185,129,0.22)] hover:bg-emerald-400' : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20'}`}
                                        aria-pressed={rowYesSelected}
                                      >
-                                       <VenueLogo id={normalizeVenueId(rowYesVenue)} label={formatVenueLabel(rowYesVenue)} className="h-4 w-4 rounded-full" />
+                                       <VenueLogo id={rowYesVenueId} label={rowYesVenueLabel} className="h-4 w-4 rounded-full" />
                                        Yes {displayPercentLabel(rowYesPrice, marketDiagnosticsEnabled)}
                                      </button>
                                      <button
                                        type="button"
                                        onClick={() => selectTicketOutcome('no', m.id)}
-                                       className={`flex h-10 min-w-[132px] items-center justify-center gap-2 rounded-full border px-4 text-sm font-black transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${rowNoSelected ? 'border-red-400 bg-[#E52B50] text-white shadow-[0_0_18px_rgba(229,43,80,0.24)] hover:bg-[#ff3366]' : 'border-red-500/25 bg-[#3F1D24] text-red-200 hover:bg-[#52252f]'}`}
+                                     className={`flex h-10 min-w-[132px] items-center justify-center gap-2 rounded-full border px-4 text-sm font-black transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${rowNoSelected ? 'border-red-400 bg-[#E52B50] text-white shadow-[0_0_18px_rgba(229,43,80,0.24)] hover:bg-[#ff3366]' : 'border-red-500/25 bg-[#3F1D24] text-red-200 hover:bg-[#52252f]'}`}
                                        aria-pressed={rowNoSelected}
                                      >
-                                       <VenueLogo id={normalizeVenueId(rowNoVenue)} label={formatVenueLabel(rowNoVenue)} className="h-4 w-4 rounded-full" />
+                                       <VenueLogo id={rowNoVenueId} label={rowNoVenueLabel} className="h-4 w-4 rounded-full" />
                                        No {displayPercentLabel(rowNoPrice, marketDiagnosticsEnabled)}
                                      </button>
                                      <button
@@ -8070,7 +8074,7 @@ const InfraTradingTerminalInner = ({
                                             className={`flex min-h-8 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${rowYesSelected ? 'border-emerald-400 bg-emerald-500 text-white shadow-[0_0_14px_rgba(16,185,129,0.2)] hover:bg-emerald-400' : 'border-transparent bg-[#1A3A34] text-[#4ade80] hover:bg-[#204941]'}`}
                                             aria-pressed={rowYesSelected}
                                           >
-                                               <VenueLogo id={normalizeVenueId(rowYesVenue)} label={formatVenueLabel(rowYesVenue)} className="h-3.5 w-3.5 rounded-full" /> Yes {displayPercentLabel(rowYesPrice, marketDiagnosticsEnabled)}
+                                               <VenueLogo id={rowYesVenueId} label={rowYesVenueLabel} className="h-3.5 w-3.5 rounded-full" /> Yes {displayPercentLabel(rowYesPrice, marketDiagnosticsEnabled)}
                                           </button>
                                           <button
                                             type="button"
@@ -8082,7 +8086,7 @@ const InfraTradingTerminalInner = ({
                                             className={`flex min-h-8 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70 ${rowNoSelected ? 'border-red-400 bg-[#E52B50] text-white shadow-[0_0_14px_rgba(229,43,80,0.22)] hover:bg-[#ff3366]' : 'border-transparent bg-[#3F1D24] text-[#f87171] hover:bg-[#52252f]'}`}
                                             aria-pressed={rowNoSelected}
                                           >
-                                               <VenueLogo id={normalizeVenueId(rowNoVenue)} label={formatVenueLabel(rowNoVenue)} className="h-3.5 w-3.5 rounded-full" /> No {displayPercentLabel(rowNoPrice, marketDiagnosticsEnabled)}
+                                               <VenueLogo id={rowNoVenueId} label={rowNoVenueLabel} className="h-3.5 w-3.5 rounded-full" /> No {displayPercentLabel(rowNoPrice, marketDiagnosticsEnabled)}
                                           </button>
                                           <button
                                             type="button"
