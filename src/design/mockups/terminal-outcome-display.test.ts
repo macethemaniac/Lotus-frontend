@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  applyTerminalOutcomePriceDisplay,
+  displayableLivePriceValue,
   isSelectedOutcomeBookUsable,
   isSelectedOutcomeBookReady,
   mergeTerminalOutcomeRowDisplay,
+  orderbookBestAskValue,
   orderSelectedOutcomeVisibleVenues,
   resolveLivePriceForTerminalOutcome,
   resolveOutcomeSummaryVenueCount,
@@ -12,11 +15,9 @@ import {
   resolveSelectedMarketHydratedMedia,
   resolveSelectedMarketSeedMedia,
   resolveInitialSelectedOutcomeId,
-  resolveSelectedOutcomeRow,
   resolveSelectedOutcomeOrderbookDisplaySource,
   resolveSelectedOutcomeDisplayValues,
   resolveVisibleSelectedOutcomeOrderbook,
-  shouldApplyLatchedOutcomeDisplay,
   shouldSyncSelectedOutcomeRowDisplay,
   shouldResetOrderbookForRequestChange,
   shouldReuseSelectedOutcomeState,
@@ -35,6 +36,83 @@ const live: TerminalOutcomeDisplayValues = {
   noPrice: '82c',
   probability: '18%',
 };
+
+describe('displayableLivePriceValue', () => {
+  it('prefers the aggregate best ask used by the expanded orderbook display', () => {
+    expect(displayableLivePriceValue({
+      marketId: 'world-cup-winner',
+      outcomeId: 'ARGENTINA',
+      generatedAt: new Date().toISOString(),
+      status: 'live',
+      price: '0.181',
+      bestBid: '0.172',
+      bestAsk: '0.178',
+      midpoint: '0.175',
+      spread: '0.006',
+      bestVenue: 'POLYMARKET',
+      venueCount: 2,
+      venues: ['POLYMARKET', 'LIMITLESS'],
+      liveVenueCount: 2,
+      liveVenues: ['POLYMARKET', 'LIMITLESS'],
+      linkedVenueCount: 2,
+      linkedVenues: ['POLYMARKET', 'LIMITLESS'],
+      venueBreakdown: [
+        { venue: 'LIMITLESS', price: '0.185', bestBid: '0.176', bestAsk: '0.185', status: 'live' },
+        { venue: 'POLYMARKET', price: '0.178', bestBid: '0.172', bestAsk: '0.178', status: 'live' },
+      ],
+      averagePrice: '0.1815',
+      freshnessMs: 1000,
+    }, '18.5%')).toBe(0.178);
+  });
+
+  it('falls back to venue best ask when the aggregate best ask is unavailable', () => {
+    expect(displayableLivePriceValue({
+      marketId: 'world-cup-winner',
+      outcomeId: 'ARGENTINA',
+      generatedAt: new Date().toISOString(),
+      status: 'live',
+      price: '0.181',
+      bestBid: '0.172',
+      bestAsk: null,
+      midpoint: '0.175',
+      spread: null,
+      bestVenue: 'POLYMARKET',
+      venueCount: 2,
+      venues: ['POLYMARKET', 'LIMITLESS'],
+      liveVenueCount: 2,
+      liveVenues: ['POLYMARKET', 'LIMITLESS'],
+      linkedVenueCount: 2,
+      linkedVenues: ['POLYMARKET', 'LIMITLESS'],
+      venueBreakdown: [
+        { venue: 'LIMITLESS', price: '0.185', bestBid: '0.176', bestAsk: '0.185', status: 'live' },
+        { venue: 'POLYMARKET', price: '0.178', bestBid: '0.172', bestAsk: '0.178', status: 'live' },
+      ],
+      averagePrice: '0.1815',
+      freshnessMs: 1000,
+    }, '18.5%')).toBe(0.178);
+  });
+});
+
+describe('orderbookBestAskValue', () => {
+  it('normalizes the orderbook best ask used by expanded outcome rows', () => {
+    expect(orderbookBestAskValue({
+      marketId: 'world-cup-winner',
+      outcomeId: 'YES',
+      generatedAt: new Date().toISOString(),
+      depth: 1,
+      venues: [],
+      bids: [],
+      asks: [{ venue: 'POLYMARKET', venueMarketId: 'argentina', venueOutcomeId: 'YES', price: '0.178', size: '328000', cumulativeSize: '328000', cumulativeNotional: '58000' }],
+      bestBid: '0.177',
+      bestAsk: '0.178',
+      midpoint: '0.1775',
+      spread: '0.001',
+      status: 'live',
+      blockers: [],
+      stream: null,
+    })).toBe(0.178);
+  });
+});
 
 describe('isSelectedOutcomeBookReady', () => {
   it('returns false when the orderbook is missing', () => {
@@ -232,7 +310,7 @@ describe('shouldSyncSelectedOutcomeRowDisplay', () => {
     })).toBe(true);
   });
 
-  it('stops relatching expanded selected-row quotes once a usable orderbook is visible', () => {
+  it('preserves the live selected quote while a usable expanded orderbook is visible', () => {
     expect(shouldSyncSelectedOutcomeRowDisplay({
       current: {
         yesPrice: '35c',
@@ -247,31 +325,6 @@ describe('shouldSyncSelectedOutcomeRowDisplay', () => {
       outcomeExpanded: true,
       orderbookUsable: true,
     })).toBe(false);
-  });
-
-  it('does not keep re-latching collapsed selected rows on background price refreshes', () => {
-    expect(shouldSyncSelectedOutcomeRowDisplay({
-      current: {
-        yesPrice: '18c',
-        noPrice: '82c',
-        probability: '18%',
-      },
-      next: {
-        yesPrice: '19c',
-        noPrice: '81c',
-        probability: '19%',
-      },
-      outcomeExpanded: false,
-      orderbookUsable: false,
-    })).toBe(false);
-  });
-});
-
-describe('shouldApplyLatchedOutcomeDisplay', () => {
-  it('applies latched values only to the matching outcome row', () => {
-    expect(shouldApplyLatchedOutcomeDisplay('france', 'france')).toBe(true);
-    expect(shouldApplyLatchedOutcomeDisplay('argentina', 'france')).toBe(false);
-    expect(shouldApplyLatchedOutcomeDisplay(null, 'france')).toBe(false);
   });
 });
 
@@ -416,6 +469,29 @@ describe('resolveLivePriceForTerminalOutcome', () => {
       outcomeId: 'ARGENTINA',
     })?.marketId).toBe('market-argentina');
   });
+
+  it('does not borrow another outcome price from the same market when the requested outcome is missing', () => {
+    expect(resolveLivePriceForTerminalOutcome({
+      prices: [{
+        marketId: 'event-world-cup',
+        outcomeId: 'BELGIUM',
+        generatedAt: new Date().toISOString(),
+        status: 'live',
+        price: '0.98',
+        bestBid: '0.97',
+        bestAsk: '0.99',
+        midpoint: '0.98',
+        spread: '0.02',
+        bestVenue: 'POLYMARKET',
+        venueCount: 1,
+        venues: ['POLYMARKET'],
+        freshnessMs: 1000,
+      }],
+      marketId: 'event-world-cup',
+      canonicalMarketIds: ['event-world-cup'],
+      outcomeId: 'FRANCE',
+    })).toBeNull();
+  });
 });
 
 describe('resolveSelectedMarketSeedMedia', () => {
@@ -485,50 +561,39 @@ describe('resolveInitialSelectedOutcomeId', () => {
     ])).toBe('argentina');
     expect(resolveInitialSelectedOutcomeId(null, [])).toBeNull();
   });
-
-  it('falls back to the preferred sorted row when there is no explicit requested outcome', () => {
-    expect(resolveInitialSelectedOutcomeId(
-      null,
-      [
-        { id: 'argentina' },
-        { id: 'france' },
-      ],
-      [
-        { id: 'france' },
-        { id: 'argentina' },
-      ],
-    )).toBe('france');
-  });
 });
 
-describe('resolveSelectedOutcomeRow', () => {
-  it('returns the requested row when it exists in any prioritized group', () => {
-    expect(resolveSelectedOutcomeRow({
-      activeOutcomeId: 'france',
-      rowGroups: [
-        [{ id: 'argentina' }],
-        [{ id: 'france' }, { id: 'brazil' }],
-      ],
-    })).toEqual({ id: 'france' });
+describe('applyTerminalOutcomePriceDisplay', () => {
+  it('patches streamed orderbook prices into the row fields used by outcome rows and charts', () => {
+    expect(applyTerminalOutcomePriceDisplay({
+      prob: '33.4%',
+      yesPrice: '33.4c',
+      noPrice: '66.6c',
+      label: 'France',
+    }, {
+      probability: '33.6%',
+      yesPrice: '33.6c',
+      noPrice: '66.4c',
+    })).toEqual({
+      prob: '33.6%',
+      yesPrice: '33.6c',
+      noPrice: '66.4c',
+      label: 'France',
+    });
   });
 
-  it('does not substitute the first row when the requested outcome is temporarily missing', () => {
-    expect(resolveSelectedOutcomeRow({
-      activeOutcomeId: 'france',
-      rowGroups: [
-        [{ id: 'argentina' }, { id: 'brazil' }],
-      ],
-    })).toBeNull();
-  });
-
-  it('falls back to the first available row only when there is no active outcome request', () => {
-    expect(resolveSelectedOutcomeRow({
-      activeOutcomeId: null,
-      rowGroups: [
-        [],
-        [{ id: 'argentina' }, { id: 'brazil' }],
-      ],
-    })).toEqual({ id: 'argentina' });
+  it('reuses the row object when the streamed display is unchanged', () => {
+    const current = {
+      prob: '33.6%',
+      yesPrice: '33.6c',
+      noPrice: '66.4c',
+      label: 'France',
+    };
+    expect(applyTerminalOutcomePriceDisplay(current, {
+      probability: '33.6%',
+      yesPrice: '33.6c',
+      noPrice: '66.4c',
+    })).toBe(current);
   });
 });
 

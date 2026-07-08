@@ -29,6 +29,12 @@ export type TerminalOutcomeRowDisplay = {
   blocker: string | null;
 };
 
+export type TerminalOutcomePriceDisplay = {
+  prob: string;
+  yesPrice: string;
+  noPrice: string;
+};
+
 type SelectedOutcomeBookReadinessInput = {
   orderbook: MarketOrderbookResponse | null;
   orderbookMarketId: string | null;
@@ -37,6 +43,10 @@ type SelectedOutcomeBookReadinessInput = {
   liveVenueCount: number;
   syncingVenueCount: number;
 };
+
+const LIVE_PRICE_OUTLIER_DIFF_THRESHOLD = 0.12;
+const LIVE_PRICE_EXTREME_THRESHOLD = 0.95;
+const LIVE_PRICE_VENUE_MAX_SPREAD = 0.25;
 
 const normalizeOutcomeId = (value: string | null | undefined): string | null => {
   const trimmed = typeof value === 'string' ? value.trim() : '';
@@ -170,6 +180,26 @@ export const mergeTerminalOutcomeRowDisplay = <T extends TerminalOutcomeRowDispl
   return {
     ...current,
     ...next,
+  };
+};
+
+export const applyTerminalOutcomePriceDisplay = <T extends TerminalOutcomePriceDisplay>(
+  current: T,
+  next: TerminalOutcomeDisplayValues | null,
+): T => {
+  if (!next?.probability || !next.yesPrice || !next.noPrice) return current;
+  if (
+    current.prob === next.probability &&
+    current.yesPrice === next.yesPrice &&
+    current.noPrice === next.noPrice
+  ) {
+    return current;
+  }
+  return {
+    ...current,
+    prob: next.probability,
+    yesPrice: next.yesPrice,
+    noPrice: next.noPrice,
   };
 };
 
@@ -315,6 +345,92 @@ export const resolveOutcomeSummaryVenueCount = (
   return resolveOutcomeSummaryVenues(livePrice, fallbackVenues).length;
 };
 
+const parseDisplayProbabilityValue = (value: string | number | null | undefined): number | null => {
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || value <= 0) return null;
+    return value > 1 ? value / 100 : value;
+  }
+  if (!value || value === 'Quote') return null;
+  const hasDisplayUnit = /[%c¢]/i.test(value) || value.includes('Â');
+  const parsed = Number(value.replace(/[^0-9.-]/g, ''));
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return hasDisplayUnit || parsed > 1 ? parsed / 100 : parsed;
+};
+
+const isReasonableLivePriceValue = (
+  price: number,
+  referencePrice: string | number | null | undefined,
+): boolean => {
+  if (!Number.isFinite(price) || price <= 0) return false;
+  const normalizedPrice = price > 1 ? price / 100 : price;
+  const normalizedReference = parseDisplayProbabilityValue(referencePrice);
+  if (normalizedReference === null) return normalizedPrice > 0 && normalizedPrice < LIVE_PRICE_EXTREME_THRESHOLD;
+  if (normalizedPrice - normalizedReference > LIVE_PRICE_OUTLIER_DIFF_THRESHOLD) return false;
+  if (normalizedPrice >= LIVE_PRICE_EXTREME_THRESHOLD && normalizedReference < 0.75) return false;
+  return normalizedPrice <= 1;
+};
+
+const isConsistentWithVenueBreakdown = (
+  price: number,
+  livePrice: MarketLivePriceItem | null | undefined,
+): boolean => {
+  if (!Number.isFinite(price) || price <= 0) return false;
+  const normalizedPrice = price > 1 ? price / 100 : price;
+  const venuePrices = (livePrice?.venueBreakdown ?? [])
+    .filter((venue) => {
+      const bid = parseDisplayProbabilityValue(venue.bestBid);
+      const ask = parseDisplayProbabilityValue(venue.bestAsk);
+      if (bid === null || ask === null) return true;
+      return ask >= bid && ask - bid <= LIVE_PRICE_VENUE_MAX_SPREAD;
+    })
+    .map((venue) => parseDisplayProbabilityValue(venue.price))
+    .filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0)
+    .sort((left, right) => left - right);
+  if (venuePrices.length === 0) return true;
+  const middleIndex = Math.floor(venuePrices.length / 2);
+  const medianVenuePrice = venuePrices.length % 2 === 0
+    ? (venuePrices[middleIndex - 1]! + venuePrices[middleIndex]!) / 2
+    : venuePrices[middleIndex]!;
+  const allowedDrift = Math.max(0.08, medianVenuePrice * 1.5);
+  return Math.abs(normalizedPrice - medianVenuePrice) <= allowedDrift;
+};
+
+const bestVenueAskFromBreakdown = (livePrice: MarketLivePriceItem | null | undefined): number | null => {
+  const asks = (livePrice?.venueBreakdown ?? [])
+    .flatMap((venue) => {
+      const ask = parseDisplayProbabilityValue(venue.bestAsk);
+      if (ask === null || ask <= 0 || ask >= 1) return [];
+      const bid = parseDisplayProbabilityValue(venue.bestBid);
+      if (bid !== null && (ask < bid || ask - bid > LIVE_PRICE_VENUE_MAX_SPREAD)) return [];
+      return [ask];
+    });
+  return asks.length > 0 ? Math.min(...asks) : null;
+};
+
+export const orderbookBestAskValue = (
+  orderbook: MarketOrderbookResponse | null | undefined,
+): number | null => {
+  const bestAsk = parseDisplayProbabilityValue(orderbook?.bestAsk);
+  return bestAsk !== null && bestAsk > 0 && bestAsk < 1 ? bestAsk : null;
+};
+
+export const displayableLivePriceValue = (
+  livePrice: MarketLivePriceItem | null | undefined,
+  referencePrice?: string | number | null,
+): number | null => {
+  const bestAsk = livePrice?.bestAsk !== null && livePrice?.bestAsk !== undefined ? Number(livePrice.bestAsk) : NaN;
+  if (isReasonableLivePriceValue(bestAsk, referencePrice) && isConsistentWithVenueBreakdown(bestAsk, livePrice)) return bestAsk;
+  const venueBestAsk = bestVenueAskFromBreakdown(livePrice);
+  if (venueBestAsk !== null && isReasonableLivePriceValue(venueBestAsk, referencePrice)) return venueBestAsk;
+  const price = livePrice?.price !== null && livePrice?.price !== undefined ? Number(livePrice.price) : NaN;
+  if (isReasonableLivePriceValue(price, referencePrice) && isConsistentWithVenueBreakdown(price, livePrice)) return price;
+  const averagePrice = livePrice?.averagePrice !== null && livePrice?.averagePrice !== undefined ? Number(livePrice.averagePrice) : NaN;
+  if (isReasonableLivePriceValue(averagePrice, referencePrice) && isConsistentWithVenueBreakdown(averagePrice, livePrice)) return averagePrice;
+  const midpoint = livePrice?.midpoint !== null && livePrice?.midpoint !== undefined ? Number(livePrice.midpoint) : NaN;
+  if (isReasonableLivePriceValue(midpoint, referencePrice) && isConsistentWithVenueBreakdown(midpoint, livePrice)) return midpoint;
+  return null;
+};
+
 export const resolveLivePriceForTerminalOutcome = (input: {
   prices: readonly MarketLivePriceItem[];
   marketId: string | null | undefined;
@@ -335,8 +451,10 @@ export const resolveLivePriceForTerminalOutcome = (input: {
   );
   if (directMatch) return directMatch;
 
+  if (normalizedOutcomeId !== null) return null;
+
   return input.prices.find((price) =>
     candidateMarketIds.has(price.marketId) &&
-    (normalizedOutcomeId === null || normalizeOutcomeId(price.outcomeId) === normalizedOutcomeId)
+    normalizeOutcomeId(price.outcomeId) === normalizedOutcomeId
   ) ?? null;
 };

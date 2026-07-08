@@ -238,6 +238,235 @@ const dashboardEventMediaKey = (market: Pick<DashboardMarketRow, 'eventId' | 'ca
 const dashboardMarketEventSlug = (market: Pick<DashboardMarketRow, 'title' | 'eventSlug'>): string =>
   market.eventSlug || eventSlugFromTitle(market.title);
 
+const TERMINAL_ROUTE_CACHE_PREFIX = 'lotus:terminal-route-selection:v1:';
+
+const loadCachedTerminalRouteSelection = (
+  routeEventSlug: string | null | undefined,
+): TerminalMarketSelection | null => {
+  if (!routeEventSlug || typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(`${TERMINAL_ROUTE_CACHE_PREFIX}${routeEventSlug}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as TerminalMarketSelection | null;
+    if (!parsed || typeof parsed !== 'object' || !parsed.title) return null;
+    const firstOutcomeId = parsed.outcomes?.[0]?.id ?? null;
+    return {
+      ...parsed,
+      eventSlug: parsed.eventSlug ?? routeEventSlug,
+      initialOutcomeId: firstOutcomeId ?? parsed.initialOutcomeId ?? null,
+    };
+  } catch {
+    return null;
+  }
+};
+
+const saveCachedTerminalRouteSelection = (
+  routeEventSlug: string | null | undefined,
+  selection: TerminalMarketSelection | null | undefined,
+): void => {
+  if (!routeEventSlug || !selection || typeof window === 'undefined') return;
+  const hasResolvedData = (selection.outcomes?.length ?? 0) > 0 || (selection.venueMarkets?.length ?? 0) > 0 || selection.venueCount > 0;
+  if (!hasResolvedData) return;
+  try {
+    window.localStorage.setItem(`${TERMINAL_ROUTE_CACHE_PREFIX}${routeEventSlug}`, JSON.stringify(selection));
+  } catch {
+    // Ignore storage failures; the terminal can still resolve live route data.
+  }
+};
+
+const titleFromEventSlug = (slug: string): string => {
+  const acronymMap: Record<string, string> = {
+    fifa: 'FIFA',
+    ufc: 'UFC',
+    nba: 'NBA',
+    nfl: 'NFL',
+    mlb: 'MLB',
+    nhl: 'NHL',
+    epl: 'EPL',
+    us: 'US',
+    usa: 'USA',
+    eu: 'EU',
+    uk: 'UK',
+    btc: 'BTC',
+    eth: 'ETH',
+  };
+  return slug
+    .split('-')
+    .filter(Boolean)
+    .map((segment) => acronymMap[segment] ?? formatTitleCase(segment))
+    .join(' ');
+};
+
+const buildOptimisticTerminalRouteSelection = (
+  routeEventSlug: string | null | undefined,
+): TerminalMarketSelection | null => {
+  if (!routeEventSlug) return null;
+  const cachedSelection = loadCachedTerminalRouteSelection(routeEventSlug);
+  return cachedSelection;
+};
+
+type TerminalRouteCandidate = {
+  id?: string;
+  marketId?: string;
+  canonicalEventId?: string | null;
+  eventId?: string | null;
+  title: string;
+  category?: string;
+  icon?: string;
+  volume?: string;
+  volume24h?: string | null;
+  liquidity?: string | null;
+  openInterest?: string | null;
+  resolvesAt?: string | null;
+  resolutionDateLabel?: string | null;
+  venueCount?: number;
+  routeType?: string;
+  eventSlug?: string | null;
+  status?: MarketCatalogMarket['status'];
+  marketType?: string | null;
+  priceLabel?: string;
+  priceVenue?: string | null;
+  changeLabel?: string;
+  change24hLabel?: 'Quote' | string;
+  change24hDirection?: 'positive' | 'negative' | 'neutral' | 'pending';
+  outcomes?: unknown[] | null;
+  venueMarkets?: unknown[] | null;
+  canonicalMarketIds?: string[] | null;
+  venues?: string[] | null;
+  imageUrl?: string | null;
+  iconUrl?: string | null;
+};
+
+const terminalRouteSelectionScore = (
+  market: TerminalRouteCandidate,
+): number => {
+  const outcomeCount = market.outcomes?.length ?? 0;
+  const venueMarketCount = market.venueMarkets?.length ?? 0;
+  const canonicalMarketCount = market.canonicalMarketIds?.length ?? 0;
+  const venueCount = market.venues?.length ?? 0;
+  const multiBonus = market.marketType === 'multi' || outcomeCount > 2 ? 1_000 : 0;
+  return multiBonus + (outcomeCount * 100) + (venueMarketCount * 10) + canonicalMarketCount + venueCount;
+};
+
+const pickTerminalRouteRow = <T extends TerminalRouteCandidate>(
+  rows: T[],
+  routeEventSlug: string | null | undefined,
+): T | null => {
+  if (rows.length === 0) return null;
+  const scopedRows = routeEventSlug
+    ? rows.filter((row) => (row.eventSlug || eventSlugFromTitle(row.title)) === routeEventSlug)
+    : rows;
+  const candidates = scopedRows.length > 0 ? scopedRows : rows;
+  return [...candidates].sort((left, right) => terminalRouteSelectionScore(right) - terminalRouteSelectionScore(left))[0] ?? null;
+};
+
+const parseTerminalProbabilityLabel = (value: string | null | undefined): number | null => {
+  if (!value || value === 'Quote' || value === '-') return null;
+  if (/^<\s*1%$/i.test(value.trim())) return 0.5;
+  const cleaned = value.replace(/[^0-9.-]/g, '');
+  const parsed = Number(cleaned);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+};
+
+const compareTerminalOutcomeCandidates = (
+  left: NonNullable<TerminalMarketSelection['outcomes']>[number],
+  right: NonNullable<TerminalMarketSelection['outcomes']>[number],
+): number => {
+  const leftProbability = parseTerminalProbabilityLabel(left.prob);
+  const rightProbability = parseTerminalProbabilityLabel(right.prob);
+  if (leftProbability !== null && rightProbability !== null && leftProbability !== rightProbability) {
+    return rightProbability - leftProbability;
+  }
+  if (leftProbability !== null) return -1;
+  if (rightProbability !== null) return 1;
+  return left.name.localeCompare(right.name);
+};
+
+const buildAggregateTerminalRouteSelection = (
+  rows: TerminalMarketSelection[],
+  routeEventSlug: string | null | undefined,
+): TerminalMarketSelection | null => {
+  if (rows.length === 0) return null;
+  const primary = pickTerminalRouteRow(rows, routeEventSlug);
+  if (!primary) return null;
+  const primaryEventSlug = primary.eventSlug ?? routeEventSlug ?? null;
+  const eventScopedRows = primaryEventSlug
+    ? rows.filter((row) => (row.eventSlug ?? eventSlugFromTitle(row.title)) === primaryEventSlug)
+    : rows;
+  if (eventScopedRows.length <= 1) return primary;
+
+  const sortedRows = [...eventScopedRows].sort((left, right) => {
+    const leftProbability = parseTerminalProbabilityLabel(left.outcomes?.[0]?.prob);
+    const rightProbability = parseTerminalProbabilityLabel(right.outcomes?.[0]?.prob);
+    if (leftProbability !== null && rightProbability !== null && leftProbability !== rightProbability) {
+      return rightProbability - leftProbability;
+    }
+    return terminalRouteSelectionScore(right) - terminalRouteSelectionScore(left);
+  });
+  const leader = sortedRows[0] ?? primary;
+  const outcomes = sortedRows
+    .map((row) => {
+      const baseOutcome = row.outcomes?.[0];
+      return baseOutcome
+        ? {
+            ...baseOutcome,
+            prob: baseOutcome.prob ?? row.priceLabel ?? 'Quote',
+            venues: baseOutcome.venues ?? row.venues,
+            venueMarkets: baseOutcome.venueMarkets ?? row.venueMarkets,
+            priceVenue: baseOutcome.priceVenue ?? row.priceVenue ?? null,
+            imageUrl: baseOutcome.imageUrl ?? row.imageUrl ?? null,
+            iconUrl: baseOutcome.iconUrl ?? row.iconUrl ?? null,
+          }
+        : {
+            id: row.marketId ?? row.id ?? row.title,
+            marketId: row.marketId,
+            canonicalMarketIds: row.canonicalMarketIds,
+            eventId: row.eventId,
+            canonicalEventId: row.canonicalEventId,
+            quoteOutcomeId: 'YES',
+            name: row.title,
+            prob: row.priceLabel ?? 'Quote',
+            volume: null,
+            volume24h: null,
+            venues: row.venues,
+            venueMarkets: row.venueMarkets,
+            marketType: 'binary' as const,
+            marketTitle: row.title,
+            imageUrl: row.imageUrl ?? null,
+            iconUrl: row.iconUrl ?? null,
+            priceVenue: row.priceVenue ?? null,
+          };
+    })
+    .sort(compareTerminalOutcomeCandidates);
+
+  const aggregateVenues = Array.from(new Set(sortedRows.flatMap((row) => row.venues ?? [])));
+  const aggregateCanonicalMarketIds = Array.from(new Set(sortedRows.flatMap((row) => row.canonicalMarketIds ?? (row.marketId ? [row.marketId] : []))));
+  const aggregateVenueMarkets = sortedRows.flatMap((row) => row.venueMarkets ?? []);
+  const aggregateRouteType = sortedRows.some((row) => row.routeType === 'Strict all')
+    ? 'Strict all'
+    : sortedRows.some((row) => row.routeType === 'Tri')
+      ? 'Tri'
+      : sortedRows.some((row) => row.routeType === 'Pair')
+        ? 'Pair'
+        : leader.routeType;
+
+  return {
+    ...leader,
+    id: leader.canonicalEventId ?? leader.eventId ?? leader.eventSlug ?? leader.id ?? leader.title,
+    title: leader.title,
+    marketType: 'multi',
+    routeType: aggregateRouteType,
+    venueCount: aggregateVenues.length || leader.venueCount,
+    venues: aggregateVenues,
+    venueMarkets: aggregateVenueMarkets,
+    canonicalMarketIds: aggregateCanonicalMarketIds,
+    outcomes,
+    initialOutcomeId: outcomes[0]?.id ?? null,
+    priceLabel: outcomes[0]?.prob ?? leader.priceLabel,
+    priceVenue: outcomes[0]?.priceVenue ?? leader.priceVenue ?? null,
+  };
+};
+
 const shouldPreferEventMedia = (market: Pick<DashboardMarketRow, 'marketType' | 'outcomes'>): boolean =>
   shouldPreferDashboardEventMedia(market);
 
@@ -392,14 +621,53 @@ const formatProbabilityPrice = (price: number | null | undefined): string => {
   if (typeof price !== 'number' || !Number.isFinite(price) || price <= 0) return 'Quote';
   const cents = price <= 1 ? price * 100 : price;
   if (cents < 1) return '<1¢';
-  return `${cents >= 10 ? cents.toFixed(0) : cents.toFixed(1)}¢`;
+  return `${cents.toFixed(1)}¢`;
 };
 
 const formatProbabilityPercent = (price: number | null | undefined): string => {
   if (typeof price !== 'number' || !Number.isFinite(price) || price <= 0) return 'Quote';
   const percent = price <= 1 ? price * 100 : price;
   if (percent < 1) return '<1%';
-  return `${percent >= 10 ? percent.toFixed(0) : percent.toFixed(1)}%`;
+  return `${percent.toFixed(1)}%`;
+};
+
+const parseDisplayProbabilityValue = (value: string | number | null | undefined): number | null => {
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || value <= 0) return null;
+    return value > 1 ? value / 100 : value;
+  }
+  if (!value || value === 'Quote') return null;
+  const hasDisplayUnit = /[%c¢]/i.test(value) || value.includes('Â');
+  const parsed = Number(value.replace(/[^0-9.-]/g, ''));
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return hasDisplayUnit || parsed > 1 ? parsed / 100 : parsed;
+};
+
+const LIVE_PRICE_VENUE_MAX_SPREAD = 0.25;
+
+const isConsistentWithVenueBreakdown = (
+  price: number,
+  livePrice: MarketLivePriceItem | null | undefined,
+): boolean => {
+  if (!Number.isFinite(price) || price <= 0) return false;
+  const normalizedPrice = price > 1 ? price / 100 : price;
+  const venuePrices = (livePrice?.venueBreakdown ?? [])
+    .filter((venue) => {
+      const bid = parseDisplayProbabilityValue(venue.bestBid);
+      const ask = parseDisplayProbabilityValue(venue.bestAsk);
+      if (bid === null || ask === null) return true;
+      return ask >= bid && ask - bid <= LIVE_PRICE_VENUE_MAX_SPREAD;
+    })
+    .map((venue) => parseDisplayProbabilityValue(venue.price))
+    .filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0)
+    .sort((left, right) => left - right);
+  if (venuePrices.length === 0) return true;
+  const middleIndex = Math.floor(venuePrices.length / 2);
+  const medianVenuePrice = venuePrices.length % 2 === 0
+    ? (venuePrices[middleIndex - 1]! + venuePrices[middleIndex]!) / 2
+    : venuePrices[middleIndex]!;
+  const allowedDrift = Math.max(0.08, medianVenuePrice * 1.5);
+  return Math.abs(normalizedPrice - medianVenuePrice) <= allowedDrift;
 };
 
 const formatCompactMetric = (value: string | number | null | undefined): string | null => {
@@ -1305,20 +1573,34 @@ const toOutcomeQuoteFromBatch = (quote: MarketBatchQuoteItem): DashboardOutcomeQ
   };
 };
 
+const displayableLivePriceValue = (
+  livePrice: MarketLivePriceItem | null | undefined,
+): number | null => {
+  const averagePrice = livePrice?.averagePrice !== null && livePrice?.averagePrice !== undefined ? Number(livePrice.averagePrice) : NaN;
+  if (Number.isFinite(averagePrice) && averagePrice > 0 && isConsistentWithVenueBreakdown(averagePrice, livePrice)) return averagePrice;
+  const price = livePrice?.price !== null && livePrice?.price !== undefined ? Number(livePrice.price) : NaN;
+  if (Number.isFinite(price) && price > 0 && isConsistentWithVenueBreakdown(price, livePrice)) return price;
+  const midpoint = livePrice?.midpoint !== null && livePrice?.midpoint !== undefined ? Number(livePrice.midpoint) : NaN;
+  if (Number.isFinite(midpoint) && midpoint > 0 && isConsistentWithVenueBreakdown(midpoint, livePrice)) return midpoint;
+  const bestAsk = livePrice?.bestAsk !== null && livePrice?.bestAsk !== undefined ? Number(livePrice.bestAsk) : NaN;
+  if (Number.isFinite(bestAsk) && bestAsk > 0 && isConsistentWithVenueBreakdown(bestAsk, livePrice)) return bestAsk;
+  return null;
+};
+
 const toOutcomeQuoteFromLivePrice = (
   outcomeId: string,
   price: MarketLivePriceItem | undefined
 ): DashboardOutcomeQuote => {
-  const numericPrice = price?.price !== null && price?.price !== undefined ? Number(price.price) : NaN;
-  const hasDisplayPrice = Number.isFinite(numericPrice) && numericPrice > 0;
+  const numericPrice = displayableLivePriceValue(price);
+  const hasDisplayPrice = typeof numericPrice === 'number' && Number.isFinite(numericPrice) && numericPrice > 0;
   const livePrice = hasDisplayPrice && price ? price : null;
   const candidate: TradeRouteCandidate | null = livePrice
     ? {
         venue: livePrice.bestVenue ?? livePrice.venues[0] ?? 'LOTUS',
         venueMarketId: livePrice.marketId,
-        price: numericPrice,
+        price: numericPrice!,
         availableSize: '0',
-        ...(livePrice.spread && livePrice.price ? { spreadBps: (Number(livePrice.spread) / Math.max(Number(livePrice.price), 0.000001)) * 10_000 } : {}),
+        ...(livePrice.spread && numericPrice ? { spreadBps: (Number(livePrice.spread) / Math.max(numericPrice, 0.000001)) * 10_000 } : {}),
         quoteQuality: 'DISPLAY_LIVE_PRICE',
         ...(livePrice.freshnessMs !== null ? { freshnessMs: livePrice.freshnessMs } : {}),
         quoteBlockers: [],
@@ -1651,15 +1933,41 @@ export const DashboardV2Mockup = ({
     () => quotedMarketRows.map(toTerminalMarketSelection),
     [quotedMarketRows],
   );
-  const terminalRouteResolved = terminalRouteSelectionMatches(routeEventSlug, selectedTerminalMarket);
+  const optimisticTerminalSelection = useMemo<TerminalMarketSelection | null>(
+    () => buildOptimisticTerminalRouteSelection(routeEventSlug),
+    [routeEventSlug],
+  );
+  const immediateTerminalSelection = useMemo<TerminalMarketSelection | null>(() => {
+    return buildAggregateTerminalRouteSelection(terminalMarketSelections, routeEventSlug);
+  }, [routeEventSlug, terminalMarketSelections]);
+  const resolvedTerminalSelection = selectedTerminalMarket ?? immediateTerminalSelection;
+  const activeTerminalSelection = resolvedTerminalSelection ?? optimisticTerminalSelection;
+  const terminalRouteResolved = terminalRouteSelectionMatches(routeEventSlug, resolvedTerminalSelection);
+  const terminalRoutePending = activePage === 'terminal'
+    && Boolean(routeEventSlug)
+    && !activeTerminalSelection
+    && !terminalRouteError;
+
   useEffect(() => {
     if (activePage !== 'terminal') return;
+    if (!immediateTerminalSelection) return;
     setSelectedTerminalMarket((current) => {
-      if (!current) return current;
-      return terminalRouteSelectionMatches(routeEventSlug, current) ? current : null;
+      if (!current) return immediateTerminalSelection;
+      if (!terminalRouteSelectionMatches(routeEventSlug, current)) return immediateTerminalSelection;
+      if (terminalRouteSelectionScore(immediateTerminalSelection) > terminalRouteSelectionScore(current)) {
+        return immediateTerminalSelection;
+      }
+      return current;
     });
-    setTerminalRouteError(null);
-  }, [activePage, routeEventSlug]);
+  }, [activePage, immediateTerminalSelection, routeEventSlug]);
+
+  useEffect(() => {
+    if (activePage !== 'terminal') return;
+    if (!routeEventSlug) return;
+    if (!resolvedTerminalSelection) return;
+    saveCachedTerminalRouteSelection(routeEventSlug, resolvedTerminalSelection);
+  }, [activePage, resolvedTerminalSelection, routeEventSlug]);
+
   useEffect(() => {
     if (activePage !== 'terminal') {
       setTerminalRouteError(null);
@@ -1702,8 +2010,10 @@ export const DashboardV2Mockup = ({
           setTerminalRouteError('This terminal market has no routeable outcomes yet.');
           return;
         }
-        const matchedRow = quotedRows.find((row) => dashboardMarketEventSlug(row) === eventSlugFromTitle(matchedEvent.title)) ?? quotedRows[0]!;
-        const nextSelection = toTerminalMarketSelection(matchedRow);
+        const nextSelection = buildAggregateTerminalRouteSelection(
+          quotedRows.map(toTerminalMarketSelection),
+          eventSlugFromTitle(matchedEvent.title),
+        ) ?? toTerminalMarketSelection(quotedRows[0]!);
         setSelectedTerminalMarket(nextSelection);
         setTerminalRouteError(null);
         if (!routeEventSlug) {
@@ -1749,6 +2059,29 @@ export const DashboardV2Mockup = ({
       livePriced,
     };
   }, [dashboardDiagnosticsEnabled, quotedMarketRows]);
+  const submitHeaderSearch = useCallback((event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const query = searchQuery.trim();
+    if (!query) return;
+
+    if (activePage === 'terminal') {
+      listEvents({ search: query, limit: 1 })
+        .then((response) => {
+          const nextEvent = response.events[0];
+          if (nextEvent) {
+            onNavigate?.('terminal', eventSlugFromTitle(nextEvent.title));
+            return;
+          }
+          onNavigate?.('markets');
+        })
+        .catch(() => onNavigate?.('markets'));
+      return;
+    }
+
+    if (activePage !== 'markets') {
+      onNavigate?.('markets');
+    }
+  }, [activePage, onNavigate, searchQuery]);
   const portfolioCashTotal = portfolioBalances.reduce((sum, balance) => {
     const parsed = Number(balance.availableAmount ?? balance.readyAmount ?? 0);
     return Number.isFinite(parsed) ? sum + parsed : sum;
@@ -2323,10 +2656,15 @@ export const DashboardV2Mockup = ({
     <div className={`${isDarkMode ? 'dark' : ''} h-full min-h-0 w-full`}>
       <div className="flex h-full min-h-0 w-full bg-[#F7F8FA] dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 font-sans overflow-hidden">
         {/* Sidebar */}
-      <aside className="w-12 bg-white dark:bg-zinc-900 border-r border-zinc-200 dark:border-zinc-800 flex flex-col items-center gap-6 z-50 shrink-0 pb-14 pt-4">
-        <div className="w-7 h-7 flex items-center justify-center">
-          <LotusLogo className="w-7 h-7 text-[#ccff00]" />
-        </div>
+      <aside className="w-12 bg-white dark:bg-zinc-900 border-r border-zinc-200 dark:border-zinc-800 flex flex-col items-center gap-6 z-50 shrink-0 pb-14 pt-5">
+        <button
+          type="button"
+          aria-label="Lotus home"
+          onClick={() => onNavigate?.('home')}
+          className="flex h-8 w-8 items-center justify-center rounded-xl text-[#ccff00] transition hover:bg-zinc-100 dark:hover:bg-zinc-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
+        >
+          <LotusLogo className="h-6 w-6" />
+        </button>
         <nav className="flex flex-col gap-5 w-full items-center">
           <NavItem icon={<Home className="w-4 h-4" />} active={activePage === 'home'} label="Home" onClick={() => onNavigate?.('home')} />
           <NavItem icon={<BarChart2 className="w-4 h-4" />} active={activePage === 'markets'} label="Markets" onClick={() => onNavigate?.('markets')} />
@@ -2343,18 +2681,18 @@ export const DashboardV2Mockup = ({
       <main className="min-w-0 flex-1 flex flex-col overflow-hidden">
         {/* Topbar */}
         <header className="h-14 bg-white dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between gap-3 px-3 sm:px-5 shrink-0">
-          <div className="flex min-w-0 items-center gap-4 w-full max-w-[min(24rem,calc(100vw-9rem))] sm:max-w-sm">
+          <form onSubmit={submitHeaderSearch} className="flex min-w-0 items-center gap-4 w-full max-w-[min(24rem,calc(100vw-9rem))] sm:max-w-sm">
             <div className="relative w-full">
               <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 dark:text-zinc-500" />
-              <input 
-                type="text" 
-                placeholder="Search markets, events, or venues..." 
+              <input
+                type="search"
+                placeholder="Search events..."
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
                 className="w-full bg-zinc-100/80 dark:bg-zinc-800/80 border border-transparent rounded-full pl-9 pr-4 py-1.5 text-xs focus:outline-none focus:bg-white dark:focus:bg-zinc-900 focus:border-zinc-300 dark:focus:border-zinc-700 focus:ring-4 focus:ring-zinc-100 dark:focus:ring-zinc-800 transition-all text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-500 dark:placeholder:text-zinc-400"
               />
             </div>
-          </div>
+          </form>
           <div className="flex shrink-0 items-center gap-3 pr-16 sm:pr-56 lg:pr-72">
             <div className="flex items-center gap-3">
               <div className="relative">
@@ -3028,7 +3366,9 @@ export const DashboardV2Mockup = ({
           </>
           ) : activePage === 'terminal' ? (
             <div className="min-w-0 flex-1">
-              {terminalRouteError ? (
+              {terminalRoutePending ? (
+                <div className="min-h-[calc(100vh-10rem)]" aria-hidden="true" />
+              ) : terminalRouteError && !activeTerminalSelection ? (
                 <div className="min-h-[calc(100vh-10rem)] rounded-[28px] border border-red-500/20 bg-[#0d0d10] p-6 shadow-[0_0_0_1px_rgba(255,255,255,0.03)]">
                   <div className="flex h-full min-h-[32rem] flex-col items-center justify-center gap-4 rounded-[24px] border border-red-500/20 bg-[#111115] px-6 text-center">
                     <AlertTriangle className="h-10 w-10 text-red-400" />
@@ -3040,10 +3380,9 @@ export const DashboardV2Mockup = ({
                 </div>
               ) : (
                 <InfraTradingTerminal
-                  key={selectedTerminalMarket?.eventSlug ?? selectedTerminalMarket?.marketId ?? routeEventSlug ?? 'terminal'}
                   embedded
                   darkMode={isDarkMode}
-                  selectedMarket={selectedTerminalMarket}
+                  selectedMarket={activeTerminalSelection}
                   relatedMarkets={terminalMarketSelections}
                   session={session}
                   onRequireLogin={onRequireLogin}

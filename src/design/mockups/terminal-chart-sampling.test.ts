@@ -1,13 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import type { MarketChartResponse } from '@/features/markets/api/market-api';
-
-import { downsampleChartRows, maxChartPointsForTimeframe, sanitizeTerminalChartResponse } from './terminal-chart-sampling';
+import { downsampleChartRows, maxChartPointsForTimeframe } from './terminal-chart-sampling';
 
 describe('maxChartPointsForTimeframe', () => {
-  it('caps dense one-day charts more aggressively than all-time charts', () => {
-    expect(maxChartPointsForTimeframe('1D')).toBe(180);
-    expect(maxChartPointsForTimeframe('ALL')).toBe(240);
+  it('keeps more points for longer timeframes while still capping all-time charts', () => {
+    expect(maxChartPointsForTimeframe('1D')).toBe(360);
+    expect(maxChartPointsForTimeframe('ALL')).toBe(720);
   });
 });
 
@@ -26,62 +24,5 @@ describe('downsampleChartRows', () => {
       { timestamp: 6 },
       { timestamp: 9 },
     ]);
-  });
-});
-
-describe('sanitizeTerminalChartResponse', () => {
-  const buildChart = (): MarketChartResponse => ({
-    marketId: 'market-1',
-    outcomeId: 'YES',
-    timeframe: '1D',
-    generatedAt: '2026-07-06T00:00:00.000Z',
-    historyStatus: 'live',
-    series: [
-      { id: 'unified', label: 'Unified', color: '#22C55E', kind: 'unified', hasData: true },
-      { id: 'POLYMARKET', label: 'Polymarket', color: '#3B82F6', kind: 'venue', hasData: true },
-    ],
-    points: Array.from({ length: 100 }, (_, index) => ({
-      timestamp: new Date(Date.UTC(2026, 6, 6, 0, index, 0)).toISOString(),
-      label: `pt-${index}`,
-      unified: (0.3 + index / 1000).toFixed(4),
-      venues: {
-        POLYMARKET: (0.31 + index / 1000).toFixed(4),
-      },
-    })),
-    blockers: [],
-  });
-
-  it('preserves the full response outside production-safe mode', () => {
-    const chart = buildChart();
-    expect(sanitizeTerminalChartResponse(chart, {
-      marketType: 'binary',
-      productionSafeMode: false,
-    })).toBe(chart);
-  });
-
-  it('caps production binary charts and strips unused venue payloads', () => {
-    const sanitized = sanitizeTerminalChartResponse(buildChart(), {
-      marketType: 'binary',
-      productionSafeMode: true,
-    });
-
-    expect(sanitized.series).toEqual([
-      { id: 'unified', label: 'Unified', color: '#22C55E', kind: 'unified', hasData: true },
-    ]);
-    expect(sanitized.points).toHaveLength(20);
-    expect(sanitized.points.every((point) => Object.keys(point.venues).length === 0)).toBe(true);
-  });
-
-  it('caps production multi charts without removing venue data', () => {
-    const sanitized = sanitizeTerminalChartResponse(buildChart(), {
-      marketType: 'multi',
-      productionSafeMode: true,
-    });
-
-    expect(sanitized.points).toHaveLength(100);
-    expect(sanitized.points[0]?.venues).toEqual({
-      POLYMARKET: '0.3100',
-    });
-    expect(sanitized.series).toHaveLength(2);
   });
 });

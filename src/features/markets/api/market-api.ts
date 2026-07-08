@@ -305,6 +305,12 @@ export type MarketLivePricesResponse = {
 export type PolymarketMarketSnapshot = {
   slug: string;
   question: string;
+  groupItemTitle?: string | null;
+  clobTokenIds?: string | null;
+  outcomes?: string | null;
+  outcomePrices?: string | null;
+  active?: boolean;
+  closed?: boolean;
   volume?: string | number | null;
   volumeClob?: string | number | null;
   volume24hr?: string | number | null;
@@ -321,6 +327,10 @@ export type PolymarketEventMarketSnapshot = {
   slug: string;
   question: string;
   groupItemTitle?: string | null;
+  clobTokenIds?: string | null;
+  outcomePrices?: string | null;
+  active?: boolean;
+  closed?: boolean;
   volume?: string | number | null;
   volumeClob?: string | number | null;
   volume24hr?: string | number | null;
@@ -331,6 +341,15 @@ export type PolymarketEventSnapshot = {
   slug: string;
   title: string;
   markets: PolymarketEventMarketSnapshot[];
+};
+
+export type PolymarketPriceHistoryInterval = "max" | "all" | "1m" | "1w" | "1d" | "6h" | "1h";
+
+export type PolymarketPriceHistoryResponse = {
+  history: Array<{
+    t: number;
+    p: number;
+  }>;
 };
 
 export type ResolutionRiskAssessment = {
@@ -503,7 +522,7 @@ export function getMarketLivePrices(input: { items: MarketLivePriceRequestItem[]
       method: "POST",
       body,
     }),
-    { ttlMs: 2_000, maxStaleMs: 15_000 }
+    { ttlMs: 0, maxStaleMs: 0 }
   );
 }
 
@@ -524,6 +543,42 @@ export function getPolymarketEventBySlug(slug: string) {
       throw new Error(`Unable to load Polymarket event ${slug}`);
     }
     return response.json() as Promise<PolymarketEventSnapshot>;
+  }, { ttlMs: 60_000, maxStaleMs: 15 * 60_000 });
+}
+
+export function getPolymarketMarketsByEventSlug(eventSlug: string, input: { limit?: number } = {}) {
+  const params = new URLSearchParams({
+    eventSlug,
+    limit: String(input.limit ?? 100),
+  });
+  const url = `https://gamma-api.polymarket.com/markets?${params.toString()}`;
+  return staleWhileRevalidate(`polymarket-event-markets:${params.toString()}`, async () => {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Unable to load Polymarket event markets for ${eventSlug}`);
+    }
+    return response.json() as Promise<PolymarketMarketSnapshot[]>;
+  }, { ttlMs: 60_000, maxStaleMs: 15 * 60_000 });
+}
+
+export function getPolymarketPricesHistory(
+  assetId: string,
+  input: { interval: PolymarketPriceHistoryInterval; fidelity?: number }
+) {
+  const params = new URLSearchParams({
+    market: assetId,
+    interval: input.interval,
+  });
+  if (typeof input.fidelity === "number" && Number.isFinite(input.fidelity)) {
+    params.set("fidelity", String(input.fidelity));
+  }
+  const url = `https://clob.polymarket.com/prices-history?${params.toString()}`;
+  return staleWhileRevalidate(`polymarket-price-history:${params.toString()}`, async () => {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Unable to load Polymarket price history for asset ${assetId}`);
+    }
+    return response.json() as Promise<PolymarketPriceHistoryResponse>;
   }, { ttlMs: 60_000, maxStaleMs: 15 * 60_000 });
 }
 
