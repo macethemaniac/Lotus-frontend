@@ -2952,12 +2952,6 @@ export const DashboardV2Mockup = ({
               <button type="button" onClick={() => setMarketFilter('politics')} className={filterButtonClass(marketFilter === 'politics')}>
                 <Landmark className="w-4 h-4 text-zinc-400 dark:text-zinc-500" /> Politics
               </button>
-              <div className="ml-auto flex shrink-0 items-center gap-2 rounded-lg bg-zinc-100 p-1 dark:bg-zinc-800/80">
-                <button className="px-3 py-1.5 text-[11px] font-bold rounded-md bg-white dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100 shadow-sm transition-all shadow-zinc-200/50 dark:shadow-none">24H</button>
-                <button className="px-3 py-1.5 text-[11px] font-bold rounded-md text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors">7D</button>
-                <button className="px-3 py-1.5 text-[11px] font-bold rounded-md text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors">30D</button>
-                <button className="px-3 py-1.5 text-[11px] font-bold rounded-md text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors">ALL</button>
-              </div>
             </div>
 
             {/* Hero Market */}
