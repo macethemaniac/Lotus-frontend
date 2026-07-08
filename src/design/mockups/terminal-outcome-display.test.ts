@@ -5,6 +5,7 @@ import {
   isSelectedOutcomeBookUsable,
   isSelectedOutcomeBookReady,
   mergeTerminalOutcomeRowDisplay,
+  orderbookBestAskValue,
   orderSelectedOutcomeVisibleVenues,
   resolveLivePriceForTerminalOutcome,
   resolveOutcomeSummaryVenueCount,
@@ -88,6 +89,27 @@ describe('displayableLivePriceValue', () => {
       averagePrice: '0.1815',
       freshnessMs: 1000,
     }, '18.5%')).toBe(0.178);
+  });
+});
+
+describe('orderbookBestAskValue', () => {
+  it('normalizes the orderbook best ask used by expanded outcome rows', () => {
+    expect(orderbookBestAskValue({
+      marketId: 'world-cup-winner',
+      outcomeId: 'YES',
+      generatedAt: new Date().toISOString(),
+      depth: 1,
+      venues: [],
+      bids: [],
+      asks: [{ venue: 'POLYMARKET', venueMarketId: 'argentina', venueOutcomeId: 'YES', price: '0.178', size: '328000', cumulativeSize: '328000', cumulativeNotional: '58000' }],
+      bestBid: '0.177',
+      bestAsk: '0.178',
+      midpoint: '0.1775',
+      spread: '0.001',
+      status: 'live',
+      blockers: [],
+      stream: null,
+    })).toBe(0.178);
   });
 });
 

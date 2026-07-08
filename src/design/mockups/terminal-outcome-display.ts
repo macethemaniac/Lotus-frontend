@@ -350,6 +350,13 @@ const bestVenueAskFromBreakdown = (livePrice: MarketLivePriceItem | null | undef
   return asks.length > 0 ? Math.min(...asks) : null;
 };
 
+export const orderbookBestAskValue = (
+  orderbook: MarketOrderbookResponse | null | undefined,
+): number | null => {
+  const bestAsk = parseDisplayProbabilityValue(orderbook?.bestAsk);
+  return bestAsk !== null && bestAsk > 0 && bestAsk < 1 ? bestAsk : null;
+};
+
 export const displayableLivePriceValue = (
   livePrice: MarketLivePriceItem | null | undefined,
   referencePrice?: string | number | null,
