@@ -4437,6 +4437,21 @@ const MarketCard = ({ id, marketId, canonicalMarketIds, eventId, canonicalEventI
                 <span>-</span>
                 <span className="shrink-0">{venueCount} venues scanned</span>
               </span>
+              <span className="mt-2 flex h-5 gap-1.5 overflow-hidden">
+                {allVenues.map(v => {
+                  const isActive = activeBadgeIds.has(v.id);
+                  return (
+                    <span
+                      key={v.id}
+                      title={v.label}
+                      aria-label={v.label}
+                      className={`flex h-5 w-5 items-center justify-center rounded border border-zinc-700/70 bg-zinc-900/80 p-0.5 shadow-sm transition ${isActive ? 'opacity-100' : 'opacity-25 grayscale'}`}
+                    >
+                      <VenueLogo id={v.id} label={v.label} className="h-full w-full rounded-[inherit] object-cover" />
+                    </span>
+                  );
+                })}
+              </span>
             </span>
           </button>
           <div className="flex flex-col items-end gap-2">
