@@ -16,6 +16,7 @@ import {
   mergeTerminalOutcomeRowDisplay,
   orderSelectedOutcomeVisibleVenues,
   resolveLivePriceForTerminalOutcome,
+  resolveOutcomePriceVenues,
   resolveOutcomeSummaryVenueCount,
   resolveOutcomeSummaryVenues,
   resolveOutcomeSeedMedia,
@@ -7871,8 +7872,14 @@ const InfraTradingTerminalInner = ({
                                ?? normalizeTerminalDisplayValue(m.prob)
                                ?? m.prob
                              : m.prob;
-                           const rowYesVenue = primaryVenue;
-                           const rowNoVenue = primaryVenue;
+                           const { yesVenue: rowYesVenue, noVenue: rowNoVenue } = resolveOutcomePriceVenues({
+                             primaryVenue,
+                             venueQuotes: m.venueQuotes,
+                             yesPrice: rowYesPrice,
+                             noPrice: rowNoPrice,
+                             orderbook: isExpandedOutcome ? displayOrderbook : null,
+                             expanded: isExpandedOutcome,
+                           });
                            const rowYesSelected = isSelectedOutcome && ticketOutcomeSide === 'yes';
                            const rowNoSelected = isSelectedOutcome && ticketOutcomeSide === 'no';
                            if (isExpandedOutcome) {

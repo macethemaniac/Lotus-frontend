@@ -9,6 +9,7 @@ import {
   resolveLivePriceForTerminalOutcome,
   resolveOutcomeSummaryVenueCount,
   resolveOutcomeSummaryVenues,
+  resolveOutcomePriceVenues,
   resolveOutcomeSeedMedia,
   resolveSelectedMarketHydratedMedia,
   resolveSelectedMarketSeedMedia,
@@ -655,6 +656,57 @@ describe('resolveSelectedOutcomeOrderbookDisplaySource', () => {
       },
       visible: visibleOrderbook,
     })).toEqual(visibleOrderbook);
+  });
+});
+
+describe('resolveOutcomePriceVenues', () => {
+  it('uses the top ask venue for expanded rows so the badge matches the displayed live price', () => {
+    expect(resolveOutcomePriceVenues({
+      primaryVenue: 'LIMITLESS',
+      venueQuotes: [
+        { venue: 'LIMITLESS', yesPrice: '34.1c', noPrice: '65.9c', blocker: null },
+        { venue: 'PREDICT_FUN', yesPrice: '33.2c', noPrice: '66.8c', blocker: null },
+      ],
+      yesPrice: '33.2c',
+      noPrice: '66.8c',
+      orderbook: {
+        marketId: 'market-1',
+        outcomeId: 'FRANCE',
+        generatedAt: new Date().toISOString(),
+        depth: 20,
+        venues: [],
+        bids: [{ venue: 'LIMITLESS', price: '0.331', size: '100' }],
+        asks: [{ venue: 'PREDICT_FUN', price: '0.332', size: '100', cumulativeSize: '100', cumulativeNotional: '33.2', venueMarketId: 'pm-1', venueOutcomeId: 'yes' }],
+        bestBid: '0.331',
+        bestAsk: '0.332',
+        midpoint: '0.3315',
+        spread: '0.001',
+        status: 'live',
+        blockers: [],
+        stream: null,
+      },
+      expanded: true,
+    })).toEqual({
+      yesVenue: 'PREDICT_FUN',
+      noVenue: 'PREDICT_FUN',
+    });
+  });
+
+  it('matches collapsed row badges to the visible quote breakdown before falling back to the primary venue', () => {
+    expect(resolveOutcomePriceVenues({
+      primaryVenue: 'LIMITLESS',
+      venueQuotes: [
+        { venue: 'LIMITLESS', yesPrice: '34.1c', noPrice: '65.9c', blocker: null },
+        { venue: 'PREDICT_FUN', yesPrice: '33.2c', noPrice: '66.8c', blocker: null },
+      ],
+      yesPrice: '33.2c',
+      noPrice: '66.8c',
+      orderbook: null,
+      expanded: false,
+    })).toEqual({
+      yesVenue: 'PREDICT_FUN',
+      noVenue: 'PREDICT_FUN',
+    });
   });
 });
 

@@ -17,6 +17,11 @@ export type TerminalVenueQuoteDisplay = {
   blocker: string | null;
 };
 
+type VenueBadgeResolution = {
+  yesVenue: string | null;
+  noVenue: string | null;
+};
+
 export type TerminalOutcomeRowDisplay = {
   platforms: number;
   prob: string;
@@ -53,6 +58,12 @@ const normalizeVenueKey = (value: string | null | undefined): string => (
     ? value.trim().replace(/[\s.-]+/g, '_').toUpperCase()
     : ''
 );
+
+const normalizeDisplayPriceLabel = (value: string | null | undefined): string | null => {
+  const trimmed = typeof value === 'string' ? value.trim() : '';
+  if (!trimmed || trimmed === '-' || /^quote$/i.test(trimmed)) return null;
+  return trimmed.toLowerCase();
+};
 
 const hasUsableOrderbookDepth = (orderbook: MarketOrderbookResponse | null): boolean =>
   Boolean(orderbook && (orderbook.bids.length > 0 || orderbook.asks.length > 0 || orderbook.bestBid || orderbook.bestAsk));
@@ -182,6 +193,39 @@ export const resolveSelectedOutcomeOrderbookDisplaySource = (input: {
 }): MarketOrderbookResponse | null => {
   if (input.live && hasUsableOrderbookDepth(input.live)) return input.live;
   return input.visible ?? input.live;
+};
+
+export const resolveOutcomePriceVenues = (input: {
+  primaryVenue: string | null;
+  venueQuotes: readonly TerminalVenueQuoteDisplay[];
+  yesPrice: string | null | undefined;
+  noPrice: string | null | undefined;
+  orderbook: MarketOrderbookResponse | null;
+  expanded: boolean;
+}): VenueBadgeResolution => {
+  if (input.expanded) {
+    const topAskVenue = input.orderbook?.asks[0]?.venue?.trim();
+    if (topAskVenue) {
+      return {
+        yesVenue: topAskVenue,
+        noVenue: topAskVenue,
+      };
+    }
+  }
+
+  const normalizedYesPrice = normalizeDisplayPriceLabel(input.yesPrice);
+  const normalizedNoPrice = normalizeDisplayPriceLabel(input.noPrice);
+  const matchingYesVenue = normalizedYesPrice
+    ? input.venueQuotes.find((quote) => normalizeDisplayPriceLabel(quote.yesPrice) === normalizedYesPrice)?.venue ?? null
+    : null;
+  const matchingNoVenue = normalizedNoPrice
+    ? input.venueQuotes.find((quote) => normalizeDisplayPriceLabel(quote.noPrice) === normalizedNoPrice)?.venue ?? null
+    : null;
+
+  return {
+    yesVenue: matchingYesVenue ?? input.primaryVenue,
+    noVenue: matchingNoVenue ?? matchingYesVenue ?? input.primaryVenue,
+  };
 };
 
 export const orderSelectedOutcomeVisibleVenues = (
