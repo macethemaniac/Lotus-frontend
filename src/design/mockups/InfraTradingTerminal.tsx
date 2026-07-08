@@ -23,6 +23,7 @@ import {
   resolveOutcomeSeedMedia,
   resolveSelectedMarketSeedMedia,
   resolveInitialSelectedOutcomeId,
+  resolveSelectedOutcomeOrderbookDisplaySource,
   resolveVisibleSelectedOutcomeOrderbook,
   shouldResetOrderbookForRequestChange,
   shouldReuseSelectedOutcomeState,
@@ -4291,6 +4292,13 @@ const InfraTradingTerminalInner = ({
     () => filterOrderbookForVenue(visibleSelectedOutcomeOrderbook, orderbookVenue),
     [orderbookVenue, visibleSelectedOutcomeOrderbook]
   );
+  const selectedOutcomeDisplayOrderbook = useMemo(
+    () => resolveSelectedOutcomeOrderbookDisplaySource({
+      live: rawDisplayOrderbook,
+      visible: displayOrderbook,
+    }),
+    [displayOrderbook, rawDisplayOrderbook],
+  );
   const displayOrderbookHasDepth = useMemo(
     () => Boolean(
       displayOrderbook
@@ -4303,8 +4311,8 @@ const InfraTradingTerminalInner = ({
     [displayOrderbook],
   );
   const selectedOutcomeOrderbookDisplayValues = useMemo<TerminalOutcomeDisplayValues | null>(() => {
-    return orderbookOutcomeDisplayValues(displayOrderbook, terminalMarket.marketType);
-  }, [displayOrderbook?.bestAsk, terminalMarket.marketType]);
+    return orderbookOutcomeDisplayValues(selectedOutcomeDisplayOrderbook, terminalMarket.marketType);
+  }, [selectedOutcomeDisplayOrderbook?.bestAsk, terminalMarket.marketType]);
   const selectedOutcomeVisibleVenues = useMemo(() => {
     const venues = new Map<string, string>();
     const addVenue = (value: string | null | undefined) => {
