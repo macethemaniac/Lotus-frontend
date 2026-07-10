@@ -102,6 +102,13 @@ npx wrangler secret put TURNKEY_AUTH_PROXY_CONFIG_ID --env production
 npm run cf:deploy:production
 ```
 
+Pushes to `main` automatically build and deploy the production Worker through
+`.github/workflows/deploy-cloudflare-frontend.yml`. The repository requires
+these GitHub Actions secrets:
+
+- `CLOUDFLARE_API_TOKEN`
+- `CLOUDFLARE_ACCOUNT_ID`
+
 Worker configuration lives in [`wrangler.jsonc`](/Users/davidarnal/Documents/Lotus/Lotus-frontend/wrangler.jsonc).
 
 ## Notes
