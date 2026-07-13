@@ -494,7 +494,15 @@ export function getMarketChart(
   const path = `/markets/${encodeURIComponent(marketId)}/chart${query ? `?${query}` : ""}`;
   return staleWhileRevalidate(`chart:${path}`, () =>
     apiRequest<MarketChartResponse>(path),
-    { ttlMs: 10_000, maxStaleMs: 5 * 60_000 }
+    {
+      ttlMs: 10_000,
+      maxStaleMs: 5 * 60_000,
+      // An empty response is a transient “history unavailable” state. It
+      // must not mask a later successful fetch when the user revisits a
+      // market in the same SPA session.
+      allowStale: (response) => response.points.length > 0,
+      shouldCache: (response) => response.points.length > 0,
+    }
   );
 }
 

@@ -7,38 +7,51 @@ type CacheEntry<T> = {
 const cache = new Map<string, CacheEntry<unknown>>();
 const inFlight = new Map<string, Promise<unknown>>();
 
-export type StaleCacheOptions = {
+export type StaleCacheOptions<T = unknown> = {
   ttlMs?: number;
   maxStaleMs?: number;
+  /** Whether an existing value is safe to return while a refresh runs. */
+  allowStale?: (data: T) => boolean;
+  /** Whether a refreshed value should be retained for later requests. */
+  shouldCache?: (data: T) => boolean;
 };
 
 export async function staleWhileRevalidate<T>(
   key: string,
   fetcher: () => Promise<T>,
-  options: StaleCacheOptions = {}
+  options: StaleCacheOptions<T> = {}
 ): Promise<T> {
   const ttlMs = options.ttlMs ?? 15_000;
   const maxStaleMs = options.maxStaleMs ?? 5 * 60_000;
+  const allowStale = options.allowStale ?? (() => true);
+  const shouldCache = options.shouldCache ?? (() => true);
   const now = Date.now();
   const entry = cache.get(key) as CacheEntry<T> | undefined;
   const age = entry ? now - entry.updatedAt : Number.POSITIVE_INFINITY;
+  const canUseStale = entry?.data !== undefined
+    && age <= maxStaleMs
+    && allowStale(entry.data);
 
-  if (entry?.data !== undefined && age <= ttlMs) {
+  if (entry?.data !== undefined && age <= ttlMs && allowStale(entry.data)) {
     return entry.data;
   }
 
   if (entry?.promise) {
-    return entry.data !== undefined && age <= maxStaleMs ? entry.data : entry.promise;
+    return canUseStale ? entry.data! : entry.promise;
   }
 
   const promise = fetcher()
     .then((data) => {
-      cache.set(key, { data, updatedAt: Date.now() });
+      if (shouldCache(data)) {
+        cache.set(key, { data, updatedAt: Date.now() });
+      } else {
+        cache.delete(key);
+      }
       return data;
     })
     .catch((error) => {
-      if (entry?.data !== undefined && age <= maxStaleMs) {
-        return entry.data;
+      if (canUseStale) {
+        return entry.data!;
       }
       throw error;
     })
@@ -50,7 +63,7 @@ export async function staleWhileRevalidate<T>(
     });
 
   cache.set(key, { data: entry?.data, updatedAt: entry?.updatedAt ?? 0, promise });
-  return entry?.data !== undefined && age <= maxStaleMs ? entry.data : promise;
+  return canUseStale ? entry.data! : promise;
 }
 
 export function setCachedData<T>(key: string, data: T): void {
