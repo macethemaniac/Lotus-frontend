@@ -2738,6 +2738,12 @@ const polymarketPriceHistoryConfig = (timeframe: MarketChartTimeframe): { interv
   }
 };
 
+const polymarketEventStartTimestamp = (event: { startDate?: string | null }): number | undefined => {
+  if (!event.startDate) return undefined;
+  const timestamp = Date.parse(event.startDate);
+  return Number.isFinite(timestamp) ? Math.floor(timestamp / 1000) : undefined;
+};
+
 const normalizeOutcomeChartLabel = (value: string | null | undefined): string =>
   (value ?? "")
     .toLowerCase()
@@ -3393,7 +3399,10 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
               .sort((left, right) => (right.latestValue ?? 0) - (left.latestValue ?? 0))
               .slice(0, MULTI_OUTCOME_CHART_LIMIT);
             if (topPolymarketMarkets.length > 0) {
-              const historyConfig = polymarketPriceHistoryConfig(activeTab);
+              const historyConfig = {
+                ...polymarketPriceHistoryConfig(activeTab),
+                startTs: polymarketEventStartTimestamp(polymarketEvent),
+              };
               const results = await Promise.allSettled(
                 topPolymarketMarkets.map(async (outcome): Promise<OutcomeChartEntry> => {
                   const history = await getPolymarketPricesHistory(outcome.tokenId, historyConfig);

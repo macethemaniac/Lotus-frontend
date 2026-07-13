@@ -340,6 +340,8 @@ export type PolymarketEventMarketSnapshot = {
 export type PolymarketEventSnapshot = {
   slug: string;
   title: string;
+  startDate?: string | null;
+  endDate?: string | null;
   markets: PolymarketEventMarketSnapshot[];
 };
 
@@ -571,7 +573,7 @@ export function getPolymarketMarketsByEventSlug(eventSlug: string, input: { limi
 
 export function getPolymarketPricesHistory(
   assetId: string,
-  input: { interval: PolymarketPriceHistoryInterval; fidelity?: number }
+  input: { interval: PolymarketPriceHistoryInterval; fidelity?: number; startTs?: number; endTs?: number }
 ) {
   const params = new URLSearchParams({
     market: assetId,
@@ -579,6 +581,12 @@ export function getPolymarketPricesHistory(
   });
   if (typeof input.fidelity === "number" && Number.isFinite(input.fidelity)) {
     params.set("fidelity", String(input.fidelity));
+  }
+  if (typeof input.startTs === "number" && Number.isFinite(input.startTs)) {
+    params.set("startTs", String(Math.floor(input.startTs)));
+  }
+  if (typeof input.endTs === "number" && Number.isFinite(input.endTs)) {
+    params.set("endTs", String(Math.floor(input.endTs)));
   }
   const url = `https://clob.polymarket.com/prices-history?${params.toString()}`;
   return staleWhileRevalidate(`polymarket-price-history:${params.toString()}`, async () => {
