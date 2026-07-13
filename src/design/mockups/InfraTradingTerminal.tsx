@@ -3285,6 +3285,12 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
               timeframe: activeTab,
               outcomeId,
             });
+            // A successful HTTP response with an empty history is not a usable
+            // chart. Continue to the storage-backed Lotus history instead of
+            // rendering only the current live dot.
+            if (chart.chart.points.length === 0) {
+              throw new Error('Polymarket history is empty.');
+            }
             const chartInput = chartOutcomeInputs[0] ?? null;
             if (!cancelled) {
               setVenueChart(null);
@@ -3363,7 +3369,11 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
                   };
                 })
               );
-              const fulfilled = results.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
+              const fulfilled = results.flatMap((result) => (
+                result.status === 'fulfilled' && result.value.chart.points.length > 0
+                  ? [result.value]
+                  : []
+              ));
               if (!cancelled && fulfilled.length > 0) {
                 setVenueChart(null);
                 setOutcomeCharts(fulfilled);
@@ -3384,7 +3394,16 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
           ).values());
           const results = await Promise.allSettled(
             uniqueInputs.map(async (outcome): Promise<OutcomeChartEntry> => {
-              const chart = await getMarketChart(outcome.marketId!, { outcomeId: outcome.quoteOutcomeId, timeframe: activeTab });
+              let chart = await getMarketChart(outcome.marketId!, { outcomeId: outcome.quoteOutcomeId, timeframe: activeTab });
+              // Some catalog rows expose a display outcome label rather than
+              // the venue's YES/NO outcome id. Retry the market-level chart so
+              // an empty outcome-scoped response cannot hide available history.
+              if (chart.points.length === 0) {
+                const marketChart = await getMarketChart(outcome.marketId!, { timeframe: activeTab });
+                if (marketChart.points.length > 0) {
+                  chart = marketChart;
+                }
+              }
               return {
                 id: outcome.id,
                 marketId: outcome.marketId,
@@ -3397,14 +3416,15 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
             })
           );
           const fulfilled = results.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
+          const fulfilledWithHistory = fulfilled.filter((entry) => entry.chart.points.length > 0);
           if (!cancelled) {
             setVenueChart(null);
-            setOutcomeCharts(fulfilled);
+            setOutcomeCharts(fulfilledWithHistory);
             setChartDataRequestKey(requestKey);
-            if (fulfilled.length > 0) {
+            if (fulfilledWithHistory.length > 0) {
               setNotFoundKey(null);
             }
-            if (fulfilled.length === 0) {
+            if (fulfilledWithHistory.length === 0) {
               const rejected = results.find((result) => result.status === 'rejected');
               if (rejected?.reason && isApiNotFound(rejected.reason, 'MARKET_NOT_FOUND')) {
                 setNotFoundKey(requestKey);
