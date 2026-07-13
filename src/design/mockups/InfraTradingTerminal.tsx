@@ -125,6 +125,7 @@ const ORDERBOOK_STREAM_RENDER_THROTTLE_MS = env.lotusDeployEnv === 'production' 
 const ORDERBOOK_SELECTED_DISPLAY_RENDER_THROTTLE_MS = env.lotusDeployEnv === 'production' ? 320 : 90;
 const SELECTED_OUTCOME_BOOK_STABILIZE_DELAY_MS = 250;
 const TERMINAL_CHART_REFRESH_INTERVAL_MS = env.lotusDeployEnv === 'production' ? 45_000 : 60_000;
+const TERMINAL_CHART_EMPTY_RETRY_DELAYS_MS = [1_000, 2_000, 4_000] as const;
 const TERMINAL_ACCOUNT_REFRESH_INTERVAL_MS = 30_000;
 const TERMINAL_ALL_OUTCOME_PRICE_REFRESH_INTERVAL_MS = env.lotusDeployEnv === 'production' ? 20_000 : 12_000;
 const TERMINAL_FULL_OUTCOME_REFRESH_INTERVAL_MS = env.lotusDeployEnv === 'production' ? 180_000 : 120_000;
@@ -3266,6 +3267,21 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
 
   React.useEffect(() => {
     let cancelled = false;
+    let emptyRetryAttempt = 0;
+    let emptyRetryTimer: number | null = null;
+    let emptyRetryPending = false;
+    const scheduleEmptyChartRetry = () => {
+      if (cancelled || emptyRetryAttempt >= TERMINAL_CHART_EMPTY_RETRY_DELAYS_MS.length) return;
+      const delay = TERMINAL_CHART_EMPTY_RETRY_DELAYS_MS[emptyRetryAttempt] ?? 4_000;
+      emptyRetryAttempt += 1;
+      emptyRetryPending = true;
+      setLoading(true);
+      emptyRetryTimer = window.setTimeout(() => {
+        emptyRetryTimer = null;
+        emptyRetryPending = false;
+        void loadChart();
+      }, delay);
+    };
     const loadChart = async () => {
       if (!marketId) {
         setVenueChart(null);
@@ -3422,12 +3438,15 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
             setOutcomeCharts(fulfilledWithHistory);
             setChartDataRequestKey(requestKey);
             if (fulfilledWithHistory.length > 0) {
+              emptyRetryAttempt = 0;
               setNotFoundKey(null);
             }
             if (fulfilledWithHistory.length === 0) {
               const rejected = results.find((result) => result.status === 'rejected');
               if (rejected?.reason && isApiNotFound(rejected.reason, 'MARKET_NOT_FOUND')) {
                 setNotFoundKey(requestKey);
+              } else {
+                scheduleEmptyChartRetry();
               }
               setError(safeMarketDataError(rejected?.reason, 'chart'));
             }
@@ -3440,6 +3459,11 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
           setOutcomeCharts([]);
           setVenueChart(response);
           setNotFoundKey(null);
+          if (response.points.length > 0) {
+            emptyRetryAttempt = 0;
+          } else {
+            scheduleEmptyChartRetry();
+          }
           setChartDataRequestKey(requestKey);
         }
       } catch (err) {
@@ -3453,7 +3477,7 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
           setError(safeMarketDataError(err, 'chart'));
         }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled && !emptyRetryPending) setLoading(false);
       }
     };
     void loadChart();
@@ -3469,6 +3493,7 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
     return () => {
       cancelled = true;
       window.clearInterval(interval);
+      if (emptyRetryTimer !== null) window.clearTimeout(emptyRetryTimer);
     };
   }, [
     activeTab,
