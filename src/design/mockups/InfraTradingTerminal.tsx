@@ -3200,7 +3200,12 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
   // quote while the canonical history already contains real movement). The
   // venue history paths remain available as fallbacks below.
   const prefersPolymarketBinaryHistory = false;
-  const prefersPolymarketMultiHistory = marketType === 'multi' && Boolean(polymarketMarketSlug || polymarketEventSlug);
+  // Multi-outcome event payloads from Polymarket can be partial: a parent event
+  // may return only the markets that currently have usable venue prices. That
+  // makes the chart silently collapse to one candidate even though Lotus has
+  // canonical history for the other outcomes. Fetch each canonical outcome's
+  // history below so the chart always represents the complete selected event.
+  const prefersPolymarketMultiHistory = false;
   const liveOutcomeValuesByKey = useMemo(
     () => new Map(chartOutcomeInputs.map((outcome) => [outcome.key, outcome.latestValue])),
     [chartOutcomeInputs]
