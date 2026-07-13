@@ -1662,6 +1662,18 @@ const isGenericBinaryOutcome = (label: string | null | undefined): boolean => {
   return normalized === 'YES' || normalized === 'NO' || normalized === 'UP' || normalized === 'DOWN';
 };
 
+const effectiveQuoteOutcomeId = (
+  marketType: 'binary' | 'multi' | undefined,
+  outcomeId: string | null | undefined,
+  fallbackLabel?: string | null,
+): string => {
+  const inferred = canonicalQuoteOutcomeId((outcomeId ?? fallbackLabel ?? 'YES').trim() || 'YES');
+  // Catalog rows can carry the display question as their outcome identifier.
+  // Binary venue APIs require the canonical side instead; using the display
+  // question produces a synthetic 50% quote rather than the live market price.
+  return marketType === 'binary' && !isGenericBinaryOutcome(inferred) ? 'YES' : inferred;
+};
+
 const outcomeIdForTicketSide = (
   outcomes: readonly TerminalOutcomeRow[],
   side: TicketOutcomeSide,
@@ -2576,7 +2588,7 @@ const initialOutcomeRows = (market: TerminalMarketSelection): TerminalOutcomeRow
       market.canonicalMarketIds,
       rows.length,
     ),
-    quoteOutcomeId: outcome.quoteOutcomeId ?? canonicalQuoteOutcomeId(outcome.name),
+    quoteOutcomeId: effectiveQuoteOutcomeId(market.marketType, outcome.quoteOutcomeId, outcome.name),
     name: outcome.name,
     ...resolveOutcomeSeedMedia({
       imageUrl: outcome.imageUrl,
@@ -4141,7 +4153,11 @@ const InfraTradingTerminalInner = ({
     return [...quoteableTerminalOutcomes.slice(0, 4), quoteableTerminalOutcomes[pinnedIndex]!];
   }, [expandedOutcomeId, quoteableTerminalOutcomes, selectedOutcomeId, showAllOutcomes, terminalMarket.initialOutcomeId]);
   const selectedOutcomeMarketId = selectedOutcome?.marketId ?? terminalMarketId;
-  const selectedQuoteOutcomeId = selectedOutcome?.quoteOutcomeId ?? selectedOutcomeId;
+  const selectedQuoteOutcomeId = effectiveQuoteOutcomeId(
+    marketType,
+    selectedOutcome?.quoteOutcomeId ?? selectedOutcomeId,
+    selectedOutcome?.name,
+  );
   const selectedOutcomeRefreshKey = `${selectedOutcome?.id ?? 'none'}:${selectedOutcomeMarketId ?? 'none'}:${selectedQuoteOutcomeId ?? 'none'}`;
   const selectedOutcomeCanonicalMarketIds = useMemo(
     () => canonicalIdsForTerminalOutcome(
@@ -4173,7 +4189,7 @@ const InfraTradingTerminalInner = ({
       : 'Yes';
   const orderbookQuoteOutcomeId = orderbookActive
     ? marketType === 'binary'
-      ? selectedQuoteOutcomeId ?? quoteOutcomeIdForTicketSide(selectedOutcome, 'yes') ?? 'YES'
+      ? effectiveQuoteOutcomeId(marketType, selectedQuoteOutcomeId ?? quoteOutcomeIdForTicketSide(selectedOutcome, 'yes'), selectedOutcome?.name)
       : selectedQuoteOutcomeId ?? quoteOutcomeIdForTicketSide(selectedOutcome, 'yes') ?? null
     : null;
   const orderbookStreamMarketIds = useMemo(
@@ -4193,8 +4209,11 @@ const InfraTradingTerminalInner = ({
   const selectedTicketOutcomeId = outcomeIdForTicketSide(quoteableTerminalOutcomes, ticketOutcomeSide, selectedOutcome?.id ?? selectedOutcomeId);
   const selectedTicketOutcome = terminalOutcomes.find((outcome) => outcome.id === selectedTicketOutcomeId) ?? selectedOutcome;
   const selectedTicketMarketId = selectedTicketOutcome?.marketId ?? selectedOutcomeMarketId ?? terminalMarketId;
-  const selectedTicketQuoteOutcomeId = quoteOutcomeIdForTicketSide(selectedTicketOutcome, ticketOutcomeSide)
-    ?? selectedTicketOutcomeId;
+  const selectedTicketQuoteOutcomeId = effectiveQuoteOutcomeId(
+    marketType,
+    quoteOutcomeIdForTicketSide(selectedTicketOutcome, ticketOutcomeSide) ?? selectedTicketOutcomeId,
+    selectedTicketOutcome?.name,
+  );
   const ticketVenuePreference = useMemo<ExecutionOrderVenuePreference>(() => {
     // When the trader explicitly picks a venue in the orderbook venue selector, lock execution to
     // that venue instead of letting BEST_ROUTE silently route elsewhere (which made the selected
@@ -4471,11 +4490,16 @@ const InfraTradingTerminalInner = ({
     selectTerminalOutcome(nextSelectedOutcomeId, quoteableTerminalOutcomes);
   }, [quoteableTerminalOutcomes, selectTerminalOutcome]);
   const selectedTicketUsesLatchedOutcomeDisplay = selectedTicketOutcome?.id === selectedOutcome?.id;
+  const selectedTicketRowIsLive = selectedTicketOutcome?.status === 'live';
   const selectedTicketYesPrice = selectedTicketUsesLatchedOutcomeDisplay
-    ? selectedOutcomeOrderbookDisplayValues?.yesPrice ?? selectedOutcomeDisplayValues?.yesPrice ?? selectedTicketOutcome?.yesPrice ?? null
+    ? selectedOutcomeOrderbookDisplayValues?.yesPrice
+      ?? (selectedTicketRowIsLive ? selectedTicketOutcome?.yesPrice : selectedOutcomeDisplayValues?.yesPrice ?? selectedTicketOutcome?.yesPrice)
+      ?? null
     : selectedTicketOutcome?.yesPrice ?? null;
   const selectedTicketNoPrice = selectedTicketUsesLatchedOutcomeDisplay
-    ? selectedOutcomeOrderbookDisplayValues?.noPrice ?? selectedOutcomeDisplayValues?.noPrice ?? selectedTicketOutcome?.noPrice ?? null
+    ? selectedOutcomeOrderbookDisplayValues?.noPrice
+      ?? (selectedTicketRowIsLive ? selectedTicketOutcome?.noPrice : selectedOutcomeDisplayValues?.noPrice ?? selectedTicketOutcome?.noPrice)
+      ?? null
     : selectedTicketOutcome?.noPrice ?? null;
   const selectedTicketDisplayPrice = parseProbabilityLabel(ticketOutcomeSide === 'yes' ? selectedTicketYesPrice : selectedTicketNoPrice);
   const selectedTicketFallbackPrice = ticketPriceForSide(selectedTicketOutcome, ticketOutcomeSide);
@@ -4626,7 +4650,7 @@ const InfraTradingTerminalInner = ({
             venues: outcome.venues ?? marketVenueList,
             marketId: outcome.marketId ?? terminalMarketId,
             canonicalMarketIds: outcome.canonicalMarketIds ?? [],
-            quoteOutcomeId: outcome.quoteOutcomeId ?? canonicalQuoteOutcomeId(outcome.name),
+            quoteOutcomeId: effectiveQuoteOutcomeId(chartMarketType, outcome.quoteOutcomeId, outcome.name),
             imageUrl: outcome.imageUrl ?? null,
             iconUrl: outcome.iconUrl ?? null,
             volume: outcome.volume ?? null,
@@ -4660,7 +4684,7 @@ const InfraTradingTerminalInner = ({
             venues: outcome.venues,
             marketId: terminalMarketId,
             canonicalMarketIds: canonicalIdsForTerminalOutcome(terminalMarketId, outcome.canonicalMarketIds ?? null, terminalMarket.canonicalMarketIds, outcomeResponse.outcomes.length),
-            quoteOutcomeId: canonicalQuoteOutcomeId(outcome.label),
+            quoteOutcomeId: effectiveQuoteOutcomeId(chartMarketType, undefined, outcome.label),
             imageUrl: null as string | null,
             iconUrl: null as string | null,
             volume: outcome.volume ?? null,
@@ -4670,7 +4694,7 @@ const InfraTradingTerminalInner = ({
 
       const seedRows = baseOutcomes.map((outcome, index): TerminalOutcomeRow => {
         const outcomeMarketId = outcome.marketId ?? terminalMarketId;
-        const quoteOutcomeId = outcome.quoteOutcomeId ?? canonicalQuoteOutcomeId(outcome.label);
+        const quoteOutcomeId = effectiveQuoteOutcomeId(chartMarketType, outcome.quoteOutcomeId, outcome.label);
         const canonicalMarketIds = canonicalIdsForTerminalOutcome(
           outcomeMarketId,
           outcome.canonicalMarketIds,
@@ -4731,7 +4755,7 @@ const InfraTradingTerminalInner = ({
               terminalMarket.canonicalMarketIds,
               baseOutcomes.length,
             ),
-            outcomeId: outcome.quoteOutcomeId ?? canonicalQuoteOutcomeId(outcome.label),
+            outcomeId: effectiveQuoteOutcomeId(chartMarketType, outcome.quoteOutcomeId, outcome.label),
           })),
         });
         const livePriceByKey = new Map(livePriceResponse.prices.map((price) => [`${price.marketId}:${price.outcomeId ?? ''}`, price]));
@@ -4764,7 +4788,7 @@ const InfraTradingTerminalInner = ({
             };
           }
           const yesPrice = formatProbabilityPrice(parsedPrice);
-          const noPrice = terminalMarket.marketType === 'binary' ? formatProbabilityPrice(1 - parsedPrice) : '-';
+          const noPrice = chartMarketType === 'binary' ? formatProbabilityPrice(1 - parsedPrice) : '-';
           return {
             ...row,
             platforms: summaryVenueCount || row.platforms,
@@ -4773,7 +4797,7 @@ const InfraTradingTerminalInner = ({
             noPrice,
             primaryVenue: livePrice?.bestVenue ?? row.primaryVenue ?? quoteVenues[0] ?? null,
             venueQuotes: livePrice?.venueBreakdown?.length
-              ? venueQuotesFromBreakdown(livePrice.venueBreakdown, terminalMarket.marketType)
+              ? venueQuotesFromBreakdown(livePrice.venueBreakdown, chartMarketType)
               : livePrice?.bestVenue
                 ? placeholderVenueQuotes(quoteVenues.length ? quoteVenues : [livePrice.bestVenue], yesPrice, noPrice, null)
                 : row.venueQuotes,
@@ -4838,7 +4862,7 @@ const InfraTradingTerminalInner = ({
         const requestItems = currentOutcomes
           .map((outcome) => {
             const outcomeMarketId = outcome.marketId ?? terminalMarketId;
-            const quoteOutcomeId = outcome.quoteOutcomeId ?? canonicalQuoteOutcomeId(outcome.name);
+            const quoteOutcomeId = effectiveQuoteOutcomeId(chartMarketType, outcome.quoteOutcomeId, outcome.name);
             return {
               rowId: outcome.id,
               marketId: outcomeMarketId,
@@ -4870,7 +4894,7 @@ const InfraTradingTerminalInner = ({
             let changed = false;
             const nextOutcomes = current.map((outcome) => {
             const outcomeMarketId = outcome.marketId ?? terminalMarketId;
-            const quoteOutcomeId = outcome.quoteOutcomeId ?? canonicalQuoteOutcomeId(outcome.name);
+            const quoteOutcomeId = effectiveQuoteOutcomeId(chartMarketType, outcome.quoteOutcomeId, outcome.name);
             const livePrice =
               priceByKey.get(`${outcomeMarketId}:${quoteOutcomeId}`) ??
               resolveLivePriceForTerminalOutcome({
@@ -4907,7 +4931,7 @@ const InfraTradingTerminalInner = ({
               return nextOutcome;
             }
             const yesPrice = formatProbabilityPrice(parsedPrice);
-            const noPrice = terminalMarket.marketType === 'binary' ? formatProbabilityPrice(1 - parsedPrice) : '-';
+            const noPrice = chartMarketType === 'binary' ? formatProbabilityPrice(1 - parsedPrice) : '-';
             const nextOutcome = mergeTerminalOutcomeRowDisplay(outcome, {
               platforms: summaryVenueCount || outcome.platforms,
               prob: formatProbabilityPercent(parsedPrice),
@@ -4915,7 +4939,7 @@ const InfraTradingTerminalInner = ({
               noPrice,
               primaryVenue: livePrice?.bestVenue ?? outcome.primaryVenue ?? quoteVenues[0] ?? null,
               venueQuotes: livePrice?.venueBreakdown?.length
-                ? venueQuotesFromBreakdown(livePrice.venueBreakdown, terminalMarket.marketType)
+                ? venueQuotesFromBreakdown(livePrice.venueBreakdown, chartMarketType)
                 : livePrice?.bestVenue
                   ? placeholderVenueQuotes(quoteVenues.length ? quoteVenues : [livePrice.bestVenue], yesPrice, noPrice, null)
                   : outcome.venueQuotes,
@@ -4939,7 +4963,7 @@ const InfraTradingTerminalInner = ({
     }
   }, [
     terminalMarket.canonicalMarketIds,
-    terminalMarket.marketType,
+    chartMarketType,
     terminalMarketId,
   ]);
 
