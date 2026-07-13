@@ -4125,7 +4125,12 @@ const InfraTradingTerminalInner = ({
     ?? terminalOutcomes.find((outcome) => outcome.id === selectedOutcomeId)
     ?? sortedTerminalOutcomes[0]
     ?? null;
-  const chartMarketType: 'binary' | 'multi' = hasCompoundEventOutcomes ? 'multi' : marketType;
+  // The terminal route represents the selected market, not the whole event
+  // family. For example, an LPL winner event contains many binary team
+  // markets, but the Bilibili page must chart Bilibili's YES/NO history rather
+  // than switching to the multi-outcome event path because sibling markets
+  // exist.
+  const chartMarketType: 'binary' | 'multi' = marketType;
   const visibleOutcomeRows = useMemo(() => {
     if (showAllOutcomes || quoteableTerminalOutcomes.length <= 5) return quoteableTerminalOutcomes;
     const defaultRows = quoteableTerminalOutcomes.slice(0, 5);
