@@ -3153,7 +3153,15 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
           .slice(0, MULTI_OUTCOME_CHART_LIMIT);
     return source.map((outcome, index): OutcomeChartInput => {
       const chartMarketId = outcome.marketId ?? marketId;
-      const quoteOutcomeId = outcome.quoteOutcomeId || canonicalQuoteOutcomeId(outcome.name || outcome.id);
+      const inferredQuoteOutcomeId = outcome.quoteOutcomeId || canonicalQuoteOutcomeId(outcome.name || outcome.id);
+      // Binary catalog rows can use the full display question as their label
+      // while omitting the venue-side outcome id. Sending that label to the
+      // chart endpoint produces an unknown-outcome fallback (a synthetic 50%
+      // line). Use the canonical YES side unless the row explicitly identifies
+      // another supported binary side.
+      const quoteOutcomeId = marketType === 'binary' && !isGenericBinaryOutcome(inferredQuoteOutcomeId)
+        ? 'YES'
+        : inferredQuoteOutcomeId;
       return {
         id: outcome.id,
         marketId: chartMarketId,
