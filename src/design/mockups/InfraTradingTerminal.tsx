@@ -3200,12 +3200,11 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
   // quote while the canonical history already contains real movement). The
   // venue history paths remain available as fallbacks below.
   const prefersPolymarketBinaryHistory = false;
-  // Multi-outcome event payloads from Polymarket can be partial: a parent event
-  // may return only the markets that currently have usable venue prices. That
-  // makes the chart silently collapse to one candidate even though Lotus has
-  // canonical history for the other outcomes. Fetch each canonical outcome's
-  // history below so the chart always represents the complete selected event.
-  const prefersPolymarketMultiHistory = false;
+  // For aggregate events, use the venue event history as the primary chart
+  // source. It contains the complete ranked candidate set and the same long
+  // time range users see on the venue. Lotus canonical history remains the
+  // fallback when the venue snapshot or one of its histories is unavailable.
+  const prefersPolymarketMultiHistory = marketType === 'multi' && Boolean(polymarketEventSlug);
   const liveOutcomeValuesByKey = useMemo(
     () => new Map(chartOutcomeInputs.map((outcome) => [outcome.key, outcome.latestValue])),
     [chartOutcomeInputs]
@@ -3380,18 +3379,15 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
                 const matchedOutcome = chartOutcomeInputs.find((outcome) =>
                   normalizeOutcomeChartLabel(outcome.label) === normalizeOutcomeChartLabel(label)
                 );
-                if (!matchedOutcome) {
-                  return [];
-                }
                 return [{
                   id: `${market.slug}:${label}`,
                   marketId: market.slug,
                   quoteOutcomeId: 'YES',
-                  label: matchedOutcome.label,
-                  key: matchedOutcome.key,
+                  label: matchedOutcome?.label ?? label,
+                  key: matchedOutcome?.key ?? normalizeChartKey('polymarket', `${market.slug}_YES`),
                   color: OUTCOME_CHART_COLORS[index % OUTCOME_CHART_COLORS.length]!,
                   tokenId: tokenIds[0]!,
-                  latestValue: matchedOutcome.latestValue ?? null,
+                  latestValue: matchedOutcome?.latestValue ?? yesPrice * 100,
                 }];
               })
               .sort((left, right) => (right.latestValue ?? 0) - (left.latestValue ?? 0))
