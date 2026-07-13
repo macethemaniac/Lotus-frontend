@@ -3175,7 +3175,11 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
     () => chartOutcomeInputs.map(({ latestValue: _latestValue, ...outcome }) => outcome),
     [chartOutcomeFetchKey]
   );
-  const prefersPolymarketBinaryHistory = marketType === 'binary' && Boolean(polymarketMarketSlug);
+  // Binary terminal charts should use Lotus's canonical history first. A venue
+  // snapshot can be valid but stale or provisional (for example, a flat 50%
+  // quote while the canonical history already contains real movement). The
+  // venue history paths remain available as fallbacks below.
+  const prefersPolymarketBinaryHistory = false;
   const prefersPolymarketMultiHistory = marketType === 'multi' && Boolean(polymarketMarketSlug || polymarketEventSlug);
   const liveOutcomeValuesByKey = useMemo(
     () => new Map(chartOutcomeInputs.map((outcome) => [outcome.key, outcome.latestValue])),
