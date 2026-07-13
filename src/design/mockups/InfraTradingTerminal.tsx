@@ -3125,6 +3125,7 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
   const [outcomeCharts, setOutcomeCharts] = useState<OutcomeChartEntry[]>([]);
   const [chartDataRequestKey, setChartDataRequestKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [emptyRetryPending, setEmptyRetryPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notFoundKey, setNotFoundKey] = useState<string | null>(null);
   const requestKey = `${marketId ?? 'none'}:${outcomeId ?? 'none'}:${polymarketEventSlug ?? 'no-event'}:${polymarketMarketSlug ?? 'no-market'}`;
@@ -3275,10 +3276,12 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
       const delay = TERMINAL_CHART_EMPTY_RETRY_DELAYS_MS[emptyRetryAttempt] ?? 4_000;
       emptyRetryAttempt += 1;
       emptyRetryPending = true;
+      setEmptyRetryPending(true);
       setLoading(true);
       emptyRetryTimer = window.setTimeout(() => {
         emptyRetryTimer = null;
         emptyRetryPending = false;
+        setEmptyRetryPending(false);
         void loadChart();
       }, delay);
     };
@@ -3292,6 +3295,7 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
       }
       if (notFoundKey === requestKey) return;
       setLoading(true);
+      setEmptyRetryPending(false);
       setError(null);
       try {
         if (prefersPolymarketBinaryHistory && polymarketMarketSlug) {
@@ -3509,6 +3513,8 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
     requestKey,
   ]);
 
+  const chartLoading = loading || emptyRetryPending || chartDataRequestKey !== requestKey;
+
   return (
     <div className="relative flex h-full w-full flex-col overflow-hidden rounded-[28px] bg-[#141a22] px-4 py-4 sm:px-6 sm:py-5">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -3558,7 +3564,7 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
         </div>
       )}
       <div ref={chartFrameRef} className="relative mt-6 min-h-[280px] w-full flex-1">
-        {loading && rows.length === 0 && (
+        {chartLoading && rows.length === 0 && (
           <div className="absolute inset-0 z-10 flex items-center justify-center text-xs font-bold uppercase tracking-[0.18em] text-zinc-500">
             Loading live chart
           </div>
@@ -3568,7 +3574,7 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
             {requestScopedError}
           </div>
         )}
-        {!loading && !requestScopedError && rows.length === 0 && (
+        {!chartLoading && !requestScopedError && rows.length === 0 && (
           <div className="absolute inset-0 z-10 flex items-center justify-center px-6 text-center text-xs font-semibold text-zinc-500">
             {chartSourceLabel} history is not available for this market yet.
           </div>
