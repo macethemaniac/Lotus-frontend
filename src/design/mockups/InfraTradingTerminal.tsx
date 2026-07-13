@@ -4142,12 +4142,16 @@ const InfraTradingTerminalInner = ({
     ?? terminalOutcomes.find((outcome) => outcome.id === selectedOutcomeId)
     ?? sortedTerminalOutcomes[0]
     ?? null;
-  // The terminal route represents the selected market, not the whole event
-  // family. For example, an LPL winner event contains many binary team
-  // markets, but the Bilibili page must chart Bilibili's YES/NO history rather
-  // than switching to the multi-outcome event path because sibling markets
-  // exist.
-  const chartMarketType: 'binary' | 'multi' = marketType;
+  // The terminal route normally represents one selected binary market, not the
+  // whole event family. An aggregate route is the exception: the catalog
+  // groups several binary candidate markets into one row and supplies one
+  // outcome row per candidate. Keep candidate deep links binary (they have one
+  // outcome row), but let the aggregate event chart request every candidate's
+  // canonical history instead of only the currently selected row.
+  const chartMarketType: 'binary' | 'multi' = marketType === 'multi'
+    || (terminalMarket.marketType === 'binary' && (terminalMarket.outcomes?.length ?? 0) > 1)
+    ? 'multi'
+    : 'binary';
   const visibleOutcomeRows = useMemo(() => {
     if (showAllOutcomes || quoteableTerminalOutcomes.length <= 5) return quoteableTerminalOutcomes;
     const defaultRows = quoteableTerminalOutcomes.slice(0, 5);
