@@ -3397,6 +3397,10 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
                 }];
               })
               .sort((left, right) => (right.latestValue ?? 0) - (left.latestValue ?? 0))
+              .map((outcome, index) => ({
+                ...outcome,
+                color: OUTCOME_CHART_COLORS[index % OUTCOME_CHART_COLORS.length]!,
+              }))
               .slice(0, MULTI_OUTCOME_CHART_LIMIT);
             if (topPolymarketMarkets.length > 0) {
               const historyConfig = {
