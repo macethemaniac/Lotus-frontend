@@ -1911,14 +1911,30 @@ export const DashboardV2Mockup = ({
         const matchedEvent = routeEventSlug
           ? eventResponse.events.find((event) => eventSlugFromTitle(event.title) === routeEventSlug)
           : eventResponse.events[0];
-        if (!matchedEvent) {
+        // Deep links are generated from market titles (for example,
+        // `will-top-esports-win-the-lpl-2026-season`), while the event feed is
+        // grouped under a parent title such as `LPL 2026 Winner`. Resolve the
+        // market directly when the parent event slug does not match, so a
+        // fresh browser load does not depend on the cached dashboard selection.
+        const directMarket = !matchedEvent && routeEventSlug
+          ? (await listMarkets({
+              search: routeEventSlug.replace(/-/g, ' '),
+              limit: 25,
+              quoteReadyOnly: true,
+              routeCoverage: 'all',
+              view: 'full',
+            })).markets.find((market) => eventSlugFromTitle(market.title) === routeEventSlug) ?? null
+          : null;
+        if (!matchedEvent && !directMarket) {
           if (!cancelled) {
             setTerminalRouteError(routeEventSlug ? 'This terminal market could not be found.' : 'No terminal market is available right now.');
           }
           return;
         }
 
-        const marketResponse = await getEventMarkets(matchedEvent.eventId);
+        const marketResponse = matchedEvent
+          ? await getEventMarkets(matchedEvent.eventId)
+          : { markets: directMarket ? [directMarket] : [] };
         const hydratedMarkets = await hydrateCatalogMarketsWithAggregateVolumes(marketResponse.markets).catch(() => marketResponse.markets);
         const rows = await resolveDashboardRowsEventMedia(
           mapCatalogMarketsToDashboardRows(hydratedMarkets),
@@ -1937,7 +1953,7 @@ export const DashboardV2Mockup = ({
         }
         const nextSelection = buildAggregateTerminalRouteSelection(
           quotedRows.map(toTerminalMarketSelection),
-          eventSlugFromTitle(matchedEvent.title),
+          routeEventSlug ?? (matchedEvent ? eventSlugFromTitle(matchedEvent.title) : directMarket ? eventSlugFromTitle(directMarket.title) : null),
         ) ?? toTerminalMarketSelection(quotedRows[0]!);
         setSelectedTerminalMarket(nextSelection);
         setTerminalRouteError(null);
