@@ -94,6 +94,7 @@ export type MarketOutcome = {
   id: string;
   label: string;
   venues: string[];
+  venueMarkets?: MarketCatalogVenueMarket[];
   canonicalMarketIds?: string[];
   volume?: string | null;
   volume24h?: string | null;
@@ -479,10 +480,10 @@ export function getMarketOrderbook(
   }
   const query = params.toString();
   const path = `/markets/${encodeURIComponent(marketId)}/orderbook${query ? `?${query}` : ""}`;
-  return staleWhileRevalidate(`orderbook:${path}`, () =>
-    apiRequest<MarketOrderbookResponse>(path),
-    { ttlMs: 4_000, maxStaleMs: 60_000 }
-  );
+  // Orderbooks are executable pricing data. Never paint a previous snapshot
+  // while the live request is revalidating: that briefly showed an old venue
+  // as the best price before the current Polymarket book arrived.
+  return apiRequest<MarketOrderbookResponse>(path);
 }
 
 export function getMarketChart(

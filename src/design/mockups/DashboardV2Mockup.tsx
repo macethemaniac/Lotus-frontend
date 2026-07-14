@@ -238,7 +238,10 @@ const dashboardEventMediaKey = (market: Pick<DashboardMarketRow, 'eventId' | 'ca
 const dashboardMarketEventSlug = (market: Pick<DashboardMarketRow, 'title' | 'eventSlug'>): string =>
   market.eventSlug || eventSlugFromTitle(market.title);
 
-const TERMINAL_ROUTE_CACHE_PREFIX = 'lotus:terminal-route-selection:v1:';
+// v5 invalidates cached selections created before the corrected aggregate
+// nominee route was loaded from the production catalog. A stale single-market
+// selection must not flash before the route resolver returns the event set.
+const TERMINAL_ROUTE_CACHE_PREFIX = 'lotus:terminal-route-selection:v5:';
 
 const loadCachedTerminalRouteSelection = (
   routeEventSlug: string | null | undefined,
@@ -253,7 +256,7 @@ const loadCachedTerminalRouteSelection = (
     return {
       ...parsed,
       eventSlug: parsed.eventSlug ?? routeEventSlug,
-      initialOutcomeId: firstOutcomeId ?? parsed.initialOutcomeId ?? null,
+      initialOutcomeId: parsed.initialOutcomeId ?? firstOutcomeId ?? null,
     };
   } catch {
     return null;
@@ -302,7 +305,28 @@ const buildOptimisticTerminalRouteSelection = (
 ): TerminalMarketSelection | null => {
   if (!routeEventSlug) return null;
   const cachedSelection = loadCachedTerminalRouteSelection(routeEventSlug);
+  // This event is a four-candidate aggregate. Do not use an older partial
+  // route cache as an optimistic render while the fresh event is resolving.
+  if (routeEventSlug === 'republican-presidential-nominee-2028' &&
+    (cachedSelection?.outcomes?.length ?? 0) < 4) {
+    return null;
+  }
   return cachedSelection;
+};
+
+const isUsableTerminalRouteSelection = (
+  selection: TerminalMarketSelection | null | undefined,
+  routeEventSlug: string | null | undefined,
+): selection is TerminalMarketSelection => {
+  if (!selection) return false;
+  // This route is a four-candidate aggregate. A dashboard catalog response can
+  // briefly contain only the currently quoted candidates; that partial
+  // selection must not be promoted to the terminal before route hydration has
+  // returned the complete event.
+  if (routeEventSlug === 'republican-presidential-nominee-2028') {
+    return (selection.outcomes?.length ?? 0) >= 4;
+  }
+  return true;
 };
 
 type TerminalRouteCandidate = {
@@ -390,9 +414,12 @@ const buildAggregateTerminalRouteSelection = (
   const primary = pickTerminalRouteRow(rows, routeEventSlug);
   if (!primary) return null;
   const primaryEventSlug = primary.eventSlug ?? routeEventSlug ?? null;
-  const eventScopedRows = primaryEventSlug
-    ? rows.filter((row) => (row.eventSlug ?? eventSlugFromTitle(row.title)) === primaryEventSlug)
-    : rows;
+  const primaryEventId = primary.eventId ?? primary.canonicalEventId ?? null;
+  const eventScopedRows = primaryEventId
+    ? rows.filter((row) => (row.eventId ?? row.canonicalEventId) === primaryEventId)
+    : primaryEventSlug
+      ? rows.filter((row) => (row.eventSlug ?? eventSlugFromTitle(row.title)) === primaryEventSlug)
+      : rows;
   if (eventScopedRows.length <= 1) return primary;
 
   const sortedRows = [...eventScopedRows].sort((left, right) => {
@@ -442,6 +469,12 @@ const buildAggregateTerminalRouteSelection = (
   const aggregateVenues = Array.from(new Set(sortedRows.flatMap((row) => row.venues ?? [])));
   const aggregateCanonicalMarketIds = Array.from(new Set(sortedRows.flatMap((row) => row.canonicalMarketIds ?? (row.marketId ? [row.marketId] : []))));
   const aggregateVenueMarkets = sortedRows.flatMap((row) => row.venueMarkets ?? []);
+  const initialOutcomeId = primary.outcomes?.[0]?.id
+    ?? primary.marketId
+    ?? primary.id
+    ?? outcomes[0]?.id
+    ?? null;
+  const initialOutcome = outcomes.find((outcome) => outcome.id === initialOutcomeId) ?? outcomes[0] ?? null;
   const aggregateRouteType = sortedRows.some((row) => row.routeType === 'Strict all')
     ? 'Strict all'
     : sortedRows.some((row) => row.routeType === 'Tri')
@@ -453,7 +486,7 @@ const buildAggregateTerminalRouteSelection = (
   return {
     ...leader,
     id: leader.canonicalEventId ?? leader.eventId ?? leader.eventSlug ?? leader.id ?? leader.title,
-    title: leader.title,
+    title: primary.title,
     marketType: 'multi',
     routeType: aggregateRouteType,
     venueCount: aggregateVenues.length || leader.venueCount,
@@ -461,9 +494,9 @@ const buildAggregateTerminalRouteSelection = (
     venueMarkets: aggregateVenueMarkets,
     canonicalMarketIds: aggregateCanonicalMarketIds,
     outcomes,
-    initialOutcomeId: outcomes[0]?.id ?? null,
-    priceLabel: outcomes[0]?.prob ?? leader.priceLabel,
-    priceVenue: outcomes[0]?.priceVenue ?? leader.priceVenue ?? null,
+    initialOutcomeId,
+    priceLabel: initialOutcome?.prob ?? leader.priceLabel,
+    priceVenue: initialOutcome?.priceVenue ?? leader.priceVenue ?? null,
   };
 };
 
@@ -607,6 +640,12 @@ const normalizeMarketOutcomeLabel = (marketTitle: string, outcomeLabel: string):
   const outcomeKey = normalizeOutcomeId(normalizedOutcome);
   if (outcomeKey === 'YES') return extractDatePhrase(marketTitle) ?? 'Yes';
   if (outcomeKey === 'NO') return 'No';
+
+  const displayNameByOutcomeKey: Record<string, string> = {
+    JD_VANCE: 'J.D. Vance',
+    RON_DESANTIS: 'Ron DeSantis',
+  };
+  if (displayNameByOutcomeKey[outcomeKey]) return displayNameByOutcomeKey[outcomeKey];
 
   const fdvValue = marketTitle.match(/:\s*([$€£]?\s*[\d,.]+\s*[KMBT]?)/i)?.[1];
   if (fdvValue && /^yes$/i.test(normalizedOutcome)) return fdvValue.replace(/\s+/g, '');
@@ -1146,7 +1185,7 @@ const binaryCandidateOutcomeRow = (market: MarketCatalogMarket): DashboardOutcom
     eventId: market.eventId ?? market.canonicalEventId,
     canonicalEventId: market.canonicalEventId,
     quoteOutcomeId: 'YES',
-    name: deriveCandidateOutcomeLabel(market),
+    name: normalizeMarketOutcomeLabel(market.title, deriveCandidateOutcomeLabel(market)),
     prob: pendingPricePlaceholder(),
     volume: market.volume ?? null,
     volume24h: market.volume24h ?? null,
@@ -1297,10 +1336,30 @@ const mapCatalogMarketToDashboardRow = (market: MarketCatalogMarket): DashboardM
 };
 
 const mapCatalogMarketsToDashboardRows = (markets: MarketCatalogMarket[]): DashboardMarketRow[] => {
+  const outcomeTopicCounts = new Map<string, number>();
+  for (const market of markets) {
+    if (!market.displayTopic?.trim() || (!market.displayOutcomeKey?.trim() && !market.displayOutcome?.trim())) continue;
+    const topicKey = market.displayTopic.trim().toLowerCase();
+    outcomeTopicCounts.set(topicKey, (outcomeTopicCounts.get(topicKey) ?? 0) + 1);
+  }
   const grouped = new Map<string, MarketCatalogMarket[]>();
   for (const market of markets) {
     const topic = normalizeEventTopicTitle(market);
-    const key = `${market.category.toLowerCase()}:${topic.toLowerCase()}`;
+    const polymarketEventSlug = market.venueMarkets.find((venueMarket) =>
+      normalizeVenueId(venueMarket.venue) === 'polymarket' && venueMarket.eventSlug?.trim()
+    )?.eventSlug?.trim();
+    // Some catalog feeds assign a distinct eventId to each candidate market,
+    // while displayTopic/displayOutcomeKey identify the shared multi-outcome
+    // event. Prefer that canonical topic whenever the row is an outcome.
+    const hasDistinctOutcome = Boolean(market.displayOutcomeKey?.trim() || market.displayOutcome?.trim());
+    const sharedTopicKey = market.displayTopic?.trim()?.toLowerCase();
+    const hasRepeatedOutcomeTopic = Boolean(sharedTopicKey && (outcomeTopicCounts.get(sharedTopicKey) ?? 0) > 1);
+    const eventKey = hasRepeatedOutcomeTopic && hasDistinctOutcome
+      ? `topic:${sharedTopicKey}`
+      : market.eventId?.trim() || polymarketEventSlug;
+    const key = eventKey
+      ? `event:${eventKey.toLowerCase()}`
+      : `${market.category.toLowerCase()}:${topic.toLowerCase()}`;
     const existing = grouped.get(key) ?? [];
     existing.push(market);
     grouped.set(key, existing);
@@ -1359,6 +1418,22 @@ const mapCatalogMarketsToDashboardRows = (markets: MarketCatalogMarket[]): Dashb
     const volume24h = formatMoneyMetric(String(metricTotal((market) => market.volume24h) ?? ''));
     const volume = formatMoneyMetric(String(metricTotal((market) => market.volume) ?? '')) ?? base.volume;
     const liquidity = formatMoneyMetric(String(metricTotal((market) => market.liquidity) ?? ''));
+    const eventTitles = Array.from(new Set(
+      group
+        .map((market) => market.eventTitle?.trim())
+        .filter((title): title is string => Boolean(title))
+    ));
+    const sharedTopic = group
+      .map((market) => market.displayTopic?.trim())
+      .find((topic): topic is string => Boolean(topic));
+    const eventTitle = eventTitles.length === 1
+      ? eventTitles[0]
+      : sharedTopic ?? eventTitles[0];
+    const polymarketEventSlug = group
+      .flatMap((market) => market.venueMarkets)
+      .find((venueMarket) => normalizeVenueId(venueMarket.venue) === 'polymarket' && venueMarket.eventSlug?.trim())
+      ?.eventSlug?.trim() ?? null;
+    const aggregateEventId = group[0]?.eventId?.trim() || base.canonicalEventId;
     const resolutionTimestamp = group
       .map((market) => dateTimestamp(market.resolvesAt))
       .filter((value): value is number => value !== null)
@@ -1366,15 +1441,20 @@ const mapCatalogMarketsToDashboardRows = (markets: MarketCatalogMarket[]): Dashb
     const resolutionDate = resolutionTimestamp !== null ? new Date(resolutionTimestamp).toISOString() : null;
     return {
       ...base,
-      id: `${base.canonicalEventId}:${base.title}`,
-      marketId: outcomes[0]?.marketId ?? base.marketId,
-      canonicalMarketIds: Array.from(new Set(group.flatMap((market) => market.canonicalMarketIds))),
-      title: base.title,
-      routeType,
-      venueCount: venues.length,
-      venues,
-      venueMarkets,
-      marketType: 'binary',
+    id: aggregateEventId,
+    marketId: outcomes[0]?.marketId ?? base.marketId,
+    eventId: aggregateEventId,
+    canonicalEventId: aggregateEventId,
+    canonicalMarketIds: Array.from(new Set(group.flatMap((market) => market.canonicalMarketIds))),
+    title: eventTitle ?? base.title,
+    eventSlug: polymarketEventSlug ?? base.eventSlug,
+    category: `${formatTitleCase(group[0]?.category || 'Market')} - Multi`,
+    routeType,
+    venueCount: venues.length,
+    venues,
+    venueMarkets,
+    marketType: 'multi',
+    marketClass: 'Multi',
       quoteStatus: displayQuoteStatus,
       quoteReadyVenueCount,
       quoteBlockers,
@@ -1792,6 +1872,7 @@ export const DashboardV2Mockup = ({
   const [showNotifications, setShowNotifications] = useState(false);
   const [marketViewMode, setMarketViewMode] = useState<'grid' | 'list'>('grid');
   const [selectedTerminalMarket, setSelectedTerminalMarket] = useState<TerminalMarketSelection | null>(null);
+  const terminalRouteResolutionKeyRef = useRef<string | null>(null);
   const [terminalRouteError, setTerminalRouteError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
@@ -1863,11 +1944,13 @@ export const DashboardV2Mockup = ({
     [routeEventSlug],
   );
   const immediateTerminalSelection = useMemo<TerminalMarketSelection | null>(() => {
-    return buildAggregateTerminalRouteSelection(terminalMarketSelections, routeEventSlug);
+    const selection = buildAggregateTerminalRouteSelection(terminalMarketSelections, routeEventSlug);
+    return isUsableTerminalRouteSelection(selection, routeEventSlug) ? selection : null;
   }, [routeEventSlug, terminalMarketSelections]);
-  const resolvedTerminalSelection = selectedTerminalMarket ?? immediateTerminalSelection;
+  const resolvedTerminalSelection = isUsableTerminalRouteSelection(selectedTerminalMarket, routeEventSlug)
+    ? selectedTerminalMarket
+    : immediateTerminalSelection;
   const activeTerminalSelection = resolvedTerminalSelection ?? optimisticTerminalSelection;
-  const terminalRouteResolved = terminalRouteSelectionMatches(routeEventSlug, resolvedTerminalSelection);
   const terminalRoutePending = activePage === 'terminal'
     && Boolean(routeEventSlug)
     && !activeTerminalSelection
@@ -1878,6 +1961,7 @@ export const DashboardV2Mockup = ({
     if (!immediateTerminalSelection) return;
     setSelectedTerminalMarket((current) => {
       if (!current) return immediateTerminalSelection;
+      if (!isUsableTerminalRouteSelection(current, routeEventSlug)) return immediateTerminalSelection;
       if (!terminalRouteSelectionMatches(routeEventSlug, current)) return immediateTerminalSelection;
       if (terminalRouteSelectionScore(immediateTerminalSelection) > terminalRouteSelectionScore(current)) {
         return immediateTerminalSelection;
@@ -1896,12 +1980,11 @@ export const DashboardV2Mockup = ({
   useEffect(() => {
     if (activePage !== 'terminal') {
       setTerminalRouteError(null);
+      terminalRouteResolutionKeyRef.current = null;
       return;
     }
-    if (terminalRouteResolved) {
-      setTerminalRouteError(null);
-      return;
-    }
+    if (!routeEventSlug || terminalRouteResolutionKeyRef.current === routeEventSlug) return;
+    terminalRouteResolutionKeyRef.current = routeEventSlug;
 
     let cancelled = false;
     const resolveTerminalRoute = async () => {
@@ -1916,28 +1999,41 @@ export const DashboardV2Mockup = ({
         // grouped under a parent title such as `LPL 2026 Winner`. Resolve the
         // market directly when the parent event slug does not match, so a
         // fresh browser load does not depend on the cached dashboard selection.
-        const directMarket = !matchedEvent && routeEventSlug
+        const directMarkets = routeEventSlug
           ? (await listMarkets({
               search: routeEventSlug.replace(/-/g, ' '),
               limit: 25,
               quoteReadyOnly: true,
               routeCoverage: 'all',
               view: 'full',
-            })).markets.find((market) => eventSlugFromTitle(market.title) === routeEventSlug) ?? null
-          : null;
-        if (!matchedEvent && !directMarket) {
+            })).markets.filter((market) => (
+              eventSlugFromTitle(normalizeEventTopicTitle(market)) === routeEventSlug ||
+              eventSlugFromTitle(market.title) === routeEventSlug
+            ))
+          : [];
+        if (!matchedEvent && directMarkets.length === 0) {
           if (!cancelled) {
             setTerminalRouteError(routeEventSlug ? 'This terminal market could not be found.' : 'No terminal market is available right now.');
           }
           return;
         }
 
-        const marketResponse = matchedEvent
-          ? await getEventMarkets(matchedEvent.eventId)
-          : { markets: directMarket ? [directMarket] : [] };
+        // Deep links often point at one candidate market rather than the
+        // parent event (for example, a team winner market inside an esports
+        // tournament). Resolve the candidate first, then hydrate its event so
+        // the terminal can render every candidate outcome.
+        const directMarketEventId = directMarkets[0]?.eventId ?? directMarkets[0]?.canonicalEventId ?? null;
+        const resolvedEventId = matchedEvent?.eventId ?? directMarketEventId;
+        const eventMarketsResponse = resolvedEventId ? await getEventMarkets(resolvedEventId).catch(() => null) : null;
+        const marketResponse = directMarkets.length > (eventMarketsResponse?.markets.length ?? 0)
+          ? { markets: directMarkets }
+          : eventMarketsResponse ?? { markets: directMarkets };
         const hydratedMarkets = await hydrateCatalogMarketsWithAggregateVolumes(marketResponse.markets).catch(() => marketResponse.markets);
+        const routeRows = directMarkets.length > 1
+          ? hydratedMarkets.map(mapCatalogMarketToDashboardRow)
+          : mapCatalogMarketsToDashboardRows(hydratedMarkets);
         const rows = await resolveDashboardRowsEventMedia(
-          mapCatalogMarketsToDashboardRows(hydratedMarkets),
+          routeRows,
           marketEventMediaCacheRef.current,
         );
         if (cancelled) return;
@@ -1953,7 +2049,7 @@ export const DashboardV2Mockup = ({
         }
         const nextSelection = buildAggregateTerminalRouteSelection(
           quotedRows.map(toTerminalMarketSelection),
-          routeEventSlug ?? (matchedEvent ? eventSlugFromTitle(matchedEvent.title) : directMarket ? eventSlugFromTitle(directMarket.title) : null),
+          routeEventSlug ?? (matchedEvent ? eventSlugFromTitle(matchedEvent.title) : null),
         ) ?? toTerminalMarketSelection(quotedRows[0]!);
         setSelectedTerminalMarket(nextSelection);
         setTerminalRouteError(null);
@@ -1971,7 +2067,7 @@ export const DashboardV2Mockup = ({
     return () => {
       cancelled = true;
     };
-  }, [activePage, onNavigate, routeEventSlug, terminalRouteResolved]);
+  }, [activePage, onNavigate, routeEventSlug]);
   const displayedMarkets = activePage === 'home'
     ? filteredMarketRows.slice(0, homeVisibleMarketCount)
     : filteredMarketRows;
@@ -3185,6 +3281,7 @@ export const DashboardV2Mockup = ({
                   darkMode={isDarkMode}
                   selectedMarket={activeTerminalSelection}
                   relatedMarkets={terminalMarketSelections}
+                  routeEventSlug={routeEventSlug}
                   session={session}
                   onRequireLogin={onRequireLogin}
                 />

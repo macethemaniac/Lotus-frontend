@@ -131,13 +131,24 @@ function injectRuntimeConfig(response: Response, request: Request, env: Env): Re
 
   const runtimeConfig = JSON.stringify(buildRuntimeConfig(request, env));
   const script = `<script>window.${LOTUS_RUNTIME_CONFIG_GLOBAL}=Object.assign(window.${LOTUS_RUNTIME_CONFIG_GLOBAL}||{},${runtimeConfig});</script>`;
-  return new HTMLRewriter()
+  const transformed = new HTMLRewriter()
     .on("head", {
       element(element) {
         element.append(script, { html: true });
       },
     })
     .transform(response);
+  const headers = new Headers(transformed.headers);
+  // The HTML shell contains the hashed JavaScript entrypoint. Keep the shell
+  // revalidated so a normal refresh cannot keep pointing at an older bundle
+  // after a production deployment; hashed assets remain cacheable.
+  headers.set("Cache-Control", "no-store, no-cache, must-revalidate");
+  headers.set("CDN-Cache-Control", "no-store");
+  return new Response(transformed.body, {
+    status: transformed.status,
+    statusText: transformed.statusText,
+    headers,
+  });
 }
 
 function buildRuntimeConfig(request: Request, env: Env): Record<string, string> {

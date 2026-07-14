@@ -32,6 +32,7 @@ export type TerminalOutcomeRowDisplay = {
   venues: string[];
   status: string;
   blocker: string | null;
+  quoteReady?: boolean;
 };
 
 type SelectedOutcomeBookReadinessInput = {
@@ -63,6 +64,14 @@ const normalizeDisplayPriceLabel = (value: string | null | undefined): string | 
   const trimmed = typeof value === 'string' ? value.trim() : '';
   if (!trimmed || trimmed === '-' || /^quote$/i.test(trimmed)) return null;
   return trimmed.toLowerCase();
+};
+
+const orderbookPriceValue = (value: string | number | null | undefined): number | null => {
+  if (value === null || typeof value === 'undefined') return null;
+  const parsed = typeof value === 'number'
+    ? value
+    : Number(String(value).replace(/[$,\s]/g, ''));
+  return Number.isFinite(parsed) ? (parsed > 1 ? parsed / 100 : parsed) : null;
 };
 
 const hasUsableOrderbookDepth = (orderbook: MarketOrderbookResponse | null): boolean =>
@@ -116,6 +125,42 @@ export const resolveSelectedOutcomeDisplayValues = (input: {
   return input.current ?? input.fallback ?? input.live;
 };
 
+const hasCoherentOutcomeDisplayValues = (
+  values: TerminalOutcomeDisplayValues | null,
+  binary: boolean,
+): values is TerminalOutcomeDisplayValues => Boolean(
+  values?.yesPrice &&
+  values.probability &&
+  (!binary || values.noPrice),
+);
+
+export const resolveExpandedOutcomeDisplayValues = (input: {
+  summary: TerminalOutcomeDisplayValues | null;
+  orderbook: TerminalOutcomeDisplayValues | null;
+  fallback: TerminalOutcomeDisplayValues | null;
+  binary: boolean;
+}): TerminalOutcomeDisplayValues | null => {
+  if (hasCoherentOutcomeDisplayValues(input.orderbook, input.binary)) return input.orderbook;
+  if (hasCoherentOutcomeDisplayValues(input.summary, input.binary)) return input.summary;
+  return input.fallback ?? input.summary ?? input.orderbook;
+};
+
+export const preferResolvedOutcomeOrderbookVenues = <T extends {
+  venue: string;
+  venueOutcomeId: string | null;
+}>(venues: readonly T[]): T[] => {
+  const venuesWithResolvedOutcome = new Set(
+    venues
+      .filter((venue) => Boolean(venue.venueOutcomeId?.trim()))
+      .map((venue) => normalizeVenueKey(venue.venue)),
+  );
+  if (venuesWithResolvedOutcome.size === 0) return [...venues];
+  return venues.filter((venue) => (
+    !venuesWithResolvedOutcome.has(normalizeVenueKey(venue.venue)) ||
+    Boolean(venue.venueOutcomeId?.trim())
+  ));
+};
+
 const sameDisplayValues = (
   left: TerminalOutcomeDisplayValues | null,
   right: TerminalOutcomeDisplayValues | null,
@@ -164,6 +209,7 @@ export const mergeTerminalOutcomeRowDisplay = <T extends TerminalOutcomeRowDispl
     current.primaryVenue === next.primaryVenue &&
     current.status === next.status &&
     current.blocker === next.blocker &&
+    current.quoteReady === next.quoteReady &&
     sameStringArray(current.venues, next.venues) &&
     sameVenueQuotes(current.venueQuotes, next.venueQuotes)
   ) {
@@ -203,14 +249,22 @@ export const resolveOutcomePriceVenues = (input: {
   orderbook: MarketOrderbookResponse | null;
   expanded: boolean;
 }): VenueBadgeResolution => {
-  if (input.expanded) {
-    const topAskVenue = input.orderbook?.asks[0]?.venue?.trim();
-    if (topAskVenue) {
-      return {
-        yesVenue: topAskVenue,
-        noVenue: topAskVenue,
-      };
-    }
+  const bestAskVenue = input.orderbook?.asks
+    .map((level, index) => ({
+      venue: level.venue?.trim() ?? '',
+      price: orderbookPriceValue(level.price),
+      index,
+    }))
+    .filter((level) => level.venue && level.price !== null)
+    .sort((left, right) => (left.price! - right.price!) || (left.index - right.index))[0]?.venue;
+  if (bestAskVenue) {
+    // The combined orderbook is the source of truth for executable pricing.
+    // Its lowest ask may differ from the aggregate live-price venue or the
+    // previously selected summary venue.
+    return {
+      yesVenue: bestAskVenue,
+      noVenue: bestAskVenue,
+    };
   }
 
   const normalizedYesPrice = normalizeDisplayPriceLabel(input.yesPrice);
@@ -365,6 +419,7 @@ const isConsistentWithVenueBreakdown = (
   const normalizedPrice = price > 1 ? price / 100 : price;
   const venuePrices = (livePrice?.venueBreakdown ?? [])
     .filter((venue) => {
+      if (venue.status !== 'live') return false;
       const bid = parseDisplayProbabilityValue(venue.bestBid);
       const ask = parseDisplayProbabilityValue(venue.bestAsk);
       if (bid === null || ask === null) return true;
@@ -385,6 +440,7 @@ const isConsistentWithVenueBreakdown = (
 const bestVenueAskFromBreakdown = (livePrice: MarketLivePriceItem | null | undefined): number | null => {
   const asks = (livePrice?.venueBreakdown ?? [])
     .flatMap((venue) => {
+      if (venue.status !== 'live') return [];
       const ask = parseDisplayProbabilityValue(venue.bestAsk);
       if (ask === null || ask <= 0 || ask >= 1) return [];
       const bid = parseDisplayProbabilityValue(venue.bestBid);
@@ -392,6 +448,69 @@ const bestVenueAskFromBreakdown = (livePrice: MarketLivePriceItem | null | undef
       return [ask];
     });
   return asks.length > 0 ? Math.min(...asks) : null;
+};
+
+export const bestVenueFromLivePrice = (livePrice: MarketLivePriceItem | null | undefined): string | null => {
+  const candidates = (livePrice?.venueBreakdown ?? [])
+    .filter((venue) => venue.status === 'live')
+    .map((venue) => {
+      const ask = parseDisplayProbabilityValue(venue.bestAsk) ?? parseDisplayProbabilityValue(venue.price);
+      const bid = parseDisplayProbabilityValue(venue.bestBid);
+      if (ask === null || ask <= 0 || ask >= 1) return null;
+      if (bid !== null && (ask < bid || ask - bid > LIVE_PRICE_VENUE_MAX_SPREAD)) return null;
+      return { venue: venue.venue, ask };
+    })
+    .filter((candidate): candidate is { venue: string; ask: number } => Boolean(candidate?.venue))
+    .sort((left, right) => left.ask - right.ask);
+  return candidates[0]?.venue ?? livePrice?.bestVenue ?? null;
+};
+
+export const hasCompleteLivePriceVenueBreakdown = (
+  livePrice: MarketLivePriceItem | null | undefined,
+  expectedVenues: readonly string[] = [],
+): boolean => {
+  const breakdown = livePrice?.venueBreakdown ?? [];
+  if (breakdown.length === 0) return false;
+
+  const expectedVenueKeys = new Set([
+    ...expectedVenues,
+    ...(livePrice?.linkedVenues ?? []),
+    ...(livePrice?.venues ?? []),
+  ].map(normalizeVenueKey).filter(Boolean));
+  // A venue key can be present while its quote is still unavailable. Do not
+  // treat that placeholder as a complete snapshot: otherwise a faster venue
+  // can temporarily become the headline price before the canonical venue
+  // arrives.
+  const liveBreakdownVenueKeys = new Set(
+    breakdown
+      .filter((venue) => venue.status === 'live')
+      .map((venue) => normalizeVenueKey(venue.venue))
+      .filter(Boolean),
+  );
+  if (expectedVenueKeys.size > 0) {
+    return [...expectedVenueKeys].every((venue) => liveBreakdownVenueKeys.has(venue));
+  }
+
+  const declaredVenueCount = Math.max(
+    expectedVenueKeys.size,
+    livePrice?.venueCount ?? 0,
+    livePrice?.linkedVenueCount ?? 0,
+  );
+  return declaredVenueCount === 0 || liveBreakdownVenueKeys.size >= declaredVenueCount;
+};
+
+export const isLivePriceVenueSelectionProvisional = (
+  livePrice: MarketLivePriceItem | null | undefined,
+  expectedVenues: readonly string[] = [],
+): boolean => {
+  if (!livePrice) return false;
+  const expectedVenueCount = Math.max(
+    expectedVenues.length,
+    livePrice.venueCount ?? 0,
+    livePrice.linkedVenueCount ?? 0,
+    livePrice.venueBreakdown?.length ?? 0,
+  );
+  return expectedVenueCount > 1 && !hasCompleteLivePriceVenueBreakdown(livePrice, expectedVenues);
 };
 
 export const displayableLivePriceValue = (
