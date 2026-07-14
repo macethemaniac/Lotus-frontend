@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  bestVenueFromLivePrice,
+  hasCompleteLivePriceVenueBreakdown,
+  isLivePriceVenueSelectionProvisional,
   displayableLivePriceValue,
   isSelectedOutcomeBookUsable,
   isSelectedOutcomeBookReady,
@@ -11,6 +14,8 @@ import {
   resolveOutcomeSummaryVenues,
   resolveOutcomePriceVenues,
   resolveOutcomeSeedMedia,
+  resolveExpandedOutcomeDisplayValues,
+  preferResolvedOutcomeOrderbookVenues,
   resolveSelectedMarketHydratedMedia,
   resolveSelectedMarketSeedMedia,
   resolveInitialSelectedOutcomeId,
@@ -89,6 +94,101 @@ describe('displayableLivePriceValue', () => {
       averagePrice: '0.1815',
       freshnessMs: 1000,
     }, '18.5%')).toBe(0.178);
+  });
+});
+
+describe('bestVenueFromLivePrice', () => {
+  it('uses the lowest valid live ask instead of the backend venue hint', () => {
+    expect(bestVenueFromLivePrice({
+      marketId: 'world-cup-winner',
+      outcomeId: 'FRANCE',
+      generatedAt: new Date().toISOString(),
+      status: 'live',
+      price: '0.40',
+      bestBid: '0.38',
+      bestAsk: '0.40',
+      midpoint: '0.39',
+      spread: '0.02',
+      bestVenue: 'LIMITLESS',
+      venueCount: 2,
+      venues: ['LIMITLESS', 'POLYMARKET'],
+      venueBreakdown: [
+        { venue: 'LIMITLESS', price: '0.40', bestBid: '0.39', bestAsk: '0.40', status: 'live' },
+        { venue: 'POLYMARKET', price: '0.398', bestBid: '0.39', bestAsk: '0.398', status: 'live' },
+      ],
+      freshnessMs: 1000,
+    })).toBe('POLYMARKET');
+  });
+
+  it('does not treat a partial venue breakdown as settled', () => {
+    const livePrice = {
+      marketId: 'world-cup-winner',
+      outcomeId: 'FRANCE',
+      generatedAt: new Date().toISOString(),
+      status: 'live' as const,
+      price: '0.40',
+      bestBid: '0.38',
+      bestAsk: '0.40',
+      midpoint: '0.39',
+      spread: '0.02',
+      bestVenue: 'LIMITLESS',
+      venueCount: 4,
+      venues: ['LIMITLESS', 'OPINION', 'POLYMARKET', 'PREDICT_FUN'],
+      venueBreakdown: [
+        { venue: 'LIMITLESS', price: '0.40', bestBid: '0.39', bestAsk: '0.40', status: 'live' as const },
+      ],
+      freshnessMs: 1000,
+    };
+
+    expect(hasCompleteLivePriceVenueBreakdown(livePrice, livePrice.venues)).toBe(false);
+    expect(isLivePriceVenueSelectionProvisional(livePrice, livePrice.venues)).toBe(true);
+  });
+
+  it('treats a missing breakdown as provisional when multiple venues are expected', () => {
+    expect(isLivePriceVenueSelectionProvisional({
+      marketId: 'world-cup-winner',
+      outcomeId: 'FRANCE',
+      generatedAt: new Date().toISOString(),
+      status: 'live',
+      price: '0.40',
+      bestBid: '0.38',
+      bestAsk: '0.40',
+      midpoint: '0.39',
+      spread: '0.02',
+      bestVenue: 'LIMITLESS',
+      venueCount: 4,
+      venues: ['LIMITLESS', 'OPINION', 'POLYMARKET', 'PREDICT_FUN'],
+      venueBreakdown: [],
+      freshnessMs: 1000,
+    }, ['LIMITLESS', 'OPINION', 'POLYMARKET', 'PREDICT_FUN'])).toBe(true);
+  });
+
+  it('keeps a venue-placeholder response provisional until every expected venue is live', () => {
+    const livePrice = {
+      marketId: 'world-cup-winner',
+      outcomeId: 'ENGLAND',
+      generatedAt: new Date().toISOString(),
+      status: 'live' as const,
+      price: '0.221',
+      bestBid: '0.21',
+      bestAsk: '0.221',
+      midpoint: '0.221',
+      spread: '0.011',
+      bestVenue: 'PREDICT_FUN',
+      venueCount: 3,
+      venues: ['LIMITLESS', 'POLYMARKET', 'PREDICT_FUN'],
+      linkedVenues: ['LIMITLESS', 'POLYMARKET', 'PREDICT_FUN'],
+      linkedVenueCount: 3,
+      venueBreakdown: [
+        { venue: 'LIMITLESS', price: '0.22', bestBid: '0.21', bestAsk: '0.22', status: 'live' as const },
+        { venue: 'POLYMARKET', price: null, bestBid: null, bestAsk: null, status: 'no_live_price' as const },
+        { venue: 'PREDICT_FUN', price: '0.221', bestBid: '0.21', bestAsk: '0.221', status: 'live' as const },
+      ],
+      freshnessMs: 1000,
+    };
+
+    expect(hasCompleteLivePriceVenueBreakdown(livePrice, livePrice.venues)).toBe(false);
+    expect(isLivePriceVenueSelectionProvisional(livePrice, livePrice.venues)).toBe(true);
   });
 });
 
@@ -267,6 +367,45 @@ describe('resolveSelectedOutcomeDisplayValues', () => {
       },
       liveReady: false,
     })).toEqual(live);
+  });
+});
+
+describe('resolveExpandedOutcomeDisplayValues', () => {
+  it('uses the best executable ask when the expanded order book is available', () => {
+    expect(resolveExpandedOutcomeDisplayValues({
+      summary: { yesPrice: '41.5¢', noPrice: '58.5¢', probability: '41.5%' },
+      orderbook: { yesPrice: '47.0¢', noPrice: '53.0¢', probability: '47.0%' },
+      fallback: null,
+      binary: true,
+    })).toEqual({ yesPrice: '47.0¢', noPrice: '53.0¢', probability: '47.0%' });
+  });
+
+  it('uses one complete order-book snapshot when the summary is incomplete', () => {
+    expect(resolveExpandedOutcomeDisplayValues({
+      summary: { yesPrice: null, noPrice: null, probability: null },
+      orderbook: { yesPrice: '47.0¢', noPrice: '53.0¢', probability: '47.0%' },
+      fallback: { yesPrice: '41.5¢', noPrice: '58.5¢', probability: '41.5%' },
+      binary: true,
+    })).toEqual({ yesPrice: '47.0¢', noPrice: '53.0¢', probability: '47.0%' });
+  });
+});
+
+describe('preferResolvedOutcomeOrderbookVenues', () => {
+  it('drops an unmapped duplicate venue book when a token-scoped book exists', () => {
+    const venues = [
+      { venue: 'POLYMARKET', venueOutcomeId: null },
+      { venue: 'POLYMARKET', venueOutcomeId: 'yes-token' },
+      { venue: 'LIMITLESS', venueOutcomeId: null },
+    ];
+    expect(preferResolvedOutcomeOrderbookVenues(venues)).toEqual([
+      { venue: 'POLYMARKET', venueOutcomeId: 'yes-token' },
+      { venue: 'LIMITLESS', venueOutcomeId: null },
+    ]);
+  });
+
+  it('keeps venues that only provide an unmapped book', () => {
+    const venues = [{ venue: 'LIMITLESS', venueOutcomeId: null }];
+    expect(preferResolvedOutcomeOrderbookVenues(venues)).toEqual(venues);
   });
 });
 
@@ -660,7 +799,7 @@ describe('resolveSelectedOutcomeOrderbookDisplaySource', () => {
 });
 
 describe('resolveOutcomePriceVenues', () => {
-  it('uses the top ask venue for expanded rows so the badge matches the displayed live price', () => {
+  it('uses the lowest executable ask venue for expanded row badges', () => {
     expect(resolveOutcomePriceVenues({
       primaryVenue: 'LIMITLESS',
       venueQuotes: [
@@ -676,7 +815,10 @@ describe('resolveOutcomePriceVenues', () => {
         depth: 20,
         venues: [],
         bids: [{ venue: 'LIMITLESS', price: '0.331', size: '100' }],
-        asks: [{ venue: 'PREDICT_FUN', price: '0.332', size: '100', cumulativeSize: '100', cumulativeNotional: '33.2', venueMarketId: 'pm-1', venueOutcomeId: 'yes' }],
+        asks: [
+          { venue: 'PREDICT_FUN', price: '0.4', size: '100', cumulativeSize: '100', cumulativeNotional: '40', venueMarketId: 'predict-1', venueOutcomeId: 'yes' },
+          { venue: 'POLYMARKET', price: '0.39', size: '100', cumulativeSize: '100', cumulativeNotional: '39', venueMarketId: 'poly-1', venueOutcomeId: 'yes' },
+        ],
         bestBid: '0.331',
         bestAsk: '0.332',
         midpoint: '0.3315',
@@ -686,10 +828,33 @@ describe('resolveOutcomePriceVenues', () => {
         stream: null,
       },
       expanded: true,
-    })).toEqual({
-      yesVenue: 'PREDICT_FUN',
-      noVenue: 'PREDICT_FUN',
-    });
+    })).toEqual({ yesVenue: 'POLYMARKET', noVenue: 'POLYMARKET' });
+  });
+
+  it('uses the orderbook venue after a row has been expanded and then collapsed', () => {
+    expect(resolveOutcomePriceVenues({
+      primaryVenue: 'PREDICT_FUN',
+      venueQuotes: [{ venue: 'PREDICT_FUN', yesPrice: '40c', noPrice: '60c', blocker: null }],
+      yesPrice: '39c',
+      noPrice: '61c',
+      orderbook: {
+        marketId: 'market-1',
+        outcomeId: 'FRANCE',
+        generatedAt: new Date().toISOString(),
+        depth: 20,
+        venues: [],
+        bids: [],
+        asks: [{ venue: 'POLYMARKET', price: '0.39', size: '100' }],
+        bestBid: null,
+        bestAsk: '0.39',
+        midpoint: '0.39',
+        spread: null,
+        status: 'live',
+        blockers: [],
+        stream: null,
+      },
+      expanded: false,
+    })).toEqual({ yesVenue: 'POLYMARKET', noVenue: 'POLYMARKET' });
   });
 
   it('matches collapsed row badges to the visible quote breakdown before falling back to the primary venue', () => {
