@@ -273,7 +273,7 @@ export type MarketLivePriceVenueBreakdown = {
   price: string | null;
   bestBid: string | null;
   bestAsk: string | null;
-  status: "live" | "no_live_price";
+  status: "live" | "no_live_price" | "price_outlier";
 };
 
 export type MarketLivePriceItem = {
@@ -307,6 +307,8 @@ export type PolymarketMarketSnapshot = {
   slug: string;
   question: string;
   groupItemTitle?: string | null;
+  image?: string | null;
+  icon?: string | null;
   clobTokenIds?: string | null;
   outcomes?: string | null;
   outcomePrices?: string | null;
@@ -328,7 +330,10 @@ export type PolymarketEventMarketSnapshot = {
   slug: string;
   question: string;
   groupItemTitle?: string | null;
+  image?: string | null;
+  icon?: string | null;
   clobTokenIds?: string | null;
+  outcomes?: string | null;
   outcomePrices?: string | null;
   active?: boolean;
   closed?: boolean;
@@ -353,6 +358,14 @@ export type PolymarketPriceHistoryResponse = {
     t: number;
     p: number;
   }>;
+};
+
+export type PolymarketOrderbookResponse = {
+  market?: string | null;
+  asset_id?: string | null;
+  timestamp?: string | number | null;
+  bids?: Array<{ price?: string | number | null; size?: string | number | null }>;
+  asks?: Array<{ price?: string | number | null; size?: string | number | null }>;
 };
 
 export type ResolutionRiskAssessment = {
@@ -539,7 +552,9 @@ export function getMarketLivePrices(input: { items: MarketLivePriceRequestItem[]
 
 export function getPolymarketMarketBySlug(slug: string) {
   return staleWhileRevalidate(`polymarket-market:${slug}`, async () => {
-    const response = await fetch(`https://gamma-api.polymarket.com/markets/slug/${encodeURIComponent(slug)}`);
+    const response = await fetch(`https://gamma-api.polymarket.com/markets/slug/${encodeURIComponent(slug)}`, {
+      cache: "no-store",
+    });
     if (!response.ok) {
       throw new Error(`Unable to load Polymarket market ${slug}`);
     }
@@ -547,14 +562,49 @@ export function getPolymarketMarketBySlug(slug: string) {
   }, { ttlMs: 60_000, maxStaleMs: 15 * 60_000 });
 }
 
-export function getPolymarketEventBySlug(slug: string) {
-  return staleWhileRevalidate(`polymarket-event:${slug}`, async () => {
-    const response = await fetch(`https://gamma-api.polymarket.com/events/slug/${encodeURIComponent(slug)}`);
+export function getPolymarketEventBySlug(slug: string, input: { fresh?: boolean } = {}) {
+  const cacheKey = input.fresh ? `polymarket-event-fresh:${slug}` : `polymarket-event:${slug}`;
+  const requestUrl = input.fresh
+    ? `https://gamma-api.polymarket.com/events/slug/${encodeURIComponent(slug)}?lotus_refresh=${Date.now()}`
+    : `https://gamma-api.polymarket.com/events/slug/${encodeURIComponent(slug)}`;
+  return staleWhileRevalidate(cacheKey, async () => {
+    const response = await fetch(requestUrl, {
+      cache: "no-store",
+    });
     if (!response.ok) {
       throw new Error(`Unable to load Polymarket event ${slug}`);
     }
-    return response.json() as Promise<PolymarketEventSnapshot>;
-  }, { ttlMs: 60_000, maxStaleMs: 15 * 60_000 });
+    const event = await response.json() as PolymarketEventSnapshot;
+    // Gamma has occasionally returned a short/partial event snapshot from
+    // the slug endpoint. That response is not safe for outcome membership:
+    // accepting it makes the terminal silently shrink to the few markets in
+    // the partial payload. Re-read the same event through the collection
+    // endpoint and keep the richer snapshot when it is available.
+    if ((event.markets?.length ?? 0) >= 5) return event;
+    const fallbackParams = new URLSearchParams({
+      slug,
+      limit: "1",
+      lotus_refresh: String(Date.now()),
+    });
+    const fallbackResponse = await fetch(`https://gamma-api.polymarket.com/events?${fallbackParams.toString()}`, {
+      cache: "no-store",
+    }).catch(() => null);
+    if (!fallbackResponse?.ok) return event;
+    const fallbackPayload = await fallbackResponse.json() as unknown;
+    const fallbackEvent = Array.isArray(fallbackPayload)
+      ? fallbackPayload[0] as PolymarketEventSnapshot | undefined
+      : null;
+    return (fallbackEvent?.markets?.length ?? 0) > (event.markets?.length ?? 0)
+      ? fallbackEvent!
+      : event;
+  }, {
+    ttlMs: input.fresh ? 0 : 60_000,
+    maxStaleMs: input.fresh ? 0 : 15 * 60_000,
+    // Event membership is authoritative data, not a presentation cache. A
+    // stale snapshot can contain only a previous page/subset of outcomes and
+    // would make valid platform outcomes disappear from the terminal.
+    ...(input.fresh ? { allowStale: () => false } : {}),
+  });
 }
 
 export function getPolymarketMarketsByEventSlug(eventSlug: string, input: { limit?: number } = {}) {
@@ -564,7 +614,7 @@ export function getPolymarketMarketsByEventSlug(eventSlug: string, input: { limi
   });
   const url = `https://gamma-api.polymarket.com/markets?${params.toString()}`;
   return staleWhileRevalidate(`polymarket-event-markets:${params.toString()}`, async () => {
-    const response = await fetch(url);
+    const response = await fetch(url, { cache: "no-store" });
     if (!response.ok) {
       throw new Error(`Unable to load Polymarket event markets for ${eventSlug}`);
     }
@@ -597,6 +647,40 @@ export function getPolymarketPricesHistory(
     }
     return response.json() as Promise<PolymarketPriceHistoryResponse>;
   }, { ttlMs: 60_000, maxStaleMs: 15 * 60_000 });
+}
+
+export function getPolymarketOrderbook(tokenId: string, input: { depth?: number } = {}) {
+  const params = new URLSearchParams({ token_id: tokenId });
+  const url = `https://clob.polymarket.com/book?${params.toString()}`;
+  return fetch(url).then(async (response) => {
+    if (!response.ok) {
+      throw new Error(`Unable to load Polymarket order book for token ${tokenId}`);
+    }
+        const snapshot = await response.json() as PolymarketOrderbookResponse;
+        const depth = Math.max(1, Math.floor(input.depth ?? 8));
+        const trimLevels = (
+          levels: Array<{ price?: string | number | null; size?: string | number | null }>,
+          direction: 'asc' | 'desc',
+        ) => levels
+          .filter((level) => {
+            const price = Number(level.price);
+            const size = Number(level.size);
+            return Number.isFinite(price) && Number.isFinite(size) && size > 0;
+          })
+          .sort((left, right) => {
+            const difference = Number(left.price) - Number(right.price);
+            return direction === 'asc' ? difference : -difference;
+          })
+          .slice(0, depth);
+        return {
+          ...snapshot,
+          // CLOB responses are not guaranteed to be sorted. In particular,
+          // asks may arrive from the highest level down, so slicing first can
+          // hide the executable quote and leave the UI showing a bad level.
+          bids: trimLevels(snapshot.bids ?? [], 'desc'),
+          asks: trimLevels(snapshot.asks ?? [], 'asc'),
+        };
+  });
 }
 
 export function getCanonicalResolutionRisk(eventId: string) {
