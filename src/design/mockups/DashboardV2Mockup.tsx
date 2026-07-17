@@ -415,11 +415,21 @@ const buildAggregateTerminalRouteSelection = (
   if (!primary) return null;
   const primaryEventSlug = primary.eventSlug ?? routeEventSlug ?? null;
   const primaryEventId = primary.eventId ?? primary.canonicalEventId ?? null;
-  const eventScopedRows = primaryEventId
-    ? rows.filter((row) => (row.eventId ?? row.canonicalEventId) === primaryEventId)
-    : primaryEventSlug
-      ? rows.filter((row) => (row.eventSlug ?? eventSlugFromTitle(row.title)) === primaryEventSlug)
-      : rows;
+  // Candidate markets in an aggregate can be stored as separate backend
+  // events (one event id per candidate) while sharing the same public route
+  // slug. Group by that route first so a deep link renders the full event
+  // instead of selecting only the highest-scoring candidate and remaining in
+  // the route-pending state.
+  const routeScopedRows = primaryEventSlug
+    ? rows.filter((row) => (row.eventSlug ?? eventSlugFromTitle(row.title)) === primaryEventSlug)
+    : [];
+  const eventScopedRows = routeScopedRows.length > 1
+    ? routeScopedRows
+    : primaryEventId
+      ? rows.filter((row) => (row.eventId ?? row.canonicalEventId) === primaryEventId)
+      : routeScopedRows.length > 0
+        ? routeScopedRows
+        : rows;
   if (eventScopedRows.length <= 1) return primary;
 
   const sortedRows = [...eventScopedRows].sort((left, right) => {

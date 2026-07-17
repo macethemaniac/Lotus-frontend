@@ -33,6 +33,11 @@ export type TerminalOutcomeRowDisplay = {
   status: string;
   blocker: string | null;
   quoteReady?: boolean;
+  quoteUpdatedAt?: string | null;
+  quoteFreshnessMs?: number | null;
+  quoteSource?: 'live' | 'catalog' | 'historical' | 'pending';
+  yesAskPrice?: string | null;
+  noAskPrice?: string | null;
 };
 
 type SelectedOutcomeBookReadinessInput = {
@@ -84,6 +89,13 @@ export const isSelectedOutcomeBookReady = (input: SelectedOutcomeBookReadinessIn
   const normalizedOrderbookOutcomeId = normalizeOutcomeId(input.orderbook.outcomeId);
   const normalizedSelectedOutcomeId = normalizeOutcomeId(input.orderbookOutcomeId);
   if (
+    normalizedSelectedOutcomeId &&
+    (normalizedSelectedOutcomeId === 'YES' || normalizedSelectedOutcomeId === 'NO') &&
+    normalizedOrderbookOutcomeId !== normalizedSelectedOutcomeId
+  ) {
+    return false;
+  }
+  if (
     normalizedOrderbookOutcomeId &&
     normalizedSelectedOutcomeId &&
     normalizedOrderbookOutcomeId !== normalizedSelectedOutcomeId
@@ -103,6 +115,13 @@ export const isSelectedOutcomeBookUsable = (input: SelectedOutcomeBookReadinessI
   if (input.orderbook.marketId !== input.orderbookMarketId) return false;
   const normalizedOrderbookOutcomeId = normalizeOutcomeId(input.orderbook.outcomeId);
   const normalizedSelectedOutcomeId = normalizeOutcomeId(input.orderbookOutcomeId);
+  if (
+    normalizedSelectedOutcomeId &&
+    (normalizedSelectedOutcomeId === 'YES' || normalizedSelectedOutcomeId === 'NO') &&
+    normalizedOrderbookOutcomeId !== normalizedSelectedOutcomeId
+  ) {
+    return false;
+  }
   if (
     normalizedOrderbookOutcomeId &&
     normalizedSelectedOutcomeId &&
@@ -139,8 +158,21 @@ export const resolveExpandedOutcomeDisplayValues = (input: {
   orderbook: TerminalOutcomeDisplayValues | null;
   fallback: TerminalOutcomeDisplayValues | null;
   binary: boolean;
+  selectedSide?: 'yes' | 'no';
 }): TerminalOutcomeDisplayValues | null => {
-  if (hasCoherentOutcomeDisplayValues(input.orderbook, input.binary)) return input.orderbook;
+  if (hasCoherentOutcomeDisplayValues(input.orderbook, input.binary)) {
+    // A No-token order book has its own midpoint, but the card probability is
+    // the underlying outcome's YES probability. Do not turn `1 - No midpoint`
+    // into a transient-looking ~50% outcome probability.
+    if (input.selectedSide === 'no' && input.binary && input.summary?.probability) {
+      return {
+        yesPrice: input.orderbook.yesPrice ?? input.summary.yesPrice,
+        noPrice: input.orderbook.noPrice ?? input.summary.noPrice,
+        probability: input.summary.probability,
+      };
+    }
+    return input.orderbook;
+  }
   if (hasCoherentOutcomeDisplayValues(input.summary, input.binary)) return input.summary;
   return input.fallback ?? input.summary ?? input.orderbook;
 };
@@ -210,6 +242,11 @@ export const mergeTerminalOutcomeRowDisplay = <T extends TerminalOutcomeRowDispl
     current.status === next.status &&
     current.blocker === next.blocker &&
     current.quoteReady === next.quoteReady &&
+    current.quoteUpdatedAt === next.quoteUpdatedAt &&
+    current.quoteFreshnessMs === next.quoteFreshnessMs &&
+    current.quoteSource === next.quoteSource &&
+    current.yesAskPrice === next.yesAskPrice &&
+    current.noAskPrice === next.noAskPrice &&
     sameStringArray(current.venues, next.venues) &&
     sameVenueQuotes(current.venueQuotes, next.venueQuotes)
   ) {
@@ -504,6 +541,13 @@ export const isLivePriceVenueSelectionProvisional = (
   expectedVenues: readonly string[] = [],
 ): boolean => {
   if (!livePrice) return false;
+  // `linkedVenues` describes the full venue family, including venues that are
+  // currently blocked or have no quote. When the backend reports an explicit
+  // live venue count, a live mark from that subset is still the authoritative
+  // consolidated quote and must not be replaced by the catalog fallback.
+  if (livePrice.status === 'live' && typeof livePrice.liveVenueCount === 'number' && livePrice.liveVenueCount > 0) {
+    return false;
+  }
   const expectedVenueCount = Math.max(
     expectedVenues.length,
     livePrice.venueCount ?? 0,
@@ -517,16 +561,20 @@ export const displayableLivePriceValue = (
   livePrice: MarketLivePriceItem | null | undefined,
   referencePrice?: string | number | null,
 ): number | null => {
+  // `price` is the backend's coherent live mark: normally the best-execution
+  // venue midpoint, with best ask/bid only as an explicit fallback. Keep
+  // executable asks separate so the probability does not silently become a
+  // buy price again.
+  const price = livePrice?.price !== null && livePrice?.price !== undefined ? Number(livePrice.price) : NaN;
+  if (isReasonableLivePriceValue(price, referencePrice) && isConsistentWithVenueBreakdown(price, livePrice)) return price;
+  const midpoint = livePrice?.midpoint !== null && livePrice?.midpoint !== undefined ? Number(livePrice.midpoint) : NaN;
+  if (isReasonableLivePriceValue(midpoint, referencePrice) && isConsistentWithVenueBreakdown(midpoint, livePrice)) return midpoint;
+  const averagePrice = livePrice?.averagePrice !== null && livePrice?.averagePrice !== undefined ? Number(livePrice.averagePrice) : NaN;
+  if (isReasonableLivePriceValue(averagePrice, referencePrice) && isConsistentWithVenueBreakdown(averagePrice, livePrice)) return averagePrice;
   const venueBestAsk = bestVenueAskFromBreakdown(livePrice);
   if (venueBestAsk !== null && isReasonableLivePriceValue(venueBestAsk, referencePrice)) return venueBestAsk;
   const bestAsk = livePrice?.bestAsk !== null && livePrice?.bestAsk !== undefined ? Number(livePrice.bestAsk) : NaN;
   if (isReasonableLivePriceValue(bestAsk, referencePrice) && isConsistentWithVenueBreakdown(bestAsk, livePrice)) return bestAsk;
-  const price = livePrice?.price !== null && livePrice?.price !== undefined ? Number(livePrice.price) : NaN;
-  if (isReasonableLivePriceValue(price, referencePrice) && isConsistentWithVenueBreakdown(price, livePrice)) return price;
-  const averagePrice = livePrice?.averagePrice !== null && livePrice?.averagePrice !== undefined ? Number(livePrice.averagePrice) : NaN;
-  if (isReasonableLivePriceValue(averagePrice, referencePrice) && isConsistentWithVenueBreakdown(averagePrice, livePrice)) return averagePrice;
-  const midpoint = livePrice?.midpoint !== null && livePrice?.midpoint !== undefined ? Number(livePrice.midpoint) : NaN;
-  if (isReasonableLivePriceValue(midpoint, referencePrice) && isConsistentWithVenueBreakdown(midpoint, livePrice)) return midpoint;
   return null;
 };
 
