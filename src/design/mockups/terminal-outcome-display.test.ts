@@ -309,6 +309,32 @@ describe('isSelectedOutcomeBookReady', () => {
       syncingVenueCount: 0,
     })).toBe(true);
   });
+
+  it('rejects an ambiguous orderbook for a binary side', () => {
+    expect(isSelectedOutcomeBookReady({
+      orderbook: {
+        marketId: 'market-1',
+        outcomeId: null,
+        generatedAt: new Date().toISOString(),
+        depth: 20,
+        venues: [],
+        bids: [{ venue: 'POLYMARKET', price: '0.58', size: '100' }],
+        asks: [{ venue: 'POLYMARKET', price: '0.59', size: '100' }],
+        bestBid: '0.58',
+        bestAsk: '0.59',
+        midpoint: '0.585',
+        spread: '0.01',
+        status: 'live',
+        blockers: [],
+        stream: null,
+      },
+      orderbookMarketId: 'market-1',
+      orderbookOutcomeId: 'NO',
+      snapshotStatus: 'live',
+      liveVenueCount: 1,
+      syncingVenueCount: 0,
+    })).toBe(false);
+  });
 });
 
 describe('isSelectedOutcomeBookUsable', () => {
@@ -415,6 +441,16 @@ describe('resolveExpandedOutcomeDisplayValues', () => {
       fallback: { yesPrice: '41.5¢', noPrice: '58.5¢', probability: '41.5%' },
       binary: true,
     })).toEqual({ yesPrice: '47.0¢', noPrice: '53.0¢', probability: '47.0%' });
+  });
+
+  it('keeps the underlying YES probability when the selected No book is expanded', () => {
+    expect(resolveExpandedOutcomeDisplayValues({
+      summary: { yesPrice: '1.2¢', noPrice: '98.8¢', probability: '1.2%' },
+      orderbook: { yesPrice: '97.9¢', noPrice: '2.1¢', probability: '49.6%' },
+      fallback: null,
+      binary: true,
+      selectedSide: 'no',
+    })).toEqual({ yesPrice: '97.9¢', noPrice: '2.1¢', probability: '1.2%' });
   });
 });
 
@@ -857,6 +893,35 @@ describe('resolveOutcomePriceVenues', () => {
       },
       expanded: true,
     })).toEqual({ yesVenue: 'POLYMARKET', noVenue: 'POLYMARKET' });
+  });
+
+  it('switches the badge to Predict.fun when its expanded-book ask is cheaper', () => {
+    expect(resolveOutcomePriceVenues({
+      primaryVenue: 'POLYMARKET',
+      venueQuotes: [],
+      yesPrice: '57.9c',
+      noPrice: '42.1c',
+      orderbook: {
+        marketId: 'market-1',
+        outcomeId: 'YES',
+        generatedAt: new Date().toISOString(),
+        depth: 20,
+        venues: [],
+        bids: [],
+        asks: [
+          { venue: 'PREDICT_FUN', price: '0.579', size: '100', cumulativeSize: '100', cumulativeNotional: '57.9', venueMarketId: 'predict-1', venueOutcomeId: null },
+          { venue: 'POLYMARKET', price: '0.582', size: '100', cumulativeSize: '100', cumulativeNotional: '58.2', venueMarketId: 'poly-1', venueOutcomeId: 'poly-token' },
+        ],
+        bestBid: null,
+        bestAsk: '0.579',
+        midpoint: null,
+        spread: null,
+        status: 'live',
+        blockers: [],
+        stream: null,
+      },
+      expanded: true,
+    })).toEqual({ yesVenue: 'PREDICT_FUN', noVenue: 'PREDICT_FUN' });
   });
 
   it('uses the orderbook venue after a row has been expanded and then collapsed', () => {

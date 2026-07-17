@@ -89,6 +89,13 @@ export const isSelectedOutcomeBookReady = (input: SelectedOutcomeBookReadinessIn
   const normalizedOrderbookOutcomeId = normalizeOutcomeId(input.orderbook.outcomeId);
   const normalizedSelectedOutcomeId = normalizeOutcomeId(input.orderbookOutcomeId);
   if (
+    normalizedSelectedOutcomeId &&
+    (normalizedSelectedOutcomeId === 'YES' || normalizedSelectedOutcomeId === 'NO') &&
+    normalizedOrderbookOutcomeId !== normalizedSelectedOutcomeId
+  ) {
+    return false;
+  }
+  if (
     normalizedOrderbookOutcomeId &&
     normalizedSelectedOutcomeId &&
     normalizedOrderbookOutcomeId !== normalizedSelectedOutcomeId
@@ -108,6 +115,13 @@ export const isSelectedOutcomeBookUsable = (input: SelectedOutcomeBookReadinessI
   if (input.orderbook.marketId !== input.orderbookMarketId) return false;
   const normalizedOrderbookOutcomeId = normalizeOutcomeId(input.orderbook.outcomeId);
   const normalizedSelectedOutcomeId = normalizeOutcomeId(input.orderbookOutcomeId);
+  if (
+    normalizedSelectedOutcomeId &&
+    (normalizedSelectedOutcomeId === 'YES' || normalizedSelectedOutcomeId === 'NO') &&
+    normalizedOrderbookOutcomeId !== normalizedSelectedOutcomeId
+  ) {
+    return false;
+  }
   if (
     normalizedOrderbookOutcomeId &&
     normalizedSelectedOutcomeId &&
@@ -144,8 +158,21 @@ export const resolveExpandedOutcomeDisplayValues = (input: {
   orderbook: TerminalOutcomeDisplayValues | null;
   fallback: TerminalOutcomeDisplayValues | null;
   binary: boolean;
+  selectedSide?: 'yes' | 'no';
 }): TerminalOutcomeDisplayValues | null => {
-  if (hasCoherentOutcomeDisplayValues(input.orderbook, input.binary)) return input.orderbook;
+  if (hasCoherentOutcomeDisplayValues(input.orderbook, input.binary)) {
+    // A No-token order book has its own midpoint, but the card probability is
+    // the underlying outcome's YES probability. Do not turn `1 - No midpoint`
+    // into a transient-looking ~50% outcome probability.
+    if (input.selectedSide === 'no' && input.binary && input.summary?.probability) {
+      return {
+        yesPrice: input.orderbook.yesPrice ?? input.summary.yesPrice,
+        noPrice: input.orderbook.noPrice ?? input.summary.noPrice,
+        probability: input.summary.probability,
+      };
+    }
+    return input.orderbook;
+  }
   if (hasCoherentOutcomeDisplayValues(input.summary, input.binary)) return input.summary;
   return input.fallback ?? input.summary ?? input.orderbook;
 };

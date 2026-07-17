@@ -92,6 +92,7 @@ import {
   summarizeOrderbookStreamPayload,
   type OrderbookStreamRenderMeta,
 } from './terminal-orderbook-stream';
+import { selectActiveOpenPolymarketEventMarkets } from './polymarket-event-markets';
 import {
   createExecutionQuote,
   getExecutionHistory,
@@ -1164,6 +1165,53 @@ const normalizedOrderbookProbability = (value: string | number | null | undefine
   return parsed > 1 ? parsed / 100 : parsed;
 };
 
+const orderbookDisplayValuesForSide = (
+  orderbook: MarketOrderbookResponse | null,
+  side: TicketOutcomeSide,
+  binary: boolean,
+): TerminalOutcomeDisplayValues | null => {
+  if (!orderbook) return null;
+  const askPrices = orderbook.asks
+    .map((level) => normalizedOrderbookProbability(level.price))
+    .filter((price): price is number => price !== null);
+  const sideBestAsk = askPrices.length > 0
+    ? Math.min(...askPrices)
+    : normalizedOrderbookProbability(orderbook.bestAsk);
+  const sideBestBid = normalizedOrderbookProbability(orderbook.bids[0]?.price ?? orderbook.bestBid);
+  const sideMidpoint = normalizedOrderbookProbability(orderbook.midpoint)
+    ?? (sideBestAsk !== null && sideBestBid !== null
+      ? (sideBestAsk + sideBestBid) / 2
+      : sideBestAsk ?? sideBestBid);
+  if (sideMidpoint === null) return null;
+
+  if (binary && side === 'no') {
+    const yesProbability = 1 - sideMidpoint;
+    return {
+      yesPrice: formatProbabilityPrice(sideBestBid === null ? yesProbability : 1 - sideBestBid),
+      noPrice: formatProbabilityPrice(sideBestAsk === null ? 1 - yesProbability : sideBestAsk),
+      probability: formatProbabilityPercent(yesProbability),
+    };
+  }
+
+  return {
+    yesPrice: formatProbabilityPrice(sideBestAsk === null ? sideMidpoint : sideBestAsk),
+    noPrice: binary
+      ? formatProbabilityPrice(sideBestBid === null ? 1 - sideMidpoint : 1 - sideBestBid)
+      : '-',
+    probability: formatProbabilityPercent(sideMidpoint),
+  };
+};
+
+const orderbookMatchesBinaryTicketSide = (
+  orderbook: MarketOrderbookResponse | null,
+  side: TicketOutcomeSide,
+  binary: boolean,
+): boolean => {
+  if (!orderbook || !binary) return true;
+  const outcomeId = orderbook.outcomeId?.trim().toUpperCase() ?? '';
+  return outcomeId === side.toUpperCase();
+};
+
 const bestExecutableAskFromOrderbook = (orderbook: MarketOrderbookResponse | null): {
   price: number;
   venue: string | null;
@@ -1269,19 +1317,59 @@ const normalizeStreamLevel = (
 const sortAndCumulativeLevels = (
   levels: MarketOrderbookLevel[],
   side: 'bid' | 'ask',
-  depth: number
+  depth: number,
+  ensureVenueCoverage = false,
 ): MarketOrderbookLevel[] => {
   let cumulativeSize = 0;
   let cumulativeNotional = 0;
-  return [...levels]
-    .sort((left, right) => {
-      const leftPrice = orderbookNumericValue(left.price) ?? 0;
-      const rightPrice = orderbookNumericValue(right.price) ?? 0;
-      const priceDiff = side === 'bid' ? rightPrice - leftPrice : leftPrice - rightPrice;
-      if (priceDiff !== 0) return priceDiff;
-      return left.venue.localeCompare(right.venue);
-    })
-    .slice(0, depth)
+  const compareLevels = (left: MarketOrderbookLevel, right: MarketOrderbookLevel): number => {
+    const leftPrice = orderbookNumericValue(left.price) ?? 0;
+    const rightPrice = orderbookNumericValue(right.price) ?? 0;
+    const priceDiff = side === 'bid' ? rightPrice - leftPrice : leftPrice - rightPrice;
+    if (priceDiff !== 0) return priceDiff;
+    return left.venue.localeCompare(right.venue);
+  };
+  const sortedLevels = [...levels].sort(compareLevels);
+  let visibleLevels = sortedLevels.slice(0, depth);
+
+  // The combined book is intentionally price-ranked, but a deep book from
+  // one venue can otherwise hide every level from another venue. Keep one
+  // representative level per venue so the shared orderbook remains honest
+  // about which venues are contributing prices.
+  if (ensureVenueCoverage && visibleLevels.length > 0) {
+    const representativeByVenue = new Map<string, MarketOrderbookLevel>();
+    for (const level of sortedLevels) {
+      const venue = toBackendVenueId(level.venue);
+      if (!representativeByVenue.has(venue)) representativeByVenue.set(venue, level);
+    }
+
+    const visibleCounts = new Map<string, number>();
+    for (const level of visibleLevels) {
+      const venue = toBackendVenueId(level.venue);
+      visibleCounts.set(venue, (visibleCounts.get(venue) ?? 0) + 1);
+    }
+
+    for (const [venue, representative] of representativeByVenue) {
+      if ((visibleCounts.get(venue) ?? 0) > 0) continue;
+      let replacementIndex = -1;
+      for (let index = visibleLevels.length - 1; index >= 0; index -= 1) {
+        const existingVenue = toBackendVenueId(visibleLevels[index].venue);
+        if ((visibleCounts.get(existingVenue) ?? 0) > 1) {
+          replacementIndex = index;
+          break;
+        }
+      }
+      if (replacementIndex < 0) break;
+      const replacedVenue = toBackendVenueId(visibleLevels[replacementIndex].venue);
+      visibleCounts.set(replacedVenue, (visibleCounts.get(replacedVenue) ?? 1) - 1);
+      visibleLevels[replacementIndex] = representative;
+      visibleCounts.set(venue, (visibleCounts.get(venue) ?? 0) + 1);
+    }
+
+    visibleLevels.sort(compareLevels);
+  }
+
+  return visibleLevels
     .map((level) => {
       const price = orderbookNumericValue(level.price) ?? 0;
       const displaySize = orderbookNumericValue(level.size) ?? 0;
@@ -1373,6 +1461,14 @@ const polymarketOrderbookFromToken = async (input: {
     status: 'live',
     blockers: [],
   };
+};
+
+const polymarketTokenIdForOutcome = (
+  tokenIds: readonly string[],
+  outcomeId: string | null | undefined,
+): string | null => {
+  const tokenIndex = outcomeId?.toUpperCase() === 'NO' ? 1 : 0;
+  return tokenIds[tokenIndex] ?? tokenIds[0] ?? null;
 };
 
 const depthTotal = (levels: MarketOrderbookLevel[]): string =>
@@ -1510,17 +1606,23 @@ const mergeOrderbookStreamUpdate = (
   const sameVenue = (venue: MarketOrderbookVenue) =>
     toBackendVenueId(venue.venue) === toBackendVenueId(venueBook.venue);
   const existingVenues = current?.venues ?? [];
-  const venues = [...existingVenues.filter((venue) => !sameVenue(venue)), venueBook];
+  const existingVenueBook = existingVenues.find(sameVenue);
+  const keepExistingVenueBook = shouldKeepRestPolymarketBook(existingVenueBook, venueBook);
+  const venues = keepExistingVenueBook
+    ? existingVenues
+    : [...existingVenues.filter((venue) => !sameVenue(venue)), venueBook];
   const activeVenues = venues.filter(venueHasRenderableDepth);
   const bids = sortAndCumulativeLevels(
     activeVenues.flatMap((venue) => venue.bids),
     'bid',
-    current?.depth ?? depth
+    current?.depth ?? depth,
+    true,
   );
   const asks = sortAndCumulativeLevels(
     activeVenues.flatMap((venue) => venue.asks),
     'ask',
-    current?.depth ?? depth
+    current?.depth ?? depth,
+    true,
   );
   const stats = bookStats(bids, asks);
   const streamBlockers = normalizeStreamResponseBlockers(expandedPayload);
@@ -1531,7 +1633,11 @@ const mergeOrderbookStreamUpdate = (
   ];
   const hasLevels = bids.length > 0 || asks.length > 0;
   const marketId = streamPayloadMarketId(expandedPayload) ?? current?.marketId ?? '';
-  const outcomeId = streamPayloadOutcomeId(expandedPayload);
+  // Some venue stream payloads omit the outcome field. Preserve the
+  // side-specific identity established by REST instead of turning a valid
+  // YES/NO book into an ambiguous snapshot that can be reused for the other
+  // binary token.
+  const outcomeId = streamPayloadOutcomeId(expandedPayload) ?? current?.outcomeId ?? null;
   return {
     marketId,
     outcomeId: outcomeId && outcomeId !== '_' ? outcomeId : null,
@@ -1619,8 +1725,8 @@ const filterOrderbookForVenue = (
   // token, so never merge it when the same venue has a resolved token book.
   const venues = preferResolvedOutcomeOrderbookVenues(candidateVenues);
   const activeVenues = venues.filter((venue) => venue.blockers.length === 0 && (venue.bids.length > 0 || venue.asks.length > 0));
-  const bids = sortAndCumulativeLevels(activeVenues.flatMap((venue) => venue.bids), 'bid', orderbook.depth);
-  const asks = sortAndCumulativeLevels(activeVenues.flatMap((venue) => venue.asks), 'ask', orderbook.depth);
+  const bids = sortAndCumulativeLevels(activeVenues.flatMap((venue) => venue.bids), 'bid', orderbook.depth, selectedVenue === 'ALL');
+  const asks = sortAndCumulativeLevels(activeVenues.flatMap((venue) => venue.asks), 'ask', orderbook.depth, selectedVenue === 'ALL');
   const stats = bookStats(bids, asks);
   const hasLevels = bids.length > 0 || asks.length > 0;
   return {
@@ -1639,6 +1745,63 @@ const filterOrderbookForVenue = (
   };
 };
 
+// A binary venue can briefly publish the opposite token under the selected
+// side while its snapshot/stream identities catch up. For example, a 5¢ No
+// ask on a market whose canonical Yes probability is 4.5% is actually the
+// Yes-side quote, while the coherent No ask is near 96¢. Do not let that
+// inverted level become the executable or displayed best price.
+const ORDERBOOK_OPPOSITE_SIDE_DRIFT = 0.03;
+
+const filterOrderbookForCanonicalSide = (
+  orderbook: MarketOrderbookResponse | null,
+  side: TicketOutcomeSide,
+  canonicalYesProbability: number | null,
+): MarketOrderbookResponse | null => {
+  if (!orderbook || canonicalYesProbability === null) return orderbook;
+
+  const oppositeSideProbability = side === 'no'
+    ? canonicalYesProbability
+    : 1 - canonicalYesProbability;
+  const isOppositeSideLevel = (level: MarketOrderbookLevel): boolean => {
+    const price = normalizedOrderbookProbability(level.price);
+    return price !== null && Math.abs(price - oppositeSideProbability) <= ORDERBOOK_OPPOSITE_SIDE_DRIFT;
+  };
+  const hasCoherentLevels = (levels: MarketOrderbookLevel[]): boolean => levels.some((level) => !isOppositeSideLevel(level));
+  const filterLevels = (levels: MarketOrderbookLevel[], shouldFilter: boolean): MarketOrderbookLevel[] => {
+    if (!shouldFilter) return levels;
+    return levels.filter((level) => !isOppositeSideLevel(level));
+  };
+  const filterVenueLevels = (
+    venue: MarketOrderbookVenue,
+    filterBids: boolean,
+    filterAsks: boolean,
+  ): MarketOrderbookVenue => ({
+    ...venue,
+    bids: filterLevels(venue.bids, filterBids),
+    asks: filterLevels(venue.asks, filterAsks),
+  });
+
+  const filterBids = hasCoherentLevels(orderbook.bids);
+  const filterAsks = hasCoherentLevels(orderbook.asks);
+  const venues = orderbook.venues.map((venue) => filterVenueLevels(venue, filterBids, filterAsks));
+  const activeVenues = venues.filter((venue) => venue.blockers.length === 0 && (venue.bids.length > 0 || venue.asks.length > 0));
+  const bids = sortAndCumulativeLevels(activeVenues.flatMap((venue) => venue.bids), 'bid', orderbook.depth, true);
+  const asks = sortAndCumulativeLevels(activeVenues.flatMap((venue) => venue.asks), 'ask', orderbook.depth, true);
+  const stats = bookStats(bids, asks);
+
+  return {
+    ...orderbook,
+    venues,
+    bids,
+    asks,
+    bestBid: stats.bestBid,
+    bestAsk: stats.bestAsk,
+    midpoint: stats.midpoint,
+    spread: stats.spread,
+    status: bids.length > 0 || asks.length > 0 ? 'live' : 'unavailable',
+  };
+};
+
 const venueHasRenderableDepth = (venue: MarketOrderbookVenue): boolean =>
   venue.blockers.length === 0 && (venue.bids.length > 0 || venue.asks.length > 0 || Boolean(venue.bestBid || venue.bestAsk));
 
@@ -1652,11 +1815,49 @@ const venueBookStrength = (venue: MarketOrderbookVenue): number => {
   return resolvedOutcomeBonus + blockerPenalty + liveDepth + renderedLevels * 5 + topOfBook + streamBonus;
 };
 
+const shouldKeepRestPolymarketBook = (
+  existing: MarketOrderbookVenue | undefined,
+  incoming: MarketOrderbookVenue,
+): boolean => {
+  if (!existing || toBackendVenueId(existing.venue) !== 'POLYMARKET' || toBackendVenueId(incoming.venue) !== 'POLYMARKET') return false;
+  const existingOutcomeId = existing.venueOutcomeId?.trim() ?? '';
+  const incomingOutcomeId = incoming.venueOutcomeId?.trim() ?? '';
+  if (!existingOutcomeId || !incomingOutcomeId || existingOutcomeId === incomingOutcomeId) return false;
+  // A stream can currently resolve the opposite Polymarket token for the
+  // same YES topic. Keep the verified REST snapshot until the stream carries
+  // the same venue outcome identity, rather than showing the inverted book.
+  return existing.source === 'REST' && incoming.source === 'STREAM';
+};
+
+const shouldPreferIncomingRestPolymarketBook = (
+  existing: MarketOrderbookVenue | undefined,
+  incoming: MarketOrderbookVenue,
+): boolean => Boolean(
+  existing
+  && toBackendVenueId(existing.venue) === 'POLYMARKET'
+  && toBackendVenueId(incoming.venue) === 'POLYMARKET'
+  && incoming.source === 'REST'
+  && (
+    existing.source !== 'REST'
+    || Boolean(existing.venueOutcomeId && incoming.venueOutcomeId && existing.venueOutcomeId !== incoming.venueOutcomeId)
+  )
+);
+
 const mergeOrderbookSnapshots = (
   current: MarketOrderbookResponse | null,
   next: MarketOrderbookResponse,
 ): MarketOrderbookResponse => {
   if (!current) return next;
+
+  // A side switch changes the executable token, but the old stream/REST
+  // snapshot can still be completing while the new request is in flight.
+  // Never merge levels from different binary outcomes: that creates a book
+  // with valid-looking YES prices inside a selected No ticket.
+  const currentOutcomeId = current.outcomeId?.trim().toUpperCase() ?? '';
+  const nextOutcomeId = next.outcomeId?.trim().toUpperCase() ?? '';
+  if (currentOutcomeId && nextOutcomeId && currentOutcomeId !== nextOutcomeId) {
+    return next;
+  }
 
   const mergedVenueMap = new Map<string, MarketOrderbookVenue>();
   for (const venue of current.venues) {
@@ -1665,15 +1866,16 @@ const mergeOrderbookSnapshots = (
   for (const venue of next.venues) {
     const key = toBackendVenueId(venue.venue);
     const existing = mergedVenueMap.get(key);
-    if (!existing || venueBookStrength(venue) >= venueBookStrength(existing)) {
+    if (shouldKeepRestPolymarketBook(existing, venue)) continue;
+    if (shouldPreferIncomingRestPolymarketBook(existing, venue) || !existing || venueBookStrength(venue) >= venueBookStrength(existing)) {
       mergedVenueMap.set(key, venue);
     }
   }
 
   const venues = [...mergedVenueMap.values()];
   const activeVenues = venues.filter(venueHasRenderableDepth);
-  const bids = sortAndCumulativeLevels(activeVenues.flatMap((venue) => venue.bids), 'bid', next.depth);
-  const asks = sortAndCumulativeLevels(activeVenues.flatMap((venue) => venue.asks), 'ask', next.depth);
+  const bids = sortAndCumulativeLevels(activeVenues.flatMap((venue) => venue.bids), 'bid', next.depth, true);
+  const asks = sortAndCumulativeLevels(activeVenues.flatMap((venue) => venue.asks), 'ask', next.depth, true);
   const stats = bookStats(bids, asks);
   const blockerByKey = new Map<string, MarketOrderbookResponse['blockers'][number]>();
   for (const blocker of [...current.blockers, ...next.blockers]) {
@@ -1815,11 +2017,11 @@ const firstStableOutcomeRows = (
   return [];
 };
 
-// v8 stores only a short-lived, last-good multi-venue snapshot. It makes
-// re-entry instant without allowing an old provisional venue response to
-// become the source of truth.
+// Store a last-good multi-venue snapshot so re-entry is instant while the
+// live refresh runs in the background. The cache is display-only, never the
+// source of truth for executable quotes.
 const TERMINAL_OUTCOME_ROWS_CACHE_PREFIX = 'lotus:terminal-outcome-rows:v9:';
-const TERMINAL_OUTCOME_ROWS_CACHE_TTL_MS = 5 * 60 * 1000;
+const TERMINAL_OUTCOME_ROWS_CACHE_TTL_MS = 30 * 60 * 1000;
 
 const terminalOutcomeRowsCacheKey = (value: string): string =>
   `${TERMINAL_OUTCOME_ROWS_CACHE_PREFIX}${value}`;
@@ -1832,15 +2034,8 @@ const loadCachedTerminalOutcomeRows = (cacheKey: string): TerminalOutcomeRow[] |
     const parsed = JSON.parse(raw) as { savedAt?: unknown; rows?: unknown } | null;
     const savedAt = parsed && typeof parsed.savedAt === 'number' ? parsed.savedAt : null;
     const rows = parsed && Array.isArray(parsed.rows) ? parsed.rows as TerminalOutcomeRow[] : null;
-    const hasLiveTimestamp = rows?.every((row) => (
-      row.status === 'live' &&
-      row.quoteReady === true &&
-      row.quoteSource === 'live' &&
-      typeof row.quoteUpdatedAt === 'string' &&
-      Number.isFinite(Date.parse(row.quoteUpdatedAt))
-    )) ?? false;
     if (!rows || savedAt === null || Date.now() - savedAt > TERMINAL_OUTCOME_ROWS_CACHE_TTL_MS) return null;
-    if (!hasLiveTimestamp || !hasResolvedOutcomeProbabilitySet(rows) || !isSaneMultiOutcomeProbabilitySet(rows)) return null;
+    if (!hasResolvedOutcomeProbabilitySet(rows) || !isSaneMultiOutcomeProbabilitySet(rows)) return null;
     // Cached rows make re-entry fast, but their venue choice may already be
     // stale by the time the next live snapshot arrives. Keep the cached
     // numbers visible while clearing only the executable venue selection so a
@@ -1859,14 +2054,6 @@ const saveCachedTerminalOutcomeRows = (cacheKey: string, rows: readonly Terminal
   if (typeof window === 'undefined') return;
   if (!hasResolvedOutcomeProbabilitySet(rows)) return;
   if (!isSaneMultiOutcomeProbabilitySet(rows)) return;
-  const resolvedRowsAreLive = rows.every((row) => (
-    row.status === 'live' &&
-    row.quoteReady === true &&
-    row.quoteSource === 'live' &&
-    typeof row.quoteUpdatedAt === 'string' &&
-    Number.isFinite(Date.parse(row.quoteUpdatedAt))
-  ));
-  if (!resolvedRowsAreLive) return;
   try {
     window.localStorage.setItem(terminalOutcomeRowsCacheKey(cacheKey), JSON.stringify({
       savedAt: Date.now(),
@@ -3303,7 +3490,11 @@ const hydrateRowsWithPolymarketEventPrices = async (input: {
     : await loadResolvedPolymarketEventMarkets(input);
   if (!resolvedEventMarkets) return { rows: [...input.rows], expectedOutcomeCount: null };
 
-  const eventMarkets = resolvedEventMarkets.markets;
+  // Gamma may return inactive duplicate markets with the same groupItemTitle.
+  // They are not part of the live event and can carry an obsolete price (for
+  // example, Robert F. Kennedy Jr. at 49%). Keep only the active market before
+  // building label-to-price maps.
+  const eventMarkets = selectActiveOpenPolymarketEventMarkets(resolvedEventMarkets.markets);
   const priceByLabel = new Map<string, number>();
   const eventMarketByLabel = new Map<string, typeof eventMarkets[number]>();
   const polymarketMarketByLabel = new Map<string, typeof eventMarkets[number]>();
@@ -3878,6 +4069,60 @@ type LiveCanonicalChartProps = {
   suppressStartup?: boolean;
 };
 
+const TERMINAL_CHART_CACHE_PREFIX = 'lotus:terminal-chart:v1:';
+const TERMINAL_CHART_CACHE_TTL_MS = 30 * 60 * 1000;
+
+const terminalChartCacheKey = (marketId: string): string =>
+  `${TERMINAL_CHART_CACHE_PREFIX}${marketId}`;
+
+const loadCachedTerminalChart = (marketId: string): {
+  venueChart: MarketChartResponse | null;
+  outcomeCharts: OutcomeChartEntry[];
+} | null => {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(terminalChartCacheKey(marketId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as {
+      savedAt?: unknown;
+      venueChart?: unknown;
+      outcomeCharts?: unknown;
+    } | null;
+    if (
+      !parsed
+      || typeof parsed.savedAt !== 'number'
+      || Date.now() - parsed.savedAt > TERMINAL_CHART_CACHE_TTL_MS
+    ) return null;
+    const venueChart = parsed.venueChart && typeof parsed.venueChart === 'object'
+      ? parsed.venueChart as MarketChartResponse
+      : null;
+    const outcomeCharts = Array.isArray(parsed.outcomeCharts)
+      ? parsed.outcomeCharts as OutcomeChartEntry[]
+      : [];
+    if (!venueChart && outcomeCharts.length === 0) return null;
+    return { venueChart, outcomeCharts };
+  } catch {
+    return null;
+  }
+};
+
+const saveCachedTerminalChart = (
+  marketId: string,
+  value: { venueChart: MarketChartResponse | null; outcomeCharts: readonly OutcomeChartEntry[] },
+): void => {
+  if (typeof window === 'undefined') return;
+  if (!value.venueChart && value.outcomeCharts.length === 0) return;
+  try {
+    window.localStorage.setItem(terminalChartCacheKey(marketId), JSON.stringify({
+      savedAt: Date.now(),
+      venueChart: value.venueChart,
+      outcomeCharts: value.outcomeCharts,
+    }));
+  } catch {
+    // Ignore storage failures; the live chart remains available in memory.
+  }
+};
+
 const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
   marketId,
   outcomeId,
@@ -3893,6 +4138,7 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
   const [venueChart, setVenueChart] = useState<MarketChartResponse | null>(null);
   const [outcomeCharts, setOutcomeCharts] = useState<OutcomeChartEntry[]>([]);
   const [chartDataRequestKey, setChartDataRequestKey] = useState<string | null>(null);
+  const [chartDataMarketId, setChartDataMarketId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [emptyRetryPending, setEmptyRetryPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -3982,9 +4228,15 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
     () => new Set(chartOutcomeInputs.filter((outcome) => outcome.latestValueIsExecutable).map((outcome) => normalizeOutcomeChartLabel(outcome.label))),
     [chartOutcomeInputs]
   );
-  const requestScopedVenueChart = chartDataRequestKey === requestKey ? venueChart : null;
-  const requestScopedOutcomeCharts = chartDataRequestKey === requestKey ? outcomeCharts : [];
-  const requestScopedError = chartDataRequestKey === requestKey ? error : null;
+  const chartDataMatchesMarket = Boolean(marketId && chartDataMarketId === marketId);
+  const requestScopedVenueChart = chartDataMatchesMarket ? venueChart : null;
+  const requestScopedOutcomeCharts = chartDataMatchesMarket ? outcomeCharts : [];
+  const requestScopedError = chartDataMatchesMarket && chartDataRequestKey === requestKey ? error : null;
+  React.useEffect(() => {
+    if (!marketId || chartDataRequestKey !== requestKey || (!venueChart && outcomeCharts.length === 0)) return;
+    if (chartDataMarketId !== marketId) setChartDataMarketId(marketId);
+    saveCachedTerminalChart(marketId, { venueChart, outcomeCharts });
+  }, [chartDataMarketId, chartDataRequestKey, marketId, outcomeCharts, requestKey, venueChart]);
   const liveOnlyOutcomeCharts = useMemo<OutcomeChartEntry[]>(() => (
     chartOutcomeInputs.flatMap((outcome) => {
       if (outcome.latestValue === null) return [];
@@ -4124,9 +4376,6 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
 
   React.useEffect(() => {
     if (suppressStartup) {
-      setVenueChart(null);
-      setOutcomeCharts([]);
-      setChartDataRequestKey(null);
       setLoading(true);
       setEmptyRetryPending(false);
       setError(null);
@@ -4154,11 +4403,21 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
       if (!marketId) {
         setVenueChart(null);
         setOutcomeCharts([]);
+        setChartDataMarketId(null);
         setError(null);
         setChartDataRequestKey(requestKey);
         return;
       }
       if (notFoundKey === requestKey) return;
+      if (chartDataMarketId !== marketId) {
+        const cachedChart = loadCachedTerminalChart(marketId);
+        if (cachedChart) {
+          setVenueChart(cachedChart.venueChart);
+          setOutcomeCharts(cachedChart.outcomeCharts);
+          setChartDataMarketId(marketId);
+          setChartDataRequestKey(requestKey);
+        }
+      }
       setLoading(true);
       setEmptyRetryPending(false);
       setError(null);
@@ -4345,8 +4604,10 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
           const fulfilled = results.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
           const fulfilledWithHistory = fulfilled.filter((entry) => entry.chart.points.length > 0);
           if (!cancelled) {
-            setVenueChart(null);
-            setOutcomeCharts(fulfilledWithHistory);
+            if (fulfilledWithHistory.length > 0 || !chartDataMatchesMarket) {
+              setVenueChart(null);
+              setOutcomeCharts(fulfilledWithHistory);
+            }
             setChartDataRequestKey(requestKey);
             if (fulfilledWithHistory.length > 0) {
               emptyRetryAttempt = 0;
@@ -4367,8 +4628,10 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
 
         const response = await getMarketChart(marketId, { outcomeId, timeframe: activeTab });
         if (!cancelled) {
-          setOutcomeCharts([]);
-          setVenueChart(response);
+          if (response.points.length > 0 || !chartDataMatchesMarket) {
+            setOutcomeCharts([]);
+            setVenueChart(response);
+          }
           setNotFoundKey(null);
           if (response.points.length > 0) {
             emptyRetryAttempt = 0;
@@ -4379,8 +4642,6 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
         }
       } catch (err) {
         if (!cancelled) {
-          setVenueChart(null);
-          setOutcomeCharts([]);
           setChartDataRequestKey(requestKey);
           if (isApiNotFound(err, 'MARKET_NOT_FOUND')) {
             setNotFoundKey(requestKey);
@@ -4421,7 +4682,7 @@ const LiveCanonicalChart = React.memo(function LiveCanonicalChart({
     suppressStartup,
   ]);
 
-  const chartLoading = loading || emptyRetryPending || chartDataRequestKey !== requestKey;
+  const chartLoading = loading || emptyRetryPending || !chartDataMatchesMarket;
 
   return (
     <div
@@ -4678,6 +4939,7 @@ const InfraTradingTerminalInner = ({
   const [showMarketSelector, setShowMarketSelector] = useState(false);
   const [showAllOutcomes, setShowAllOutcomes] = useState(false);
   const [expandedOutcomeId, setExpandedOutcomeId] = useState<string | null>(null);
+  const expandedOutcomeIdRef = React.useRef<string | null>(null);
   const [selectedOutcomeId, setSelectedOutcomeId] = useState<string | null>(null);
   const [selectedOutcomeDisplayValues, setSelectedOutcomeDisplayValues] = useState<TerminalOutcomeDisplayValues | null>(null);
   const [visibleSelectedOutcomeOrderbook, setVisibleSelectedOutcomeOrderbook] = useState<MarketOrderbookResponse | null>(null);
@@ -5210,11 +5472,8 @@ const InfraTradingTerminalInner = ({
       ? selectedOutcome.venues[0] ?? null
       : null);
   const selectedOutcomePolymarketTokenIds = useMemo(
-    () => selectedOutcome && selectedOutcomeSingleVenueOrderbookVenue
-      && toBackendVenueId(selectedOutcomeSingleVenueOrderbookVenue) === 'POLYMARKET'
-      ? uniqueNonEmptyStrings(selectedOutcome.polymarketTokenIds ?? [])
-      : [],
-    [selectedOutcome, selectedOutcomeSingleVenueOrderbookVenue],
+    () => uniqueNonEmptyStrings(selectedOutcome?.polymarketTokenIds ?? []),
+    [selectedOutcome?.polymarketTokenIds],
   );
   const selectedOutcomeMarketId = selectedOutcomeSingleVenueMarketId ?? selectedOutcome?.marketId ?? terminalMarketId;
   const selectedQuoteOutcomeId = effectiveQuoteOutcomeId(
@@ -5235,6 +5494,16 @@ const InfraTradingTerminalInner = ({
     ]),
     [selectedOutcome?.canonicalMarketIds, selectedOutcomeMarketId, selectedOutcomeSingleVenueMarketId, terminalMarket.canonicalMarketIds, terminalOutcomes.length],
   );
+  const selectedOutcomePolymarketOrderbookIds = useMemo(
+    () => uniqueNonEmptyStrings([
+      ...(selectedOutcome?.venueMarkets ?? [])
+        .filter((market) => toBackendVenueId(market.venue) === 'POLYMARKET')
+        .flatMap((market) => [market.canonicalMarketId, market.venueMarketId]),
+      ...selectedOutcomeCanonicalMarketIds.filter((marketId) => marketId.toUpperCase().endsWith(':POLYMARKET')),
+    ]),
+    [selectedOutcome?.venueMarkets, selectedOutcomeCanonicalMarketIds],
+  );
+  const selectedOutcomePolymarketOrderbookIdsKey = selectedOutcomePolymarketOrderbookIds.join('|');
   React.useEffect(() => {
     selectedOutcomeRef.current = selectedOutcome;
   }, [selectedOutcome]);
@@ -5244,19 +5513,25 @@ const InfraTradingTerminalInner = ({
   React.useEffect(() => {
     selectedOutcomeRefreshKeyRef.current = selectedOutcomeRefreshKey;
   }, [selectedOutcomeRefreshKey]);
-  // Only warm the selected outcome orderbook while its detail row is expanded.
-  // Keeping the live book active for a merely selected collapsed row makes the
-  // outcome list flicker between the stable summary quote and live orderbook data.
-  const orderbookActive = bottomTab === 'Outcomes' && Boolean(selectedOutcome && expandedOutcomeId === selectedOutcome.id);
+  // Keep the selected outcome book warm even while its row is collapsed. This
+  // lets the collapsed action buttons use the same executable venue as the
+  // orderbook immediately after the row is selected, instead of changing
+  // venue only when the user expands it.
+  const orderbookActive = bottomTab === 'Outcomes' && Boolean(selectedOutcome);
   const orderbookMarketId = orderbookActive ? selectedOutcomeMarketId ?? terminalMarketId : null;
-  const orderbookSideLabel = marketType === 'binary'
-    ? 'Yes'
-    : ticketOutcomeSide === 'no'
-      ? 'No'
-      : 'Yes';
+  const orderbookSideLabel = ticketOutcomeSide === 'no' ? 'No' : 'Yes';
   const orderbookQuoteOutcomeId = orderbookActive
-    ? marketType === 'binary'
-      ? effectiveQuoteOutcomeId(marketType, selectedQuoteOutcomeId ?? quoteOutcomeIdForTicketSide(selectedOutcome, 'yes'), selectedOutcome?.name)
+    ? ticketOutcomeSide === 'no'
+      // Each multi-outcome row is still a binary venue market. The aggregate
+      // row identifier can resolve to the Yes token, so No must always use
+      // the canonical opposite token explicitly.
+      ? 'NO'
+      : marketType === 'binary'
+      ? effectiveQuoteOutcomeId(
+          marketType,
+          quoteOutcomeIdForTicketSide(selectedOutcome, ticketOutcomeSide) ?? selectedQuoteOutcomeId,
+          selectedOutcome?.name,
+        )
       : selectedQuoteOutcomeId ?? quoteOutcomeIdForTicketSide(selectedOutcome, 'yes') ?? null
     : null;
   const orderbookStreamMarketIds = useMemo(
@@ -5364,9 +5639,27 @@ const InfraTradingTerminalInner = ({
     () => filterOrderbookForVenue(orderbook, orderbookVenue),
     [orderbook, orderbookVenue]
   );
+  const sideSpecificVisibleOrderbook = useMemo(
+    () => orderbookMatchesBinaryTicketSide(
+      visibleSelectedOutcomeOrderbook,
+      ticketOutcomeSide,
+      terminalMarket.marketType === 'binary' || ticketOutcomeSide === 'no',
+    )
+      ? visibleSelectedOutcomeOrderbook
+      : null,
+    [terminalMarket.marketType, ticketOutcomeSide, visibleSelectedOutcomeOrderbook],
+  );
   const displayOrderbook = useMemo(
-    () => filterOrderbookForVenue(visibleSelectedOutcomeOrderbook, orderbookVenue),
-    [orderbookVenue, visibleSelectedOutcomeOrderbook]
+    () => filterOrderbookForVenue(sideSpecificVisibleOrderbook, orderbookVenue),
+    [orderbookVenue, sideSpecificVisibleOrderbook]
+  );
+  const canonicalDisplayOrderbook = useMemo(
+    () => filterOrderbookForCanonicalSide(
+      displayOrderbook,
+      ticketOutcomeSide,
+      selectedOutcome ? parseProbabilityLabel(selectedOutcome.prob) : null,
+    ),
+    [displayOrderbook, selectedOutcome, ticketOutcomeSide],
   );
   const displayOrderbookHasDepth = useMemo(
     () => Boolean(
@@ -5380,23 +5673,12 @@ const InfraTradingTerminalInner = ({
     [displayOrderbook],
   );
   const selectedOutcomeOrderbookDisplayValues = useMemo<TerminalOutcomeDisplayValues | null>(() => {
-    const askPrices = displayOrderbook?.asks
-      .map((level) => normalizedOrderbookProbability(level.price))
-      .filter((price): price is number => price !== null) ?? [];
-    const topAsk = askPrices.length > 0 ? Math.min(...askPrices) : null;
-    const bestAsk = topAsk ?? normalizedOrderbookProbability(displayOrderbook?.bestAsk);
-    const bestBid = normalizedOrderbookProbability(displayOrderbook?.bids[0]?.price ?? displayOrderbook?.bestBid);
-    const midpoint = normalizedOrderbookProbability(displayOrderbook?.midpoint);
-    const probability = midpoint ?? bestAsk ?? bestBid;
-    if (probability === null) return null;
-    return {
-      yesPrice: bestAsk === null ? formatProbabilityPrice(probability) : formatProbabilityPrice(bestAsk),
-      noPrice: terminalMarket.marketType === 'binary'
-        ? formatProbabilityPrice(bestBid === null ? 1 - probability : 1 - bestBid)
-        : '-',
-      probability: formatProbabilityPercent(probability),
-    };
-  }, [displayOrderbook?.asks, displayOrderbook?.bestAsk, displayOrderbook?.bestBid, displayOrderbook?.bids, displayOrderbook?.midpoint, terminalMarket.marketType]);
+    return orderbookDisplayValuesForSide(
+      canonicalDisplayOrderbook,
+      ticketOutcomeSide,
+      terminalMarket.marketType === 'binary' || ticketOutcomeSide === 'no',
+    );
+  }, [canonicalDisplayOrderbook, terminalMarket.marketType, ticketOutcomeSide]);
   const selectedOutcomeVisibleVenues = useMemo(() => {
     const venues = new Map<string, string>();
     const addVenue = (value: string | null | undefined) => {
@@ -5595,7 +5877,13 @@ const InfraTradingTerminalInner = ({
       return;
     }
     latchSelectedOutcomeDisplayFallback(outcomeId, outcomeRows);
-    setVisibleSelectedOutcomeOrderbook(cacheKey ? orderbookCacheRef.current.get(cacheKey) ?? null : null);
+    // The short-lived outcome cache contains the default YES-side book. Never
+    // reattach it while the ticket is on No; the side-specific request must
+    // remain the only source for the visible orderbook until it arrives.
+    const cachedOrderbook = ticketOutcomeSide === 'no'
+      ? null
+      : cacheKey ? orderbookCacheRef.current.get(cacheKey) ?? null : null;
+    setVisibleSelectedOutcomeOrderbook(cachedOrderbook);
     if (cacheKey) {
       const cachedDisplay = outcomeDisplayCacheRef.current.get(cacheKey) ?? null;
       if (cachedDisplay) setSelectedOutcomeDisplayValues(cachedDisplay);
@@ -5604,7 +5892,7 @@ const InfraTradingTerminalInner = ({
       selectedOutcomeAutoFollowRef.current = false;
     }
     setSelectedOutcomeId(outcomeId);
-  }, [cacheKeyForOutcome, latchSelectedOutcomeDisplayFallback]);
+  }, [cacheKeyForOutcome, latchSelectedOutcomeDisplayFallback, ticketOutcomeSide]);
   React.useEffect(() => {
     if (!selectedOutcomeAutoFollowRef.current) return;
     const nextSelectedOutcomeId = preferredTerminalOutcomeId(quoteableTerminalOutcomes);
@@ -5655,23 +5943,25 @@ const InfraTradingTerminalInner = ({
 
   const focusTerminalOutcomeOrderbook = useCallback((outcomeId: string) => {
     selectTerminalOutcome(outcomeId, undefined, { manual: true });
+    expandedOutcomeIdRef.current = outcomeId;
     setExpandedOutcomeId(outcomeId);
     setBottomTab('Outcomes');
   }, [selectTerminalOutcome]);
 
   const toggleTerminalOutcomeOrderbook = useCallback((outcomeId: string) => {
-    if (expandedOutcomeId === outcomeId) {
-      setExpandedOutcomeId(null);
+    const nextExpandedOutcomeId = expandedOutcomeIdRef.current === outcomeId ? null : outcomeId;
+    expandedOutcomeIdRef.current = nextExpandedOutcomeId;
+    setExpandedOutcomeId(nextExpandedOutcomeId);
+    if (nextExpandedOutcomeId === null) {
       return;
     }
-    setExpandedOutcomeId(outcomeId);
     setBottomTab('Outcomes');
     window.setTimeout(() => {
       React.startTransition(() => {
         selectTerminalOutcome(outcomeId, undefined, { manual: true });
       });
     }, 75);
-  }, [expandedOutcomeId, selectTerminalOutcome]);
+  }, [selectTerminalOutcome]);
 
   const inlineOrderbookLiveVenueCount = useMemo(() => {
     return (orderbook?.venues ?? []).filter((venue) => {
@@ -6160,8 +6450,12 @@ const InfraTradingTerminalInner = ({
       // snapshot miss cannot leave the UI refreshing until the 180s full poll.
       if (requiresCompletePolymarketOutcomeSet && !hasPolymarketEventPrices && seedRows.length === 0) {
         if (!isLatestRefresh()) return;
-        const keepLastKnownRows = !polymarketEventMarketsResponse || platformSnapshotIsPartial;
-        setTerminalOutcomes(keepLastKnownRows ? previousRows : []);
+        // A background refresh can return an incomplete event snapshot even
+        // though the last display is still valid. Keep it visible until a
+        // complete replacement arrives; never turn a transient miss into an
+        // empty Outcomes panel.
+        const rowsToKeep = previousRows.length > 0 ? previousRows : fallbackRows;
+        setTerminalOutcomes(rowsToKeep);
         setOutcomesLoading(false);
         return;
       }
@@ -6230,9 +6524,26 @@ const InfraTradingTerminalInner = ({
               const effectiveOrderbookQuote = orderbookQuote?.price ?? null;
               const hasCompetitivePolymarketOrderbook = isCompetitivePolymarketOrderbookQuote(orderbookQuote, livePrice);
               const liveQuoteIsProvisional = isLivePriceVenueSelectionProvisional(livePrice, row.venues);
-              const usePolymarketLiveQuote = preferredLiveQuote !== null && !liveQuoteIsProvisional;
-              const usePolymarketCatalogQuote = preferredLiveQuote === null && canonicalQuote !== null && parsedQuote === null;
-              const useLiveQuote = !usePolymarketCatalogQuote && parsedQuote !== null && !liveQuoteIsProvisional && (usePolymarketLiveQuote || !hasCompetitivePolymarketOrderbook);
+              const livePolymarketQuoteConflictsWithCatalog = canonicalQuote !== null
+                && preferredLiveQuote !== null
+                && Math.abs(preferredLiveQuote.price - canonicalQuote) > POLYMARKET_MAX_MARK_DRIFT;
+              const usePolymarketLiveQuote = preferredLiveQuote !== null
+                && !liveQuoteIsProvisional
+                && !livePolymarketQuoteConflictsWithCatalog;
+              const liveQuoteConflictsWithPolymarket = canonicalQuote !== null
+                && parsedQuote !== null
+                && Math.abs(parsedQuote - canonicalQuote) > POLYMARKET_MAX_MARK_DRIFT;
+              // A consolidated venue midpoint can be stale or can belong to
+              // the opposite binary token. Keep the canonical Polymarket
+              // probability whenever that mark materially disagrees with it;
+              // the executable ask remains sourced from the order book below.
+              const usePolymarketCatalogQuote = canonicalQuote !== null
+                && (parsedQuote === null || liveQuoteConflictsWithPolymarket);
+              const useLiveQuote = !usePolymarketCatalogQuote
+                && !livePolymarketQuoteConflictsWithCatalog
+                && parsedQuote !== null
+                && !liveQuoteIsProvisional
+                && (usePolymarketLiveQuote || !hasCompetitivePolymarketOrderbook);
               const effectiveQuote = usePolymarketLiveQuote
                 ? parsedQuote
                 : usePolymarketCatalogQuote
@@ -6359,8 +6670,18 @@ const InfraTradingTerminalInner = ({
           const summaryVenueCount = resolveOutcomeSummaryVenueCount(livePrice, row.venues);
           const preferredLiveQuote = polymarketLiveVenueQuote(livePrice);
           const parsedPrice = preferredLiveQuote?.price ?? orderbookQuote?.price ?? displayableLivePriceValue(livePrice, row.prob);
+          const canonicalQuote = polymarketProbabilityForOutcomeRow(row);
+          const usePolymarketCatalogQuote = preferredLiveQuote === null
+            && canonicalQuote !== null
+            && (parsedPrice === null || Math.abs(parsedPrice - canonicalQuote) > POLYMARKET_MAX_MARK_DRIFT);
+          const effectiveParsedPrice = usePolymarketCatalogQuote ? canonicalQuote : parsedPrice;
           if (isLivePriceVenueSelectionProvisional(livePrice, row.venues)) {
-            if (orderbookQuote) {
+            // A provisional venue selection may expose the opposite binary
+            // token's orderbook first (for example a No ask near 96¢). Once
+            // the row has a canonical Polymarket probability, keep that
+            // probability stable and let the selected-side orderbook render
+            // its executable price separately.
+            if (orderbookQuote && canonicalQuote === null) {
               return {
                 ...row,
                 prob: formatProbabilityPercent(orderbookQuote.price),
@@ -6371,6 +6692,7 @@ const InfraTradingTerminalInner = ({
                 quoteReady: true,
               };
             }
+            if (canonicalQuote !== null) return row;
             if (row.status === 'live' && row.yesPrice !== '-' && row.noPrice !== '-') return row;
             return {
               ...row,
@@ -6381,7 +6703,7 @@ const InfraTradingTerminalInner = ({
               status: 'pending' as const,
             };
           }
-          if (parsedPrice === null) {
+          if (effectiveParsedPrice === null) {
             if (!livePrice) return row;
             return {
               ...row,
@@ -6394,15 +6716,17 @@ const InfraTradingTerminalInner = ({
               status: livePrice.status === 'live' ? 'live' : 'pending' as const,
             };
           }
-            const yesPrice = formatProbabilityPrice(parsedPrice);
-            const noPrice = chartMarketType === 'binary' ? formatProbabilityPrice(1 - parsedPrice) : '-';
+            const yesPrice = formatProbabilityPrice(effectiveParsedPrice);
+            const noPrice = chartMarketType === 'binary' ? formatProbabilityPrice(1 - effectiveParsedPrice) : '-';
             return {
             ...row,
             platforms: summaryVenueCount || row.platforms,
-            prob: formatProbabilityPercent(parsedPrice),
+            prob: formatProbabilityPercent(effectiveParsedPrice),
             yesPrice,
             noPrice,
               primaryVenue: preferredLiveQuote
+                ? 'POLYMARKET'
+                : usePolymarketCatalogQuote
                 ? 'POLYMARKET'
                 : orderbookQuote?.venue ?? bestVenueFromLivePrice(livePrice) ?? row.primaryVenue ?? quoteVenues[0] ?? null,
               venueQuotes: orderbookQuote
@@ -6417,6 +6741,14 @@ const InfraTradingTerminalInner = ({
             quoteReady: true,
             ...(preferredLiveQuote && livePrice
               ? polymarketLiveQuoteRowFields(livePrice, preferredLiveQuote)
+              : usePolymarketCatalogQuote
+                ? {
+                    quoteSource: 'catalog' as const,
+                    quoteUpdatedAt: null,
+                    quoteFreshnessMs: null,
+                    yesAskPrice: row.yesAskPrice ?? yesPrice,
+                    noAskPrice: row.noAskPrice ?? noPrice,
+                  }
               : orderbookQuote
                 ? orderbookQuoteRowFields(
                     preloadedOrderbookByRowId.get(row.id) ?? null,
@@ -6446,7 +6778,7 @@ const InfraTradingTerminalInner = ({
     } catch (error) {
       if (!isLatestRefresh()) return;
       const rowsToKeep = requiresCompletePolymarketOutcomeSet
-        ? hasCompleteMultiOutcomeProbabilitySet(previousRows) ? previousRows : []
+        ? previousRows.length > 0 ? previousRows : fallbackRows
         : fallbackRows;
       setTerminalOutcomes(rowsToKeep);
       const currentSelectedOutcomeId = selectedOutcomeIdRef.current;
@@ -6496,7 +6828,12 @@ const InfraTradingTerminalInner = ({
         const requestItems = currentOutcomes
           .map((outcome) => {
             const outcomeMarketId = outcome.marketId ?? terminalMarketId;
-            const quoteOutcomeId = effectiveQuoteOutcomeId(chartMarketType, outcome.quoteOutcomeId, outcome.name);
+            // Aggregate event rows are rendered as a multi-outcome chart, but
+            // each candidate venue market is still a binary YES/NO market.
+            // The fast refresh must use the binary token id here; sending the
+            // display label (for example "December 31, 2026") makes the live
+            // endpoint return its synthetic 50% fallback.
+            const quoteOutcomeId = effectiveQuoteOutcomeId(marketType, outcome.quoteOutcomeId, outcome.name);
             return {
               rowId: outcome.id,
               marketId: outcomeMarketId,
@@ -6528,7 +6865,7 @@ const InfraTradingTerminalInner = ({
             let changed = false;
             const nextOutcomes = current.map((outcome) => {
             const outcomeMarketId = outcome.marketId ?? terminalMarketId;
-            const quoteOutcomeId = effectiveQuoteOutcomeId(chartMarketType, outcome.quoteOutcomeId, outcome.name);
+            const quoteOutcomeId = effectiveQuoteOutcomeId(marketType, outcome.quoteOutcomeId, outcome.name);
             const cachedOrderbook = orderbookCacheRef.current.get(`${outcome.id}:${outcomeMarketId}:${quoteOutcomeId}`) ?? null;
             const orderbookQuote = bestExecutableAskFromPreferredOrderbook(cachedOrderbook, 'POLYMARKET');
             const livePrice =
@@ -6552,9 +6889,20 @@ const InfraTradingTerminalInner = ({
             const liveMark = preferredLiveQuote?.price ?? displayableLivePriceValue(livePrice, outcome.prob);
             const liveQuoteIsProvisional = isLivePriceVenueSelectionProvisional(livePrice, outcome.venues);
             const hasCompetitivePolymarketOrderbook = isCompetitivePolymarketOrderbookQuote(orderbookQuote, livePrice);
-            const usePolymarketLiveQuote = preferredLiveQuote !== null && !liveQuoteIsProvisional;
-            const usePolymarketCatalogQuote = preferredLiveQuote === null && canonicalQuote !== null && liveMark === null;
-            const useLiveMark = !usePolymarketCatalogQuote && liveMark !== null && !liveQuoteIsProvisional && (usePolymarketLiveQuote || !hasCompetitivePolymarketOrderbook);
+            const livePolymarketQuoteConflictsWithCatalog = canonicalQuote !== null
+              && preferredLiveQuote !== null
+              && Math.abs(preferredLiveQuote.price - canonicalQuote) > POLYMARKET_MAX_MARK_DRIFT;
+            const usePolymarketLiveQuote = preferredLiveQuote !== null
+              && !liveQuoteIsProvisional
+              && !livePolymarketQuoteConflictsWithCatalog;
+            const usePolymarketCatalogQuote = canonicalQuote !== null
+              && (preferredLiveQuote === null || livePolymarketQuoteConflictsWithCatalog)
+              && (liveMark === null || livePolymarketQuoteConflictsWithCatalog);
+            const useLiveMark = !usePolymarketCatalogQuote
+              && !livePolymarketQuoteConflictsWithCatalog
+              && liveMark !== null
+              && !liveQuoteIsProvisional
+              && (usePolymarketLiveQuote || !hasCompetitivePolymarketOrderbook);
             const parsedPrice = usePolymarketLiveQuote
               ? liveMark
               : usePolymarketCatalogQuote
@@ -6718,6 +7066,7 @@ const InfraTradingTerminalInner = ({
     }
   }, [
     terminalMarket.canonicalMarketIds,
+    marketType,
     chartMarketType,
     terminalMarketId,
     hasCompoundEventOutcomes,
@@ -6782,7 +7131,15 @@ const InfraTradingTerminalInner = ({
     if (nextSelectedOutcomeId !== null) {
       selectTerminalOutcome(nextSelectedOutcomeId, initialRows);
     }
-    setExpandedOutcomeId(null);
+    // The first usable cached snapshot can arrive in the same render window
+    // as the user's first expansion click. Preserve that explicit intent
+    // instead of letting this initialization reset collapse the card.
+    const preserveInitialExpansion = terminalMarketResetKeyRef.current === null
+      && expandedOutcomeIdRef.current !== null
+      && initialRows.some((row) => row.id === expandedOutcomeIdRef.current);
+    const nextExpandedOutcomeId = preserveInitialExpansion ? expandedOutcomeIdRef.current : null;
+    expandedOutcomeIdRef.current = nextExpandedOutcomeId;
+    setExpandedOutcomeId(nextExpandedOutcomeId);
     setTicketOutcomeSide(terminalMarket.initialOutcomeSide ?? 'yes');
     setTicketAmount('');
     setTicketLiveCandidates(null);
@@ -6812,6 +7169,23 @@ const InfraTradingTerminalInner = ({
   ]);
 
   const selectTicketOutcome = useCallback((nextSide: TicketOutcomeSide, fallbackOutcomeId?: string | null) => {
+    if (nextSide !== ticketOutcomeSide) {
+      // Invalidate every live-book layer immediately. The next render will
+      // request the side-specific token, but an in-flight YES response or
+      // stream update must not remain eligible for the No ticket.
+      orderbookRef.current = null;
+      orderbookChecksumValidationSeqRef.current += 1;
+      orderbookStreamSeqRef.current.clear();
+      orderbookInitialSnapshotTopicsRef.current.clear();
+      setOrderbook(null);
+      setOrderbookLoading(true);
+      setOrderbookError(null);
+      setOrderbookNotFoundKey(null);
+      setOrderbookStreamTopics([]);
+      setLatestOrderbookStream(null);
+      setVisibleSelectedOutcomeOrderbook(null);
+      setSelectedOutcomeDisplayValues(null);
+    }
     setTicketOutcomeSide(nextSide);
     setTicketLiveCandidates(null);
     setTicketQuote(null);
@@ -6826,7 +7200,7 @@ const InfraTradingTerminalInner = ({
     if (fallbackOutcomeId) {
       selectTerminalOutcome(fallbackOutcomeId, undefined, { manual: true });
     }
-  }, [selectTerminalOutcome]);
+  }, [selectTerminalOutcome, ticketOutcomeSide]);
 
   const resetTicketPreviewState = useCallback(() => {
     setTicketLiveCandidates(null);
@@ -7938,7 +8312,7 @@ const InfraTradingTerminalInner = ({
 
   React.useEffect(() => {
     let cancelled = false;
-    const requestKey = `${orderbookMarketId ?? 'none'}:${orderbookQuoteOutcomeId ?? 'none'}:${orderbookStreamMarketIdsKey}`;
+    const requestKey = `${orderbookMarketId ?? 'none'}:${orderbookQuoteOutcomeId ?? 'none'}:${orderbookSideLabel}:${orderbookStreamMarketIdsKey}`;
     if (!orderbookMarketId) {
       clearScheduledOrderbookRender();
       clearScheduledSelectedOutcomeDisplayRender();
@@ -7963,6 +8337,44 @@ const InfraTradingTerminalInner = ({
       ...selectedOutcomeSingleVenueOrderbookIds,
     ]);
     const requestedVenue = selectedOutcomeSingleVenueOrderbookVenue;
+    const includeCombinedPolymarketBook = async (
+      response: MarketOrderbookResponse,
+      candidateMarketId: string,
+      options: { snapshotOnly?: boolean } = {},
+    ): Promise<MarketOrderbookResponse> => {
+      // The aggregate stream can occasionally resolve the opposite
+      // Polymarket token for a YES topic. Hydrate the verified CLOB token
+      // directly before accepting the combined response.
+      const directPolymarketTokenId = polymarketTokenIdForOutcome(selectedOutcomePolymarketTokenIds, orderbookQuoteOutcomeId);
+      const forceSideSpecificPolymarketBook = orderbookQuoteOutcomeId?.trim().toUpperCase() === 'NO';
+      if (!requestedVenue && directPolymarketTokenId && !forceSideSpecificPolymarketBook) {
+        const directPolymarketResponse = await polymarketOrderbookFromToken({
+          tokenId: directPolymarketTokenId,
+          marketId: candidateMarketId,
+          outcomeId: orderbookQuoteOutcomeId,
+          depth: ORDERBOOK_LEVEL_RENDER_DEPTH,
+        }).catch(() => null);
+        if (directPolymarketResponse) return mergeOrderbookSnapshots(response, directPolymarketResponse);
+      }
+      if (requestedVenue || (!forceSideSpecificPolymarketBook && hasUsableOrderbookVenue(response, 'POLYMARKET'))) return response;
+      const polymarketCandidates = uniqueNonEmptyStrings([
+        candidateMarketId,
+        ...selectedOutcomePolymarketOrderbookIds,
+      ]);
+      for (const polymarketMarketId of polymarketCandidates) {
+        const polymarketResponse = await getMarketOrderbook(polymarketMarketId, {
+          outcomeId: orderbookQuoteOutcomeId,
+          venue: 'POLYMARKET',
+          depth: ORDERBOOK_LEVEL_RENDER_DEPTH,
+          canonicalMarketIds: orderbookStreamMarketIds,
+          ...(options.snapshotOnly ? { snapshotOnly: true } : {}),
+        }).catch(() => null);
+        if (polymarketResponse && hasUsableOrderbookVenue(polymarketResponse, 'POLYMARKET')) {
+          return mergeOrderbookSnapshots(response, polymarketResponse);
+        }
+      }
+      return response;
+    };
     const responseHasExpectedDepth = (response: MarketOrderbookResponse): boolean => {
       if (!requestedVenue) return hasUsableOrderbookDepth(response);
       const venueId = toBackendVenueId(requestedVenue);
@@ -7984,8 +8396,9 @@ const InfraTradingTerminalInner = ({
             ...(requestedVenue ? { venue: requestedVenue } : {}),
             ...(options.snapshotOnly ? { snapshotOnly: true } : {}),
           });
-          firstResponse ??= response;
-          if (responseHasExpectedDepth(response)) return response;
+          const enrichedResponse = await includeCombinedPolymarketBook(response, candidateMarketId, options);
+          firstResponse ??= enrichedResponse;
+          if (responseHasExpectedDepth(enrichedResponse)) return enrichedResponse;
         } catch (error) {
           lastError = error;
         }
@@ -8012,12 +8425,16 @@ const InfraTradingTerminalInner = ({
     };
     const initialSnapshotsReady = (topics: readonly ExecutionTopic[]): boolean =>
       hasAllInitialOrderbookSnapshots(topics, orderbookInitialSnapshotTopicsRef.current);
+    // Keep the initial REST request scoped to this request key. A side switch
+    // cancels this effect, but the old promise may still be resolving; a
+    // shared in-flight flag would then prevent the new No-side effect from
+    // fetching its own book and leave the card stuck on "Loading live book".
+    let fallbackOrderbookRequestInFlight = false;
     const loadFallbackOrderbook = async (
       options: { markWsFresh?: boolean; snapshotOnly?: boolean } = {}
     ): Promise<MarketOrderbookResponse | null> => {
-      if (orderbookRestRecoveryInFlightRef.current) return null;
-      orderbookRestRecoveryInFlightRef.current = true;
-      lastOrderbookRestRecoveryAtRef.current = Date.now();
+      if (fallbackOrderbookRequestInFlight) return null;
+      fallbackOrderbookRequestInFlight = true;
       try {
         const response = await requestOrderbookSnapshot(options);
         if (!response) return null;
@@ -8059,7 +8476,7 @@ const InfraTradingTerminalInner = ({
         }
         return null;
       } finally {
-        orderbookRestRecoveryInFlightRef.current = false;
+        fallbackOrderbookRequestInFlight = false;
         if (!cancelled) setOrderbookLoading(false);
       }
     };
@@ -8114,6 +8531,7 @@ const InfraTradingTerminalInner = ({
     orderbookStreamMarketIdsKey,
     selectedOutcomeSingleVenueOrderbookIdsKey,
     selectedOutcomeSingleVenueOrderbookVenue,
+    selectedOutcomePolymarketOrderbookIdsKey,
     selectedOutcomePolymarketTokenIdsKey,
   ]);
 
@@ -8138,6 +8556,39 @@ const InfraTradingTerminalInner = ({
       ...selectedOutcomeSingleVenueOrderbookIds,
     ]);
     const requestedVenue = selectedOutcomeSingleVenueOrderbookVenue;
+    const includeCombinedPolymarketBook = async (
+      response: MarketOrderbookResponse,
+      candidateMarketId: string,
+    ): Promise<MarketOrderbookResponse> => {
+      const directPolymarketTokenId = polymarketTokenIdForOutcome(selectedOutcomePolymarketTokenIds, expectedOutcomeId);
+      const forceSideSpecificPolymarketBook = expectedOutcomeId?.trim().toUpperCase() === 'NO';
+      if (!requestedVenue && directPolymarketTokenId && !forceSideSpecificPolymarketBook) {
+        const directPolymarketResponse = await polymarketOrderbookFromToken({
+          tokenId: directPolymarketTokenId,
+          marketId: candidateMarketId,
+          outcomeId: expectedOutcomeId,
+          depth: ORDERBOOK_LEVEL_RENDER_DEPTH,
+        }).catch(() => null);
+        if (directPolymarketResponse) return mergeOrderbookSnapshots(response, directPolymarketResponse);
+      }
+      if (requestedVenue || (!forceSideSpecificPolymarketBook && hasUsableOrderbookVenue(response, 'POLYMARKET'))) return response;
+      const polymarketCandidates = uniqueNonEmptyStrings([
+        candidateMarketId,
+        ...selectedOutcomePolymarketOrderbookIds,
+      ]);
+      for (const polymarketMarketId of polymarketCandidates) {
+        const polymarketResponse = await getMarketOrderbook(polymarketMarketId, {
+          outcomeId: expectedOutcomeId,
+          venue: 'POLYMARKET',
+          depth: ORDERBOOK_LEVEL_RENDER_DEPTH,
+          canonicalMarketIds: orderbookStreamMarketIds,
+        }).catch(() => null);
+        if (polymarketResponse && hasUsableOrderbookVenue(polymarketResponse, 'POLYMARKET')) {
+          return mergeOrderbookSnapshots(response, polymarketResponse);
+        }
+      }
+      return response;
+    };
     const requestOrderbookSnapshot = async (): Promise<MarketOrderbookResponse | null> => {
       let firstResponse: MarketOrderbookResponse | null = null;
       let lastError: unknown = null;
@@ -8149,13 +8600,14 @@ const InfraTradingTerminalInner = ({
             canonicalMarketIds: orderbookStreamMarketIds,
             ...(requestedVenue ? { venue: requestedVenue } : {}),
           });
-          firstResponse ??= response;
-          const expectedVenue = requestedVenue && response.venues.find((venue) => toBackendVenueId(venue.venue) === toBackendVenueId(requestedVenue));
+          const enrichedResponse = await includeCombinedPolymarketBook(response, candidateMarketId);
+          firstResponse ??= enrichedResponse;
+          const expectedVenue = requestedVenue && enrichedResponse.venues.find((venue) => toBackendVenueId(venue.venue) === toBackendVenueId(requestedVenue));
           if (!requestedVenue || (expectedVenue && expectedVenue.blockers.length === 0 && (
             expectedVenue.bids.length > 0
             || expectedVenue.asks.length > 0
             || Boolean(expectedVenue.bestBid || expectedVenue.bestAsk)
-          ))) return response;
+          ))) return enrichedResponse;
         } catch (error) {
           lastError = error;
         }
@@ -8336,10 +8788,37 @@ const InfraTradingTerminalInner = ({
           const payloadOutcomeId = streamPayloadOutcomeId(payload);
           if (payloadMarketId && !expectedMarketAliases.has(payloadMarketId)) return;
           if (payloadOutcomeId && !streamOutcomeMatches(payloadOutcomeId, expectedOutcomeId)) return;
+          // Binary topics are not sufficient identity on their own: some
+          // venue streams omit the outcome field and can therefore carry the
+          // opposite token's levels. REST establishes the side-specific book;
+          // ignore ambiguous stream updates so they cannot contaminate it.
+          if (event.type === 'MARKET_ORDERBOOK_UPDATE' && marketType === 'binary' && expectedOutcomeId && !payloadOutcomeId) return;
 
           lastOrderbookWsUpdateAtRef.current = Date.now();
 
           if (event.type === 'MARKET_ORDERBOOK_UPDATE') {
+            // Do not render a partial venue stream before the combined REST
+            // snapshot has established the shared book. Otherwise a fast
+            // venue can briefly publish a misleading probability such as
+            // 43.9% before the consolidated 58.0% quote arrives.
+            if (!requestedVenue && !orderbookRef.current) {
+              if (isOrderbookInitialSnapshotPayload(payload)) {
+                orderbookInitialSnapshotTopicsRef.current.add(event.topic);
+              }
+              return;
+            }
+            // The combined Polymarket stream can currently publish the
+            // opposite token's book on a YES topic. The REST aggregate is
+            // the verified venue snapshot for the shared book, so do not let
+            // that stream replace the correct Polymarket levels. Still mark
+            // its initial snapshot as received so it cannot hold the whole
+            // combined orderbook in a loading state.
+            if (!requestedVenue && toBackendVenueId(payload.venue) === 'POLYMARKET') {
+              if (isOrderbookInitialSnapshotPayload(payload)) {
+                orderbookInitialSnapshotTopicsRef.current.add(event.topic);
+              }
+              return;
+            }
             if (isOrderbookInitialSnapshotPayload(payload)) {
               orderbookInitialSnapshotTopicsRef.current.add(event.topic);
               const nextOrderbook = mergeOrderbookSnapshots(
@@ -8411,6 +8890,7 @@ const InfraTradingTerminalInner = ({
     scheduleSelectedOutcomeDisplayRender,
     selectedOutcomeSingleVenueOrderbookIdsKey,
     selectedOutcomeSingleVenueOrderbookVenue,
+    selectedOutcomePolymarketOrderbookIdsKey,
     selectedOutcomePolymarketTokenIdsKey,
   ]);
 
@@ -9889,17 +10369,6 @@ const InfraTradingTerminalInner = ({
                            const polymarketMedia = polymarketOutcomeMedia.get(normalizeOutcomeChartLabel(m.name));
                            const rowImageUrl = m.imageUrl ?? polymarketMedia?.imageUrl ?? rowMediaMarket?.imageUrl ?? terminalMarket.imageUrl;
                            const rowIconUrl = m.iconUrl ?? polymarketMedia?.iconUrl ?? rowMediaMarket?.iconUrl ?? terminalMarket.iconUrl;
-                           // The expanded header must keep the same latest
-                           // known venue quote as the collapsed row. A stale
-                           // combined order book may still contain a cheaper
-                           // level from another venue and must not repaint
-                           // the selected Polymarket quote while the actual
-                           // depth remains visible below.
-                           const expandedUsesLiveRowQuote = isExpandedOutcome
-                             && toBackendVenueId(m.primaryVenue) === 'POLYMARKET'
-                             && (m.quoteSource === 'live' || m.quoteSource === 'catalog')
-                             && m.quoteReady === true
-                             && normalizeTerminalDisplayValue(m.yesAskPrice ?? m.yesPrice) !== null;
                            // Keep the book combined so every linked venue's
                            // executable levels remain visible. Once this row has
                            // a matching book, its action buttons use the same
@@ -9908,12 +10377,19 @@ const InfraTradingTerminalInner = ({
                            const cachedRowOrderbook = cacheKeyForOutcome(m.id)
                              ? orderbookCacheRef.current.get(cacheKeyForOutcome(m.id)!) ?? null
                              : null;
+                          const expandedCachedOrderbook = isSelectedOutcome
+                             ? filterOrderbookForVenue(
+                                 visibleSelectedOutcomeOrderbook
+                                   ?? (ticketOutcomeSide === 'no' ? null : cachedRowOrderbook),
+                                 orderbookVenue,
+                               )
+                             : null;
                           const fetchedRowOrderbook = isQuotePending
                              ? null
                              : isExpandedOutcome
-                             ? displayOrderbook
+                             ? displayOrderbook ?? expandedCachedOrderbook
                              : filterOrderbookForVenue(
-                                 m.quoteSource === 'live' ? null : cachedRowOrderbook,
+                                 cachedRowOrderbook,
                                  orderbookVenue,
                                );
                            // The header can show the latest live quote even
@@ -9921,22 +10397,39 @@ const InfraTradingTerminalInner = ({
                            // itself must contain only real levels with real
                            // size and notional; never inject a synthetic row
                            // with placeholder dashes.
-                           const rowOrderbook = fetchedRowOrderbook;
+                           const rowOrderbook = filterOrderbookForCanonicalSide(
+                             fetchedRowOrderbook,
+                             isExpandedOutcome && isSelectedOutcome ? ticketOutcomeSide : 'yes',
+                             parseProbabilityLabel(m.prob),
+                           );
                            const rowOrderbookAskPrices = rowOrderbook?.asks
                              .map((level) => normalizedOrderbookProbability(level.price))
                              .filter((price): price is number => price !== null) ?? [];
                            const rowOrderbookTopAsk = rowOrderbookAskPrices.length > 0
                              ? Math.min(...rowOrderbookAskPrices)
                              : normalizedOrderbookProbability(rowOrderbook?.bestAsk);
-                           const expandedOrderbookProbability = isExpandedOutcome && !expandedUsesLiveRowQuote
-                             ? rowOrderbookTopAsk
+                           // A usable expanded orderbook is authoritative for
+                           // the action badge. This keeps the button venue and
+                           // price aligned with the cheapest executable level
+                           // (for example Predict.fun at 57.9¢ vs Polymarket
+                           // at 58.2¢), while retaining the row quote only when
+                           // depth has not arrived yet.
+                           const expandedUsesLiveRowQuote = isExpandedOutcome
+                             && rowOrderbookTopAsk === null
+                             && toBackendVenueId(m.primaryVenue) === 'POLYMARKET'
+                             && (m.quoteSource === 'live' || m.quoteSource === 'catalog')
+                             && m.quoteReady === true
+                             && normalizeTerminalDisplayValue(m.yesAskPrice ?? m.yesPrice) !== null;
+                           const rowOrderbookDisplayValues = rowOrderbook
+                             ? orderbookDisplayValuesForSide(
+                                 rowOrderbook,
+                                 isExpandedOutcome && isSelectedOutcome ? ticketOutcomeSide : 'yes',
+                                 terminalMarket.marketType === 'binary'
+                                   || (isExpandedOutcome && ticketOutcomeSide === 'no'),
+                               )
                              : null;
-                           const rowOrderbookDisplayValues = rowOrderbookTopAsk !== null
-                             ? {
-                                 yesPrice: formatProbabilityPrice(rowOrderbookTopAsk),
-                                 noPrice: formatProbabilityPrice(1 - rowOrderbookTopAsk),
-                                 probability: formatProbabilityPercent(rowOrderbookTopAsk),
-                               }
+                           const expandedOrderbookProbability = isExpandedOutcome && !expandedUsesLiveRowQuote && ticketOutcomeSide === 'yes'
+                             ? parseProbabilityLabel(rowOrderbookDisplayValues?.probability)
                              : null;
                            const rowVenueList = isExpandedOutcome
                              ? (venues.length > 0 ? venues : selectedOutcomeVisibleVenues)
@@ -9952,7 +10445,9 @@ const InfraTradingTerminalInner = ({
                                  },
                                  orderbook: rowOrderbookDisplayValues,
                                  fallback: selectedOutcomeDisplayValues,
-                                 binary: terminalMarket.marketType === 'binary',
+                                 binary: terminalMarket.marketType === 'binary'
+                                   || (isExpandedOutcome && ticketOutcomeSide === 'no'),
+                                 selectedSide: isExpandedOutcome && isSelectedOutcome ? ticketOutcomeSide : undefined,
                                })
                              : {
                                  yesPrice: rowOrderbookDisplayValues.yesPrice,
@@ -9977,26 +10472,53 @@ const InfraTradingTerminalInner = ({
                                  ? formatProbabilityPrice(expandedOrderbookProbability)
                                  : expandedOrderbookDisplayValues?.yesPrice ?? rowOrderbookDisplayValues?.yesPrice ?? m.yesAskPrice ?? rowYesPrice)
                              : '-';
+                           const binaryNoPriceFallback = terminalMarket.marketType === 'binary'
+                             || (isExpandedOutcome && ticketOutcomeSide === 'no')
+                             ? (() => {
+                                 const yesProbability = parseProbabilityLabel(rowActionYesPrice);
+                                 return yesProbability === null
+                                   ? null
+                                   : formatProbabilityPrice(1 - yesProbability);
+                               })()
+                             : null;
+                           const noPriceCandidates = [
+                             expandedOrderbookDisplayValues?.noPrice,
+                             rowOrderbookDisplayValues?.noPrice,
+                             m.noAskPrice,
+                             rowNoPrice,
+                             binaryNoPriceFallback,
+                           ];
+                           const firstUsableNoPrice = noPriceCandidates.find((value) => (
+                             Boolean(value) && value !== '-' && value !== 'Quote'
+                           )) ?? null;
                            const rowActionNoPrice = rowQuoteReady
                              ? (expandedOrderbookProbability !== null
                                  ? formatProbabilityPrice(1 - expandedOrderbookProbability)
-                                 : expandedOrderbookDisplayValues?.noPrice ?? rowOrderbookDisplayValues?.noPrice ?? m.noAskPrice ?? rowNoPrice)
+                                 : firstUsableNoPrice)
                              : '-';
                            // When the outcome is expanded, the visible order
                            // book is the most precise executable source. Use
                            // its probability directly so 0.10¢ renders as
                            // 0.1%, rather than reusing a stale 1.0% summary.
                            const rowProbabilityFromKnownAsk = parseProbabilityLabel(rowActionYesPrice);
+                           const preserveUnderlyingProbabilityForNo = isExpandedOutcome
+                             && isSelectedOutcome
+                             && ticketOutcomeSide === 'no'
+                             && (terminalMarket.marketType === 'binary' || Boolean(rowOrderbookDisplayValues?.noPrice));
                            const rowProbability = isQuotePending
                              ? '-'
-                             : (expandedOrderbookProbability !== null
-                                 ? formatProbabilityPercent(expandedOrderbookProbability)
-                                 : expandedOrderbookDisplayValues?.probability)
-                               ?? rowDisplayValues?.probability
-                               ?? (isExpandedOutcome && isSelectedOutcome
-                                 ? selectedOutcomeDisplayValues?.probability
-                                 : null)
-                               ?? normalizeTerminalDisplayValue(m.prob)
+                             : (preserveUnderlyingProbabilityForNo
+                                 ? rowDisplayValues?.probability
+                                   ?? normalizeTerminalDisplayValue(m.prob)
+                                   ?? selectedOutcomeDisplayValues?.probability
+                                 : (expandedOrderbookProbability !== null
+                                     ? formatProbabilityPercent(expandedOrderbookProbability)
+                                     : expandedOrderbookDisplayValues?.probability)
+                                   ?? rowDisplayValues?.probability
+                                   ?? (isExpandedOutcome && isSelectedOutcome
+                                     ? selectedOutcomeDisplayValues?.probability
+                                     : null)
+                                   ?? normalizeTerminalDisplayValue(m.prob))
                                ?? (rowProbabilityFromKnownAsk === null
                                  ? null
                                  : formatProbabilityPercent(rowProbabilityFromKnownAsk));
@@ -10068,7 +10590,10 @@ const InfraTradingTerminalInner = ({
                                      </button>
                                      <button
                                        type="button"
-                                       onClick={() => setExpandedOutcomeId(null)}
+                                       onClick={() => {
+                                         expandedOutcomeIdRef.current = null;
+                                         setExpandedOutcomeId(null);
+                                       }}
                                        aria-label={`Close ${m.name} orderbook`}
                                        className="flex h-10 w-10 items-center justify-center rounded-lg text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ccff00]/70"
                                      >
@@ -10099,7 +10624,7 @@ const InfraTradingTerminalInner = ({
                                  </div>
                                  <div className="max-h-[380px] overflow-y-auto font-mono custom-scrollbar">
                                    <div className="min-h-[116px]">
-                                   {orderbookLoading && !displayOrderbook && (
+                                   {orderbookLoading && !rowOrderbook && (
                                      <div className="px-4 py-8 text-center text-[11px] font-bold uppercase tracking-[0.18em] text-zinc-500">Loading live book</div>
                                    )}
                                    {marketDiagnosticsEnabled && orderbookError && inlineOrderbookLiveVenueCount === 0 && (
